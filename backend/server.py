@@ -722,7 +722,7 @@ async def _seed_defaults():
     await db.counters.update_one({"_id": "catalog_followup_status"}, {"$max": {"seq": 5}}, upsert=True)
     # Seed default source_lead values (collision-safe: ensure_catalog computes max-id+1,
     # so it never clashes with migrated catalog ids)
-    for name in ["landing_page", "chatbot", "website", "App", "Callback_Request", "Meta Lead Ads", "Website AI Agent"]:
+    for name in ["Website Form", "Website AI Agent", "Meta Lead Ads"]:
         await ensure_catalog("source_lead", name)
     # Seed Indian states + countries (Case 1 dropdowns)
     if await db.catalogs.count_documents({"type": "state"}) == 0:
@@ -780,6 +780,8 @@ async def _seed_defaults():
                                "Valid Not Interested"]}}, upsert=True)
         await db.settings.insert_one({"key": "seed_saas_starter", "done": True})
         logger.info("Seeded SaaS starter funnel tags + KPI milestones")
+    from core.b2b_seed import seed_b2b_starter
+    await seed_b2b_starter()
     await db.import_jobs.update_many({"status": "running"}, {"$set": {
         "status": "done", "fatal": "Server restarted during the import — re-upload the file (duplicate mode 'skip' avoids repeats)"}})
     logger.info("Seed defaults complete")
