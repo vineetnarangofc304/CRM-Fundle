@@ -208,7 +208,7 @@ async def _run_campaign(cid: int, user: dict):
                 await wac.resolve_header_media(template)
         email_live = False
         if camp["channel"] == "email":
-            from core import gmail_send as gm
+            from core import mailer as gm
             email_live = await gm.is_connected()
 
         # Skip leads already processed (supports resume after pause).
@@ -277,7 +277,7 @@ async def _run_campaign(cid: int, user: dict):
                 body_txt = (template.get("body") or "").replace("{{1}}", name)
                 subject = template.get("subject") or camp["name"]
                 if email_live and to:
-                    from core import gmail_send as gm
+                    from core import mailer as gm
                     res = await gm.send_email(to, subject, body_txt, html=True)
                     if res.get("ok"):
                         sent += 1

@@ -6,6 +6,7 @@ import { API, apiErr, fmtDate } from "../lib/api";
 import { useAuth, useCatalogs, useCatalogMaps } from "../context/AuthContext";
 import { Spinner, TagChip } from "../components/Bits";
 import { MetaCapiTab } from "../components/MetaCapiTab";
+import { EmailProviderPicker, OutlookCard } from "../components/OutlookEmail";
 
 const TABS = ["Users", "Tags", "Dropdowns", "KPI Settings", "Custom Fields", "Webhooks", "Automations", "Assignment", "Attendance", "Telephony", "Facebook", "Meta CAPI", "WhatsApp", "Email", "Duplicates", "System Health"];
 
@@ -17,6 +18,8 @@ export default function Admin() {
     if (p.get("tab")) setTab(p.get("tab"));
     if (p.get("gmail") === "connected") toast.success("Gmail connected — live email is now active ✓");
     else if (p.get("gmail")) toast.error(`Gmail connection failed${p.get("reason") ? " — " + p.get("reason") : " — check redirect URI & consent"}`, { duration: 12000 });
+    if (p.get("outlook") === "connected") toast.success("Outlook connected — CRM emails now send from your Microsoft 365 mailbox ✓");
+    else if (p.get("outlook")) toast.error(`Outlook connection failed${p.get("reason") ? " — " + p.get("reason") : " — try Connect again"}`, { duration: 12000 });
   }, []);
   return (
     <div className="p-6" data-testid="admin-page">
@@ -1765,6 +1768,17 @@ function FacebookTab({ isAdmin }) {
 }
 
 function EmailTab({ isAdmin }) {
+  const [k, setK] = useState(0);
+  return (
+    <div className="space-y-4" data-testid="email-tab">
+      <EmailProviderPicker isAdmin={isAdmin} refreshKey={k} />
+      <OutlookCard isAdmin={isAdmin} onChanged={() => setK((x) => x + 1)} />
+      <GmailCard isAdmin={isAdmin} />
+    </div>
+  );
+}
+
+function GmailCard({ isAdmin }) {
   const [status, setStatus] = useState(null);
   const [testTo, setTestTo] = useState("");
   const [senderName, setSenderName] = useState("");
@@ -1798,11 +1812,11 @@ function EmailTab({ isAdmin }) {
 
   if (!status) return <Spinner />;
   return (
-    <div className="space-y-4" data-testid="email-tab">
+    <div className="space-y-4" data-testid="gmail-card">
       <div className="crm-card p-4">
         <div className="flex items-center gap-2">
           <EnvelopeSimple size={20} weight="fill" className="text-[#EA4335]" />
-          <h3 className="font-display text-sm font-extrabold text-slate-800">Email Sending — Gmail (Google OAuth)</h3>
+          <h3 className="font-display text-sm font-extrabold text-slate-800">Gmail (Google OAuth)</h3>
           <span className={`ml-2 rounded-full px-2 py-0.5 text-[10px] font-bold ${status.connected ? "bg-emerald-50 text-emerald-600" : "bg-amber-50 text-amber-600"}`}>
             {status.connected ? "CONNECTED" : "NOT CONNECTED"}
           </span>

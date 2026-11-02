@@ -401,7 +401,7 @@ async def _apply_actions(rule: dict, lead: dict):
                                "template_name": tmpl.get("name"), "track_id": track["id"],
                                "status": wa_status})
             else:
-                from core import gmail_send as gm
+                from core import mailer as gm
                 tmpl = await db.templates_email.find_one({"id": int(value)}, {"_id": 0})
                 email_body = (tmpl.get("body") if tmpl else "") or ""
                 subject = (tmpl.get("subject") if tmpl else "") or "(no subject)"

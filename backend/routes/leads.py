@@ -759,7 +759,7 @@ async def send_email(lead_id: int, body: SendEmailBody, user: dict = Depends(get
     to = (body.to or lead.get("email_from") or "").strip()
     if not to:
         raise HTTPException(status_code=400, detail="Lead has no email address — enter one")
-    from core import gmail_send as gm
+    from core import mailer as gm
     sent_live = False
     send_err = None
     if await gm.is_connected():

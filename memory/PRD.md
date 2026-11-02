@@ -45,3 +45,8 @@ Gmail OAuth (GOOGLE_CLIENT_ID/SECRET, GMAIL_REDIRECT_URI), Meta CAPI (dataset id
 
 ## Jun 2026 (iteration 7) — Website Lead API
 - POST /api/webhook/lead/{token} (existing) now maps alternate_number, country, remark, deal_value; rejects requests with no valid phone/email (422); default source "Website Form". Webhook "Fundle.ai Website" created in preview. Docs: /app/docs/WEBSITE_LEAD_API.md.
+
+## Jun 2026 (iteration 8) — Outlook email
+- core/outlook_send.py (Graph OAuth delegated Mail.Send via httpx, refresh-token rotation; SMTP via aiosmtplib smtp.office365.com:587), secrets Fernet-encrypted (key derived from JWT_SECRET) in settings.outlook. core/mailer.py routes all CRM email (lead compose, automations, campaigns) to active provider (settings.email_provider: gmail|outlook). Routes: /api/admin/outlook/status|settings|auth-url|disconnect|send-test, /api/oauth/outlook/callback, /api/admin/email/provider. Admin → Email: provider picker + Outlook card + Gmail card.
+- Found: fundle.ai M365 tenant has SMTP AUTH disabled → use Graph sign-in.
+- Admin login email changed to vineetnarangofc@gmail.com.

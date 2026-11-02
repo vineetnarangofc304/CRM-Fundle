@@ -115,5 +115,5 @@ async def gmail_send_test(body: TestEmail, user: dict = Depends(require_roles("a
         raise HTTPException(status_code=400, detail="Gmail not connected")
     res = await gm.send_email(body.to.strip(), body.subject, body.body)
     if not res.get("ok"):
-        raise HTTPException(status_code=502, detail=res.get("error"))
+        raise HTTPException(status_code=400, detail=res.get("error"))
     return res

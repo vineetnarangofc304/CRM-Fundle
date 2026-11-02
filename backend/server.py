@@ -33,6 +33,7 @@ from routes import imports as import_routes
 from routes import marketing as marketing_routes
 from routes import ai as ai_routes
 from routes import gmail as gmail_routes
+from routes import outlook as outlook_routes
 from routes import chatter as chatter_routes
 from routes import filters as filter_routes
 from routes import leads as lead_routes
@@ -204,6 +205,7 @@ api.include_router(import_routes.router)
 api.include_router(marketing_routes.router)
 api.include_router(ai_routes.router)
 api.include_router(gmail_routes.router)
+api.include_router(outlook_routes.router)
 api.include_router(wa_tracking_routes.router)
 api.include_router(meta_capi_routes.router)
 
