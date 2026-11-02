@@ -3,7 +3,7 @@ import json
 import re
 import time
 from datetime import datetime, timedelta, timezone
-from typing import Optional
+from typing import Optional, Union
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pymongo.errors import PyMongoError, OperationFailure
@@ -422,12 +422,14 @@ class LeadCreate(BaseModel):
     company_name: Optional[str] = None
     designation: Optional[str] = None
     team_size: Optional[str] = None
-    deal_value: Optional[float] = None
+    deal_value: Optional[Union[float, str]] = None
 
 
 @router.post("")
 async def create_lead(body: LeadCreate, user: dict = Depends(get_current_user)):
     data = {k: v for k, v in body.model_dump().items() if v is not None}
+    if "deal_value" in data:
+        data["deal_value"] = _to_amount(data["deal_value"])
     data.setdefault("country", "India")  # Case 3 — default market
     if not data.get("name"):
         data["name"] = data.get("contact_name") or data.get("phone") or "New Lead"
@@ -460,12 +462,23 @@ class LeadUpdate(BaseModel):
     updates: dict
 
 
+def _inr(v) -> str:
+    n = str(int(round(float(v))))
+    head, tail = n[:-3], n[-3:]
+    while len(head) > 2:
+        tail = f"{head[-2:]},{tail}"
+        head = head[:-2]
+    return "₹" + (f"{head},{tail}" if head else tail)
+
+
 def _to_amount(v):
     if v in (None, ""):
         return None
     try:
-        amt = float(re.sub(r"[^\d.]", "", str(v)))
+        amt = float(re.sub(r"[\s,₹]", "", str(v)))
     except ValueError:
+        raise HTTPException(status_code=400, detail="Deal value must be a number")
+    if amt != amt or amt in (float("inf"), float("-inf")):
         raise HTTPException(status_code=400, detail="Deal value must be a number")
     if amt < 0:
         raise HTTPException(status_code=400, detail="Deal value cannot be negative")
@@ -508,6 +521,8 @@ async def _track_changes(lead, updates, user):
             await log_audit(lead["id"], user, "stage_changed", field="Pipeline stage", old=ol, new=nl)
         else:
             label = f.replace("_", " ").title()
+            if f == "deal_value":
+                old, new = (_inr(old) if old else None), (_inr(new) if new else None)
             parts.append(f"{label}: {old or 'None'} → {new or 'None'}")
             await log_audit(lead["id"], user, "field_changed", field=label,
                             old=(str(old) if old not in (None, "") else "None"),

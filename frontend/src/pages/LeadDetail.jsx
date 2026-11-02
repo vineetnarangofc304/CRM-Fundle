@@ -7,6 +7,7 @@ import {
   Phone, PhoneIncoming, PhoneOutgoing, Paperclip, UploadSimple, DownloadSimple, Trash, Warning, Eye, X, ArrowRight,
   ClockCounterClockwise, Tag, UserSwitch, PencilSimpleLine, ChatCircleText,
 } from "@phosphor-icons/react";
+import { inr } from "../lib/money";
 import { API, apiErr, fmtDate, fmtDay, todayStr } from "../lib/api";
 import { useAuth, useCatalogMaps, useCatalogs } from "../context/AuthContext";
 import { useNavGuard } from "../context/NavGuardContext";
@@ -131,7 +132,8 @@ export default function LeadDetail() {
       setLead(data);
       await reloadMessages();
       toast.success("Updated");
-    } catch (e) { toast.error(apiErr(e)); }
+      return true;
+    } catch (e) { toast.error(apiErr(e)); return false; }
   };
 
   const postNote = async () => {
@@ -323,7 +325,7 @@ export default function LeadDetail() {
           <FieldCard title="Company & Deal" lead={lead} onSave={update} canEdit={canEdit} onDenied={deny} fields={[
             ["company_name", "Company"], ["designation", "Designation"],
             ["team_size", "Team Size", "select"], ["deal_value", "Deal Value (₹)"],
-          ]} selects={{ team_size: ["1-10", "11-50", "51-200", "201-1000", "1000+"] }} />
+          ]} selects={{ team_size: ["1-10", "11-50", "51-200", "201-1000", "1000+"] }} formats={{ deal_value: inr }} />
 
           <FieldCard title="Enquiry Details" lead={lead} onSave={update} canEdit={canEdit} onDenied={deny} fields={[
             ["query", "Query"], ["remark", "Remark"],
@@ -765,7 +767,7 @@ function CustomFieldsCard({ lead, onSave, catalogs, canEdit = true, onDenied = (
 }
 
 /* ---------- field card with select support (Cases 1 & 7) ---------- */
-function FieldCard({ title, lead, onSave, fields, selects = {}, defaults = {}, required = [], canEdit = true, onDenied = () => {} }) {
+function FieldCard({ title, lead, onSave, fields, selects = {}, defaults = {}, required = [], formats = {}, canEdit = true, onDenied = () => {} }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState({});
   const [errors, setErrors] = useState({});
@@ -775,14 +777,14 @@ function FieldCard({ title, lead, onSave, fields, selects = {}, defaults = {}, r
     setErrors({});
     setEditing(true);
   };
-  const save = () => {
+  const save = async () => {
     const errs = {};
     required.forEach((k) => { if (!String(draft[k] || "").trim()) errs[k] = "This field is required"; });
     if (Object.keys(errs).length) { setErrors(errs); toast.error("Please fill the required field(s)"); return; }
     setErrors({});
     const updates = {};
-    fields.forEach(([k]) => { if ((draft[k] || "") !== (lead[k] || "")) updates[k] = draft[k] || null; });
-    if (Object.keys(updates).length) onSave(updates);
+    fields.forEach(([k]) => { if (String(draft[k] ?? "") !== String(lead[k] ?? "")) updates[k] = draft[k] || null; });
+    if (Object.keys(updates).length && !(await onSave(updates))) return;
     setEditing(false);
   };
 
@@ -819,7 +821,7 @@ function FieldCard({ title, lead, onSave, fields, selects = {}, defaults = {}, r
                 {errors[k] && <p className="mt-0.5 text-[10px] font-semibold text-rose-500" data-testid={`field-error-${k}`}>{errors[k]}</p>}
               </div>
             ) : (
-              <span className="truncate text-slate-700" data-testid={`field-value-${k}`}>{lead[k] || defaults[k] || <span className="text-slate-300">—</span>}</span>
+              <span className="truncate text-slate-700" data-testid={`field-value-${k}`}>{(lead[k] && formats[k] ? formats[k](lead[k]) : lead[k]) || defaults[k] || <span className="text-slate-300">—</span>}</span>
             )}
           </div>
         ))}

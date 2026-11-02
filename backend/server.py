@@ -760,7 +760,7 @@ async def _seed_defaults():
         logger.info("Seeded disposition tag→stage mapping")
     # One-time SaaS starter funnel. Flag-guarded so admin edits/deletions are never re-added.
     if await db.settings.find_one({"key": "seed_saas_starter"}) is None:
-        starter = {"Contacted": ["Demo Booked", "Proposal Sent"], "Converted": ["Demo Done", "Won"]}
+        starter = {"Contacted": ["Demo Booked", "Demo Done", "Proposal Sent"], "Converted": ["Won"]}
         dm_doc = await db.settings.find_one({"key": "disposition_map"}) or {}
         dm = dm_doc.get("map") or {}
         for stage, names in starter.items():

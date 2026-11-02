@@ -174,7 +174,7 @@ export default function Dashboard() {
 
       {kpis && (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-3" data-testid="deal-value-strip">
-          <Kpi icon={CurrencyInr} label={`Open Pipeline Value · ${(kpis.pipeline_count || 0).toLocaleString("en-IN")} deals`} value={inr(kpis.pipeline_value)} testid="kpi-pipeline-value"
+          <Kpi icon={CurrencyInr} label={`Open Pipeline Value · ${(kpis.pipeline_count || 0).toLocaleString("en-IN")} ${kpis.pipeline_count === 1 ? "deal" : "deals"}`} value={inr(kpis.pipeline_value)} testid="kpi-pipeline-value"
             onClick={() => navigate("/leads")} />
           <Kpi icon={CurrencyInr} label="Won Value MTD" value={inr(kpis.won_value_mtd)} tone="green" testid="kpi-won-value-mtd"
             onClick={() => navigate(leadsUrl({ lead_stage: "Converted", date_from: monthStart }))} />

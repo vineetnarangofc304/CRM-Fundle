@@ -1,0 +1,44 @@
+{
+  "summary": "Iteration 2: tested the SaaS starter funnel, Company & Deal lead fields and deal-value tracking end to end (API and UI). Starter tags and the disposition map are correct. kpi_config is pre-filled. The seed runs only once: I deleted the 'Won' tag, restarted the backend, confirmed it was not re-added, then restored the identical doc (id 21). POST and PATCH of the company fields work, '1,20,000' is stored as 120000, 'abc' returns 400 'Deal value must be a number', and changes appear in chatter. Excel export has the 4 new columns. Webhook aliases company/job_title/company_size map correctly. Dashboard deal strip numbers checked by hand: pipeline ₹1,70,000 from 2 deals, won ₹1,50,000. KPI kpi-deal-value card showed won ₹1,50,000 and open pipeline ₹3,00,000 from 2 deals, both correct. Milestone cards for the 4 tags render. Dashboard, leads list, lead detail and KPI pages loaded with no JS errors. All test leads plus TEST_A and TEST_B (500004-500008) were removed. Starter tags and kpi_config were kept.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "PATCH /api/leads/{id} (_to_amount)", "issue": "A negative value like '-500' is saved as 500 because the regex strips '-' before the negative check, so 'Deal value cannot be negative' can never trigger. Text with digits in it is also accepted silently ('12abc' becomes 12, '1e5' becomes 15)."},
+      {"endpoint": "POST /api/leads", "issue": "deal_value is a plain Optional[float]: negative numbers are accepted, and a formatted string like '1,20,000' gets a 422 instead of the PATCH parsing. Validation does not match PATCH."},
+      {"endpoint": "chatter/audit for deal_value", "issue": "Shows raw floats like 'Deal Value: 75000.0 → 120000.0' instead of ₹ en-IN formatting."},
+      {"endpoint": "deal_sums (reports.py)", "issue": "Business logic: 'won' means lead_stage == Converted. Demo Done is mapped to Converted, so a lead marked 'Demo Done' already counts its deal value as Won (and leaves the pipeline) before a proposal or win. This disagrees with the Won milestone count on the KPI page (Won tag 0 while Won Deal Value is ₹1.5L). Consider mapping Demo Done to Contacted, or computing won from the 'Won' tag."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "LeadDetail FieldCard (Company & Deal)", "issue": "save() calls setEditing(false) straight after onSave, before the API answers. When the backend rejects the deal value, the card closes and every draft edit is lost (company, designation and team size are not saved either). Keep edit mode open until the PATCH succeeds, or validate the number on the client.", "selector": "[data-testid='save-company-&-deal']", "priority": "MEDIUM"},
+      {"component": "LeadDetail Company & Deal view", "issue": "Deal Value shows the raw number '250000' instead of '₹2,50,000'. Use inr() from lib/money.js.", "selector": "[data-testid='field-value-deal_value']", "priority": "LOW"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Leads list footer", "issues": ["Shows 'Many leads · page 1 of 1' for only 5 leads; it should show the real count."]}
+    ]
+  },
+  "test_report_links": ["/app/backend/tests/test_saas_deals.py", "/app/test_reports/pytest/pytest_iter2.xml"],
+  "action_items": [
+    "Fix _to_amount: reject negative values and stray non-numeric text (e.g. only strip commas, spaces and ₹ before float()).",
+    "Use the same deal_value parsing and validation in POST /api/leads (LeadCreate) as in PATCH.",
+    "FieldCard: close edit mode only after onSave succeeds, so edits are kept on error.",
+    "Format deal value with inr() in the lead detail view and in chatter/audit text.",
+    "Decide whether Demo Done (mapped to Converted) should count as won deal value; it currently inflates Won and shrinks Pipeline."
+  ],
+  "critical_code_review_comments": [
+    "routes/leads.py _to_amount: re.sub(r'[^\\d.]','',...) removes the minus sign, so the amt<0 branch is dead code.",
+    "KPI pipeline is all-time open pipeline whatever month is selected, and for past months won_ftd becomes an average per day. Both are fine but undocumented in the UI.",
+    "leads.py (1010 lines) and server.py (779 lines) are over the 700-line guideline.",
+    "Do NOT run tests/cleanup_test_data.js any more: it deletes kpi_config, which is now seeded only once (seed_saas_starter), so it would wipe the starter KPI config for good. Also, test_fundle_crm.py TestKpiFlow overwrites kpi_config."
+  ],
+  "updated_files": ["/app/backend/tests/test_saas_deals.py"],
+  "success_rate": {"backend": "89% (8/9; the one failure is negative deal value accepted)", "frontend": "90% (all flows work; edit-mode-on-error UX bug)"},
+  "test_credentials": "admin@fundle.ai / Fundle@cf928c",
+  "seed_data_creation": "None left behind. Test leads 500006-500008 and the main agent's 500004/500005 were deleted along with their messages and audit records. The test webhook was deleted.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Run test_saas_deals.py with REACT_APP_BACKEND_URL exported. It waits 46s for the dashboard cache and writes the created lead ids to /tmp/saas_test_leads.txt; there is no lead DELETE API, so clean up with mongosh in test_database. The KPI cache lasts 120s. The system date is Nov 2026.",
+  "rca of the issue": "Negative deal value: _to_amount strips every character except digits and '.', including '-', before the amt<0 check. Lost edits: FieldCard.save() runs setEditing(false) synchronously and does not await onSave."
+}
