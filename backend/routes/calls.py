@@ -353,6 +353,9 @@ async def set_disposition(call_id: int, body: DispositionBody, user: dict = Depe
             updates["tags"] = tags
             if updates:
                 await db.leads.update_one({"id": lead_id}, {"$set": updates})
+                if updates.get("lead_stage") == "Converted" and lead.get("lead_stage") != "Converted":
+                    from core.utils import stamp_won
+                    await stamp_won([lead_id], "Converted")
             note = f"<br/><span style='color:#64748b'>{body.note}</span>" if body.note else ""
             await log_message(lead_id, f"📋 Call disposition: <b>{body.disposition}</b> by {user['name']}{note}", author=user, subtype="comment")
     return {"ok": True, "disposition": body.disposition}

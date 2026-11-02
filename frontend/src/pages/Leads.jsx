@@ -3,6 +3,7 @@ import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import { CaretLeft, CaretRight, FunnelSimple, Kanban, ListBullets, Plus, FloppyDisk, X, PhoneCall, Columns, DownloadSimple, UploadSimple } from "@phosphor-icons/react";
 import { ImportLeadsModal } from "../components/ImportLeadsModal";
+import { inr } from "../lib/money";
 import { API, apiErr, fmtDay, fmtDate } from "../lib/api";
 import { useAuth, useCatalogMaps } from "../context/AuthContext";
 import { TagChip, StageBadge, Spinner, EmptyState } from "../components/Bits";
@@ -15,6 +16,7 @@ const FILTER_DEFS = [
   { key: "follow_up", label: "Follow-up" },
   { key: "follow_up_tag", label: "FU Tag" },
   { key: "min_followups", label: "Min Follow-ups" },
+  { key: "min_deal_value", label: "Min Deal ₹" },
   { key: "active", label: "Status" },
   { key: "date_from", label: "From" },
   { key: "date_to", label: "To" },
@@ -40,6 +42,8 @@ const GROUP_OPTIONS = [
 const ALL_COLUMNS = [
   { key: "contact_name", label: "Lead", sort: "contact_name", locked: true },
   { key: "phone", label: "Phone", sort: "phone" },
+  { key: "company_name", label: "Company", sort: "company_name" },
+  { key: "deal_value", label: "Deal Value", sort: "deal_value" },
   { key: "location", label: "Location" },
   { key: "user_id", label: "Caller", sort: "user_id" },
   { key: "lead_stage", label: "Lead Stage", sort: "lead_stage" },
@@ -58,7 +62,7 @@ const ALL_COLUMNS = [
   { key: "state_name", label: "State" },
   { key: "priority", label: "Priority" },
 ];
-const DEFAULT_COLS = ["contact_name", "phone", "location", "user_id", "lead_stage", "tags", "follow_up_date", "source_lead", "create_date"];
+const DEFAULT_COLS = ["contact_name", "phone", "company_name", "deal_value", "location", "user_id", "lead_stage", "tags", "follow_up_date", "source_lead", "create_date"];
 
 function LeadCell({ colKey, l, tagById, userById }) {
   if (colKey === "contact_name") return (
@@ -86,6 +90,7 @@ function LeadCell({ colKey, l, tagById, userById }) {
     </span>
   ) : "—";
   if (colKey === "create_date") return <span className="text-slate-500">{fmtDate(l.create_date)}</span>;
+  if (colKey === "deal_value") return l.deal_value ? <span className="font-semibold tabular-nums text-slate-800" data-testid={`lead-deal-${l.id}`}>{inr(l.deal_value)}</span> : <span className="text-slate-300">—</span>;
   if (colKey === "total_follow_ups") return <span className="font-semibold text-slate-700">{l.total_follow_ups || 0}</span>;
   return <span className="text-slate-500">{l[colKey] || "—"}</span>;
 }
@@ -106,7 +111,10 @@ export default function Leads() {
   const [promote, setPromote] = useState(null);
   const [showCols, setShowCols] = useState(false);
   const [visibleCols, setVisibleCols] = useState(() => {
-    try { const s = JSON.parse(localStorage.getItem("leadsColumns")); if (Array.isArray(s) && s.length) return s; } catch { /* noop */ }
+    try { const s = JSON.parse(localStorage.getItem("leadsColumns")); if (Array.isArray(s) && s.length) {
+      if (!localStorage.getItem("leadsColumnsV2")) { localStorage.setItem("leadsColumnsV2", "1"); return [...new Set([...s, "company_name", "deal_value"])]; }
+      return s;
+    } } catch { /* noop */ }
     return DEFAULT_COLS;
   });
   useEffect(() => { localStorage.setItem("leadsColumns", JSON.stringify(visibleCols)); }, [visibleCols]);
@@ -120,7 +128,7 @@ export default function Leads() {
   const filterParams = useMemo(() => {
     const obj = {};
     ["search", "lead_stage", "tags", "user_id", "source_lead", "follow_up", "active", "date_from", "date_to",
-      "stage_id", "follow_up_tag", "campaign_name", "ads_platform", "utm_source", "utm_medium", "utm_campaign", "state_name", "city", "lost_reason_id", "duplicate", "scope", "min_followups"].forEach((k) => {
+      "stage_id", "follow_up_tag", "campaign_name", "ads_platform", "utm_source", "utm_medium", "utm_campaign", "state_name", "city", "lost_reason_id", "duplicate", "scope", "min_followups", "min_deal_value"].forEach((k) => {
       const v = params.get(k);
       if (v) obj[k] = v;
     });
@@ -359,6 +367,9 @@ export default function Leads() {
           <input data-testid="filter-min-followups" type="number" min="0" placeholder="Min Follow-ups"
             className="crm-select !w-36" value={params.get("min_followups") || ""}
             onChange={(e) => setParam("min_followups", e.target.value)} title="Show leads with at least this many follow-ups" />
+          <input data-testid="filter-min-deal-value" type="number" min="0" step="1000" placeholder="Min Deal ₹"
+            className="crm-select !w-36" value={params.get("min_deal_value") || ""}
+            onChange={(e) => setParam("min_deal_value", e.target.value)} title="Show leads with a deal value of at least this amount" />
           <select data-testid="filter-active" className="crm-select" value={params.get("active") || "true"} onChange={(e) => setParam("active", e.target.value)}>
             <option value="true">Active</option>
             <option value="false">Lost / Archived</option>

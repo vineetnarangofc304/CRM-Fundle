@@ -231,7 +231,7 @@ _DASH_TTL = 45
 
 
 async def deal_sums(base: dict, windows: dict) -> dict:
-    """Sum deal_value: open pipeline (not Converted/Closed), won total, and won per create-date window."""
+    """Sum deal_value: open pipeline (not Converted/Closed), won total, and won per won-date window."""
     is_won = {"$eq": ["$lead_stage", "Converted"]}
     grp = {
         "_id": None,
@@ -240,9 +240,10 @@ async def deal_sums(base: dict, windows: dict) -> dict:
         "won": {"$sum": {"$cond": [is_won, "$deal_value", 0]}},
     }
     for name, (start, end) in windows.items():
-        conds = [is_won, {"$gte": ["$create_date_ist", start]}]
+        won_on = {"$ifNull": ["$won_date_ist", "$create_date_ist"]}
+        conds = [is_won, {"$gte": [won_on, start]}]
         if end:
-            conds.append({"$lte": ["$create_date_ist", end]})
+            conds.append({"$lte": [won_on, end]})
         grp[f"won_{name}"] = {"$sum": {"$cond": [{"$and": conds}, "$deal_value", 0]}}
     res = await db.leads.aggregate([
         {"$match": {**base, "deal_value": {"$gt": 0}}}, {"$group": grp},

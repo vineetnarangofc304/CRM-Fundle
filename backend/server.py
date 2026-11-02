@@ -284,6 +284,8 @@ INDEX_SPECS = [
     # Follow-up filters (today / overdue / upcoming) + dashboard follow-up counts.
     ("leads", [("follow_up_date", 1)], {"partialFilterExpression": {"active": True}}),
     ("leads", [("lead_stage", 1), ("deal_value", 1)], {"partialFilterExpression": {"active": True, "deal_value": {"$gt": 0}}}),
+    ("leads", [("deal_value", -1), ("id", -1)], {}),
+    ("leads", [("company_name", 1), ("id", -1)], {}),
     # "Ozonetel Lead" tab — a POSITIVE, selective match (only ~200 docs carry pipeline=False),
     # which is Support's recommended replacement for the old non-selective pipeline!=False filter.
     ("leads", [("pipeline", 1), ("create_dt", -1)], {}),

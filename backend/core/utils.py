@@ -273,6 +273,15 @@ async def log_message(lead_id: int, body: str, author: dict = None, subtype: str
     return msg
 
 
+async def stamp_won(ids: list, stage: str):
+    """Record the first time a lead reaches Converted (won date powers won-value reports)."""
+    if stage != "Converted" or not ids:
+        return
+    now = now_utc_str()
+    await db.leads.update_many({"id": {"$in": ids}, "won_date": {"$exists": False}},
+                               {"$set": {"won_date": now, "won_date_ist": to_ist_str(now)}})
+
+
 async def log_audit(lead_id: int, user: dict = None, action: str = "", field: str = None,
                     old=None, new=None, detail: str = None):
     """Case change 1 — structured per-lead audit trail (who / what / old→new / when).
@@ -428,6 +437,7 @@ async def _apply_actions(rule: dict, lead: dict):
         lead.update(updates)
         await log_message(lead["id"], f"Automation '{rule['name']}' applied: {', '.join(updates.keys())}")
         if stage_moved:
+            await stamp_won([lead["id"]], updates["lead_stage"])
             from core import meta_capi
             meta_capi.on_stage_changed({k: v for k, v in lead.items() if k != "_id"})
 

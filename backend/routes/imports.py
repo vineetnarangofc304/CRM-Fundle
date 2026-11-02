@@ -13,8 +13,8 @@ from fastapi.responses import StreamingResponse
 
 from core.db import db
 from core.security import require_roles
-from core.utils import (IST_OFFSET, ensure_catalog, ist_date_parts, log_message, next_id, now_utc_str,
-                        run_automations, search_norm, to_ist_str)
+from core.utils import (IST_OFFSET, ensure_catalog, ist_date_parts, next_id, now_utc_str, run_automations,
+                        search_norm, to_ist_str)
 
 router = APIRouter(prefix="/import", tags=["import"])
 logger = logging.getLogger(__name__)
@@ -50,6 +50,7 @@ FIELDS = [
     ("follow_up_date", "Follow-up Date", ["follow_up_date", "followup_date", "next_follow_up", "follow_up"]),
     ("follow_up_time", "Follow-up Time", ["follow_up_time", "followup_time"]),
     ("_created", "Created Date", ["created_date", "created", "create_date", "lead_date", "date", "created_ist"]),
+    ("_won", "Won Date", ["won_date", "closed_date", "close_date", "won_on", "deal_closed_date"]),
 ]
 SIMPLE_KEYS = {k for k, _, _ in FIELDS if not k.startswith("_")}
 
@@ -219,6 +220,11 @@ def _build_row(row, headers, mapping, custom_keys, ctx, opts):
             if not d:
                 return None, None, None, None, f"Created date '{val}' not understood (use YYYY-MM-DD)"
             data["_created"] = d  # treated as IST
+        elif key == "_won":
+            d = _to_date(val)
+            if not d:
+                return None, None, None, None, f"Won date '{val}' not understood (use YYYY-MM-DD)"
+            data["_won"] = d
         elif key == "_tags":
             for t in [x.strip() for x in re.split(r"[,;|]", val) if x.strip()]:
                 tid = ctx.tags.get(t.lower())
@@ -279,95 +285,155 @@ def _clear_caches():
     reports_routes._dash_cache.clear()
 
 
+CHUNK = 1000
+
+
+async def _reserve_ids(name: str, n: int) -> list:
+    doc = await db.counters.find_one_and_update({"_id": name}, {"$inc": {"seq": n}}, upsert=True, return_document=True)
+    return list(range(doc["seq"] - n + 1, doc["seq"] + 1))
+
+
+def _ist_to_utc(d: datetime) -> str:
+    return (d - IST_OFFSET).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _msg(mid, lead_id, body, user, subtype="tracking", now=None):
+    return {"id": mid, "lead_id": lead_id, "body": body, "author_id": user["id"], "author_name": user["name"],
+            "date": now, "message_type": "comment" if subtype == "comment" else "notification", "subtype": subtype}
+
+
+def _new_doc(lid, data, custom, tag_ids, stage, pd, dup_of, created_ist, won_ist, user, now):
+    create = _ist_to_utc(created_ist) if created_ist else now
+    data.setdefault("country", "India")
+    data["name"] = data.get("contact_name") or data.get("company_name") or data.get("phone") or "New Lead"
+    doc = {
+        "id": lid, "active": True, "stage_id": 1, "type": "lead", "priority": "0",
+        "tags": tag_ids, "create_date": create, "create_date_ist": to_ist_str(create),
+        "write_date": now, "create_uid": user["id"], "custom": custom, "phone_digits": pd,
+        "is_duplicate": bool(dup_of), "duplicate_of": dup_of, "original_user_id": data.get("user_id"),
+        "bulk_import": True, **data,
+    }
+    if stage:
+        doc["lead_stage"] = stage
+        if stage == "Converted":
+            won = _ist_to_utc(won_ist) if won_ist else create
+            doc["won_date"], doc["won_date_ist"] = won, to_ist_str(won)
+    doc.update(ist_date_parts(doc["create_date_ist"]))
+    doc.update(search_norm(doc))
+    return doc
+
+
+def _update_op(data, custom, tag_ids, stage, won_ist, now):
+    upd = dict(data)
+    if stage:
+        upd["lead_stage"] = stage
+    upd["write_date"] = now
+    if "contact_name" in upd:
+        upd["name"] = upd["contact_name"]
+    upd.update({k: v for k, v in search_norm(upd).items() if v})
+    for k, v in custom.items():
+        upd[f"custom.{k}"] = v
+    op = {"$set": upd}
+    if tag_ids:
+        op["$addToSet"] = {"tags": {"$each": tag_ids}}
+    return op
+
+
 async def _run(job_id: int, headers, rows, mapping, opts, user):
+    """Chunked import: one $in duplicate lookup, one insert_many and one bulk_write per 1,000 rows."""
+    from pymongo import UpdateOne
     ctx = await _Ctx().load()
     custom_keys = {c["key"] for c in await db.custom_fields.find({}, {"_id": 0, "key": 1}).to_list(300)}
     stats = {"created": 0, "updated": 0, "skipped": 0, "failed": 0}
     errors = []
     dup_mode = opts.get("duplicate_mode", "skip")
     who = html.escape(user["name"])
-    for n, row in enumerate(rows, start=2):
-        try:
+    job_seen: dict = {}  # phone_digits -> first lead id created earlier in this file
+    for c0 in range(0, len(rows), CHUNK):
+        chunk = rows[c0:c0 + CHUNK]
+        now = now_utc_str()
+        items = []
+        for i, row in enumerate(chunk):
+            n = c0 + i + 2
             data, custom, tag_ids, stage, err = _build_row(row, headers, mapping, custom_keys, ctx, opts)
             if err:
                 stats["failed"] += 1
                 errors.append({"row": n, "error": err})
                 continue
             pd = re.sub(r"\D", "", data.get("phone") or "")[-10:]
-            pd = pd if len(pd) >= 8 else ""
-            existing = None
-            if pd:
-                hit = await db.leads.find_one(
-                    {"phone_digits": pd, "active": True}, {"_id": 0, "id": 1}, sort=[("id", 1)], max_time_ms=5000)
-                existing = hit["id"] if hit else None
-            created_ist = data.pop("_created", None)
-            if existing and dup_mode == "skip":
-                stats["skipped"] += 1
-                errors.append({"row": n, "error": f"Skipped — phone already exists on lead #{existing}"})
-                continue
-            await _resolve_new_tags(data, tag_ids, ctx, errors, n)
-            if not (existing and dup_mode == "update"):
-                _apply_new_lead_defaults(data, ctx, opts)
-            if data.get("source_lead") and data["source_lead"] not in ctx.sources:
-                await ensure_catalog("source_lead", data["source_lead"])
-                ctx.sources.add(data["source_lead"])
-            if existing and dup_mode == "update":
-                upd = dict(data)
-                if stage:
-                    upd["lead_stage"] = stage
-                upd["write_date"] = now_utc_str()
-                if "contact_name" in upd:
-                    upd["name"] = upd["contact_name"]
-                norm = search_norm(upd)
-                upd.update({k: v for k, v in norm.items() if v})
-                for k, v in custom.items():
-                    upd[f"custom.{k}"] = v
-                op = {"$set": upd}
-                if tag_ids:
-                    op["$addToSet"] = {"tags": {"$each": tag_ids}}
-                await db.leads.update_one({"id": existing}, op)
-                await log_message(existing, f"Lead updated from bulk upload by {who}", author=user)
-                stats["updated"] += 1
-                continue
-            await _insert(data, custom, tag_ids, stage, pd, existing, created_ist, opts, user)
-            stats["created"] += 1
-        except Exception as e:
-            logger.exception("import row failed")
-            stats["failed"] += 1
-            errors.append({"row": n, "error": f"Unexpected error: {e}"[:200]})
-        finally:
-            if n % 200 == 0:
-                await db.import_jobs.update_one({"id": job_id}, {"$set": {**stats, "processed": n - 1}})
+            items.append((n, data, custom, tag_ids, stage, pd if len(pd) >= 8 else ""))
+        pds = list({it[5] for it in items if it[5] and it[5] not in job_seen})
+        existing = {}
+        if pds:
+            async for d in db.leads.find({"phone_digits": {"$in": pds}, "active": True},
+                                         {"_id": 0, "id": 1, "phone_digits": 1}).sort("id", 1):
+                existing.setdefault(d["phone_digits"], d["id"])
+        existing.update(job_seen)
+        ids = await _reserve_ids("lead", len(items)) if items else []
+        new_docs, pending, ops, msgs = [], {}, [], []
+        for idx, (n, data, custom, tag_ids, stage, pd) in enumerate(items):
+            try:
+                dup = existing.get(pd) if pd else None
+                in_chunk = pending.get(pd) if pd else None
+                if (dup or in_chunk) and dup_mode == "skip":
+                    stats["skipped"] += 1
+                    errors.append({"row": n, "error": f"Skipped — phone already exists on lead #{dup or in_chunk['id']}"})
+                    continue
+                await _resolve_new_tags(data, tag_ids, ctx, errors, n)
+                created_ist, won_ist = data.pop("_created", None), data.pop("_won", None)
+                is_update = bool(dup or in_chunk) and dup_mode == "update"
+                if not is_update:
+                    _apply_new_lead_defaults(data, ctx, opts)
+                if data.get("source_lead") and data["source_lead"] not in ctx.sources:
+                    await ensure_catalog("source_lead", data["source_lead"])
+                    ctx.sources.add(data["source_lead"])
+                if is_update and in_chunk:
+                    in_chunk.update({k: v for k, v in data.items()})
+                    in_chunk["custom"].update(custom)
+                    in_chunk["tags"] = list(dict.fromkeys(in_chunk["tags"] + tag_ids))
+                    if stage:
+                        in_chunk["lead_stage"] = stage
+                    stats["updated"] += 1
+                    continue
+                if is_update:
+                    op = _update_op(data, custom, tag_ids, stage, won_ist, now)
+                    ops.append(UpdateOne({"id": dup}, op))
+                    if stage == "Converted":
+                        won = _ist_to_utc(won_ist) if won_ist else now
+                        ops.append(UpdateOne({"id": dup, "won_date": {"$exists": False}},
+                                             {"$set": {"won_date": won, "won_date_ist": to_ist_str(won)}}))
+                    msgs.append((dup, f"Lead updated from bulk upload by {who}", "tracking"))
+                    stats["updated"] += 1
+                    continue
+                dup_of = dup or (in_chunk["id"] if in_chunk else None)
+                doc = _new_doc(ids[idx], data, custom, tag_ids, stage, pd, dup_of, created_ist, won_ist, user, now)
+                new_docs.append(doc)
+                if pd and not dup_of:
+                    pending[pd] = doc
+                msgs.append((doc["id"], f"Lead created from bulk upload by {who}", "tracking"))
+                if dup_of:
+                    msgs.append((doc["id"], f"⚠️ Possible duplicate — same phone as lead #{dup_of}", "comment"))
+                stats["created"] += 1
+            except Exception as e:
+                logger.exception("import row failed")
+                stats["failed"] += 1
+                errors.append({"row": n, "error": f"Unexpected error: {e}"[:200]})
+        if new_docs:
+            await db.leads.insert_many(new_docs, ordered=False)
+            job_seen.update({pd: d["id"] for pd, d in pending.items()})
+        if ops:
+            await db.leads.bulk_write(ops, ordered=True)
+        if msgs:
+            mids = await _reserve_ids("message", len(msgs))
+            await db.messages.insert_many([_msg(mid, lid, body, user, st, now) for mid, (lid, body, st) in zip(mids, msgs)],
+                                          ordered=False)
+        if opts.get("run_automations"):
+            for d in new_docs:
+                await run_automations("on_create", {k: v for k, v in d.items() if k != "_id"})
+        await db.import_jobs.update_one({"id": job_id}, {"$set": {**stats, "processed": min(c0 + CHUNK, len(rows))}})
     await db.import_jobs.update_one({"id": job_id}, {"$set": {
         **stats, "processed": len(rows), "status": "done", "errors": errors[:1000],
         "error_count": len(errors), "finished_at": now_utc_str()}})
-
-
-async def _insert(data, custom, tag_ids, stage, pd, existing, created_ist, opts, user):
-    lid = await next_id("lead")
-    if created_ist:
-        create = (created_ist - IST_OFFSET).strftime("%Y-%m-%d %H:%M:%S")
-    else:
-        create = now_utc_str()
-    data.setdefault("country", "India")
-    data["name"] = data.get("contact_name") or data.get("company_name") or data.get("phone") or "New Lead"
-    doc = {
-        "id": lid, "active": True, "stage_id": 1, "type": "lead", "priority": "0",
-        "tags": tag_ids, "create_date": create, "create_date_ist": to_ist_str(create),
-        "write_date": now_utc_str(), "create_uid": user["id"], "custom": custom, "phone_digits": pd,
-        "is_duplicate": bool(existing), "duplicate_of": existing, "original_user_id": data.get("user_id"),
-        "bulk_import": True, **data,
-    }
-    if stage:
-        doc["lead_stage"] = stage
-    doc.update(ist_date_parts(doc["create_date_ist"]))
-    doc.update(search_norm(doc))
-    await db.leads.insert_one(doc)
-    await log_message(lid, f"Lead created from bulk upload by {html.escape(user['name'])}", author=user)
-    if existing:
-        await log_message(lid, f"⚠️ Possible duplicate — same phone as lead #{existing}", author=user, subtype="comment")
-    if opts.get("run_automations"):
-        await run_automations("on_create", doc)
 
 
 @router.post("/leads")

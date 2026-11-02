@@ -13,7 +13,7 @@ from pydantic import BaseModel
 
 from core.db import db, db_analytics
 from core.security import get_current_user, require_roles, ensure_lead_edit
-from core.utils import log_message, log_audit, next_id, now_utc_str, run_automations, to_ist_str, ist_date_parts, today_ist, check_duplicate, record_wa_outbound, search_norm, sync_channel_owner
+from core.utils import log_message, log_audit, next_id, now_utc_str, run_automations, to_ist_str, ist_date_parts, today_ist, check_duplicate, record_wa_outbound, search_norm, sync_channel_owner, stamp_won
 from core import whatsapp_cloud as wac
 from core import meta_capi as capi
 
@@ -28,7 +28,7 @@ LIST_PROJECTION = {
     "probability": 1, "appointment_date": 1, "lost_reason_id": 1, "is_duplicate": 1, "duplicate_of": 1,
     "ozonetel_lead": 1, "in_pipeline": 1, "conversion_page": 1,
     "utm_source": 1, "utm_medium": 1, "utm_campaign": 1, "total_follow_ups": 1,
-    "company_name": 1, "deal_value": 1,
+    "company_name": 1, "deal_value": 1, "won_date_ist": 1,
 }
 
 EDITABLE_FIELDS = {
@@ -63,7 +63,7 @@ def build_query(
     active="true", date_from=None, date_to=None, follow_up=None, priority=None,
     follow_up_tag=None, lost_reason_id=None, bucket=None, duplicate=None, scope=None,
     utm_source=None, utm_medium=None, utm_campaign=None, min_followups=None,
-    current_user=None,
+    current_user=None, min_deal_value=None,
 ):
     q = {}
     # When SEARCHING (Case 1 — find ANY customer by number/name), do NOT restrict to a single
@@ -141,6 +141,11 @@ def build_query(
                 q["total_follow_ups"] = {"$gte": _n}
         except (ValueError, TypeError):
             pass
+    if min_deal_value:
+        try:
+            q["deal_value"] = {"$gte": float(str(min_deal_value).replace(",", ""))}
+        except ValueError:
+            pass
     if city:
         q["city"] = {"$regex": re.escape(city), "$options": "i"}
     if state_name:
@@ -202,6 +207,7 @@ def query_params_dep(
     scope: Optional[str] = None,
     utm_source: Optional[str] = None, utm_medium: Optional[str] = None,
     utm_campaign: Optional[str] = None, min_followups: Optional[str] = None,
+    min_deal_value: Optional[str] = None,
 ):
     return dict(
         search=search, stage_id=stage_id, lead_stage=lead_stage, tags=tags, user_id=user_id,
@@ -210,12 +216,13 @@ def query_params_dep(
         follow_up=follow_up, priority=priority, follow_up_tag=follow_up_tag, lost_reason_id=lost_reason_id,
         bucket=bucket, duplicate=duplicate, scope=scope,
         utm_source=utm_source, utm_medium=utm_medium, utm_campaign=utm_campaign,
-        min_followups=min_followups,
+        min_followups=min_followups, min_deal_value=min_deal_value,
     )
 
 
 ALLOWED_SORT = {"create_date", "create_date_ist", "contact_name", "name", "phone", "city",
-                "user_id", "lead_stage", "follow_up_date", "source_lead", "id", "write_date"}
+                "user_id", "lead_stage", "follow_up_date", "source_lead", "id", "write_date",
+                "company_name", "deal_value"}
 
 # Cap every list query so a slow scan on a big filtered set aborts and RELEASES its pooled
 # connection (fast error) instead of hanging until the ingress gateway 503s. Support DB
@@ -570,6 +577,7 @@ async def update_lead(lead_id: int, body: LeadUpdate, user: dict = Depends(get_c
     if stage_changed:
         await run_automations("on_stage_set", new_lead)
     if "lead_stage" in updates and updates["lead_stage"] != lead.get("lead_stage"):
+        await stamp_won([lead_id], updates["lead_stage"])
         capi.on_stage_changed(new_lead)
     if "tags" in updates:
         added = list(set(updates["tags"] or []) - set(lead.get("tags") or []))
@@ -807,6 +815,7 @@ async def bulk_action(body: BulkBody, user: dict = Depends(require_roles("admin"
     elif body.action == "set_lead_stage":
         newly = await db.leads.distinct("id", {**q, "lead_stage": {"$ne": p["lead_stage"]}})
         await db.leads.update_many(q, {"$set": {"lead_stage": p["lead_stage"]}})
+        await stamp_won(newly, p["lead_stage"])
         capi.on_bulk_stage_set(newly, p["lead_stage"])
     elif body.action == "archive":
         await db.leads.update_many(q, {"$set": {"active": False}})
