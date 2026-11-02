@@ -1,7 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
-import { CaretLeft, CaretRight, FunnelSimple, Kanban, ListBullets, Plus, FloppyDisk, X, PhoneCall, Columns, DownloadSimple } from "@phosphor-icons/react";
+import { CaretLeft, CaretRight, FunnelSimple, Kanban, ListBullets, Plus, FloppyDisk, X, PhoneCall, Columns, DownloadSimple, UploadSimple } from "@phosphor-icons/react";
+import { ImportLeadsModal } from "../components/ImportLeadsModal";
 import { API, apiErr, fmtDay, fmtDate } from "../lib/api";
 import { useAuth, useCatalogMaps } from "../context/AuthContext";
 import { TagChip, StageBadge, Spinner, EmptyState } from "../components/Bits";
@@ -101,6 +102,7 @@ export default function Leads() {
   const [savedFilters, setSavedFilters] = useState([]);
   const [showCreate, setShowCreate] = useState(false);
   const [showExport, setShowExport] = useState(false);
+  const [showImport, setShowImport] = useState(false);
   const [promote, setPromote] = useState(null);
   const [showCols, setShowCols] = useState(false);
   const [visibleCols, setVisibleCols] = useState(() => {
@@ -413,6 +415,9 @@ export default function Leads() {
           {user.role === "admin" && bucket === "pipeline" && (
             <button data-testid="export-leads-button" onClick={() => setShowExport(true)} className="crm-btn-secondary !px-3 !py-1.5 text-xs"><DownloadSimple size={14} /> Export</button>
           )}
+          {["admin", "manager"].includes(user.role) && (
+            <button data-testid="bulk-upload-button" onClick={() => setShowImport(true)} className="crm-btn-secondary !px-3 !py-1.5 text-xs"><UploadSimple size={14} /> Bulk Upload</button>
+          )}
           <button data-testid="new-lead-button" onClick={() => setShowCreate(true)} className="crm-btn-primary !px-3 !py-1.5 text-xs"><Plus size={14} /> New Lead</button>
         </div>
       </div>
@@ -513,6 +518,7 @@ export default function Leads() {
 
       {showCreate && <CreateLeadModal onClose={() => setShowCreate(false)} onCreated={(l) => { setShowCreate(false); navigate(`/leads/${l.id}`); }} catalogs={catalogs} />}
       {showExport && <ExportModal onClose={() => setShowExport(false)} filterParams={filterParams} activeChips={activeChips} />}
+      {showImport && <ImportLeadsModal onClose={() => setShowImport(false)} onDone={load} />}
       {promote && <PromoteModal lead={promote} onClose={() => setPromote(null)} onDone={() => { setPromote(null); load(); }} />}
     </div>
   );
