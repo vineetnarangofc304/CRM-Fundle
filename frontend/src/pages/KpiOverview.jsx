@@ -5,8 +5,8 @@ import { API, apiErr } from "../lib/api";
 import { toast } from "sonner";
 import "./LeadPulse.css";
 
-const ConfigLink = ({ tab = "KPI Settings" }) => (
-  <Link to={`/admin?tab=${encodeURIComponent(tab)}`} className="lp-config-link" data-testid={`kpi-configure-link-${tab.toLowerCase().replace(/\s/g, "-")}`}>Configure in Admin →</Link>
+const ConfigLink = ({ tab = "KPI Settings", id = "kpi-settings" }) => (
+  <Link to={`/admin?tab=${encodeURIComponent(tab)}`} className="lp-config-link" data-testid={`kpi-configure-link-${id}`}>Configure in Admin →</Link>
 );
 
 const fmt = (n) => (n ?? 0).toLocaleString("en-IN");
@@ -181,7 +181,7 @@ export default function KpiOverview() {
         <tbody>
           {s.rows.length === 0 && (
             <tr><td colSpan={7} className="lp-empty" data-testid={`kpi-stage-empty-${s.key}`}>
-              {s.key === "new" ? "Leads without a stage yet." : <>No disposition tags mapped to this stage. <ConfigLink tab="Dropdowns" /></>}
+              {s.key === "new" ? "Leads without a stage yet." : <>No disposition tags mapped to this stage. <ConfigLink tab="Dropdowns" id={`stage-${s.key}`} /></>}
             </td></tr>
           )}
           {s.rows.map((r) => (
@@ -255,7 +255,7 @@ export default function KpiOverview() {
         {!D.hasMs && (
           <div className="kpi" style={{ "--k": "#94A3B8" }} data-testid="kpi-milestones-empty">
             <div className="label">Conversion milestones</div>
-            <div className="cmp" style={{ marginTop: 8 }}>Pick up to 4 milestone tags (e.g. Demo Booked → Won) to see them here. <ConfigLink /></div>
+            <div className="cmp" style={{ marginTop: 8 }}>Pick up to 4 milestone tags (e.g. Demo Booked → Won) to see them here. <ConfigLink id="milestones" /></div>
           </div>
         )}
       </div>
@@ -302,7 +302,7 @@ export default function KpiOverview() {
                 <div>
                   <h3>VALID LEADS</h3>
                   <div className="logic" data-testid="kpi-valid-logic">
-                    {D.valid.tags?.length ? D.valid.tags.join(" + ") : <>No valid-lead tags selected. <ConfigLink /></>}
+                    {D.valid.tags?.length ? D.valid.tags.join(" + ") : <>No valid-lead tags selected. <ConfigLink id="valid-leads" /></>}
                   </div>
                 </div>
               </div>
@@ -340,7 +340,7 @@ export default function KpiOverview() {
             <h3>Conversion Metrics</h3>
             <div className="hint">Step-to-step conversion rates between your conversion milestones for {cur ? "the month" : data.month} and the year.</div>
             {!D.hasMs ? (
-              <div className="lp-empty" data-testid="kpi-conversion-empty">No conversion milestones set. <ConfigLink /></div>
+              <div className="lp-empty" data-testid="kpi-conversion-empty">No conversion milestones set. <ConfigLink id="conversion" /></div>
             ) : (
             <table className="conv">
               <thead><tr><th>Conversion Metrics</th><th>{monLbl}</th><th>YTD</th></tr></thead>

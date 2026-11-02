@@ -1,0 +1,43 @@
+{
+  "summary": "First test run of the Fundle.ai CRM rebrand. Backend: 24/24 pytest pass, covering auth, seeded dispositions, 14 GET endpoints on an empty DB, the full tags→disposition-map→kpi_config→lead→kpi-overview flow with correct counts, chatter and xlsx export. Frontend: admin login works. Title is 'Fundle.ai CRM | Powered by Fundle.ai'. 'Powered by Fundle.ai' is on every page. No banned words (TifTech/HomeIVF/Emergent/IVF/OPD/patient/spouse/doctor/treatment/clinic/fertility) on any of the 11 sidebar pages or the login page. Logos keep their 3.82 aspect ratio (login desktop 153x40, mobile 153x40, sidebar 122x32). Every page, all 16 Admin tabs and all 6 Call Center sub-tabs load with 0 JS page errors. Lead flows work through the UI: create (India default), detail with Enquiry Details showing only Query + Remark, stage, tag, follow-up, chatter note and Excel download. KPI Settings save persists after reload and shows the toast. The KPI page shows milestone cards and conversion rows once configured; with no config it shows 'Configure in Admin' links that open /admin?tab=KPI%20Settings. The Dashboard and Reports pivot show the new tags and leads. All test data was cleaned up: 0 leads, follow-ups, messages and audit logs; TEST_ tags hard-deleted; kpi_config removed; disposition_map back to the seed; 1 user (admin).",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "GET /api/reports/kpi-overview", "issue": "Results are cached for 120s. The cache key covers config, month and date but not lead changes, so new tags or stage changes on leads can take up to 2 minutes to appear on Lead Pulse. Config changes do bust the cache."},
+      {"endpoint": "GET /api/leads", "issue": "_cached_count returns -1 on the first load of each query, so the UI shows 'Many leads · page 1 of 1' even when the DB has 2 leads. This looks odd on a fresh or small client DB. Consider an inline count when the collection is small (estimated_document_count < ~50k)."},
+      {"endpoint": "DELETE /api/catalogs/tag/{id}", "issue": "Soft delete only (active:false). This is fine, but there is no hard delete for test or typo tags."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "KpiOverview ConfigLink", "issue": "The same data-testid 'kpi-configure-link-kpi-settings' is rendered 3 times (milestones card, valid leads, conversion metrics). Test IDs should be unique, e.g. include the section name.", "selector": "[data-testid=kpi-configure-link-kpi-settings]", "priority": "LOW"},
+      {"component": "LeadDetail Chatter tab", "issue": "The tab badge showed 3 while 4 messages were listed (lead created, stage change, stage+tag change, note).", "selector": "Chatter tab badge", "priority": "LOW"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Dashboard / Reports / Lead detail follow-up form", "issues": ["Uses the browser's native date/time inputs (mm/dd/yyyy) instead of the shadcn Calendar/Popover picker"]},
+      {"screen": "Lead detail", "issues": ["The AI Summary card says 'AI insights & next-best-action arrive in Phase 2.' Placeholder copy shown to the client.", "The success toast at the top right covers the header action buttons (stage pill/Email) for a few seconds", "The disposition dropdown lists all tags whatever the selected stage. Picking 'Busy' while in Contacted silently switches the stage to Contact Attempt. Might be intended, but worth confirming."]},
+      {"screen": "KPI page (empty DB)", "issues": ["The Pipeline pulse FTD/MTD/YTD bars are blank with no 'No leads yet' message"]}
+    ]
+  },
+  "test_report_links": ["/app/backend/tests/test_fundle_crm.py", "/app/backend/tests/cleanup_test_data.js", "/app/test_reports/pytest/pytest_results.xml"],
+  "action_items": [
+    "Optional: make the kpi-configure-link test IDs unique per section",
+    "Optional: replace the 'Phase 2' AI Summary placeholder text",
+    "Optional: show the exact lead count on small DBs instead of 'Many'",
+    "Optional: switch native date inputs to the shadcn Calendar"
+  ],
+  "critical_code_review_comments": [
+    "Admin.jsx is 2188 lines, LeadDetail.jsx 1353, server.py 760. Split them into tab or section modules.",
+    "PATCH /api/admin/settings takes an arbitrary key and spreads any value dict into settings. There is no allow-list or schema for kpi_config, though get_kpi_config sanitises on read.",
+    "kpi-overview cache dict _kpi_cache has no size bound (keys include the date and the config hash)",
+    "attachments.py docstring still says 'medical reports'. This is internal only and not user-visible."
+  ],
+  "updated_files": ["/app/backend/tests/test_fundle_crm.py", "/app/backend/tests/cleanup_test_data.js"],
+  "success_rate": {"backend": "100%", "frontend": "97%"},
+  "test_credentials": "admin@fundle.ai / Fundle@cf928c (from /app/memory/test_credentials.md); works",
+  "seed_data_creation": "None left behind. TEST_ leads/tags/kpi_config were created and then removed with cleanup_test_data.js. The leads id counter moved forward to 500003.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Run the backend suite with 'cd /app/backend && REACT_APP_BACKEND_URL=... python -m pytest tests/test_fundle_crm.py -n 0'. Use -n 0 because pytest.ini enables xdist, which breaks the class ordering. The suite creates TEST_ data; remove it afterwards with 'mongosh test_database tests/cleanup_test_data.js'. Login sets a cookie and returns the user object directly (no 'user' key). The catalogs cache lasts 45s and the KPI cache 120s, so wait after direct mongo edits. Integrations (Ozonetel/WA/FB/Gmail/CAPI) have no credentials; only their tabs loading was checked."
+}

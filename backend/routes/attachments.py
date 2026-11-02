@@ -1,4 +1,4 @@
-"""Case 11 — multiple file attachments per lead (medical reports etc.) via Emergent object storage."""
+"""Multiple file attachments per lead (documents, proposals, contracts) via object storage."""
 import uuid
 from typing import Optional
 

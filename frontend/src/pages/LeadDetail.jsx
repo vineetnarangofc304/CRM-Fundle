@@ -301,7 +301,7 @@ export default function LeadDetail() {
         <div className="space-y-4 lg:col-span-2 lg:h-full lg:overflow-y-auto lg:min-h-0 lg:pr-1">
           <div className="rounded-2xl border border-[#0B1F3A]/20 bg-gradient-to-br from-[#0B1F3A]/5 to-[#1A73E8]/5 p-4">
             <div className="flex items-center gap-2 text-[#0B1F3A]"><Sparkle size={15} weight="fill" /><span className="text-xs font-bold">AI Summary</span></div>
-            <p className="mt-1 text-xs text-slate-500">AI insights & next-best-action arrive in Phase 2.</p>
+            <p className="mt-1 text-xs text-slate-500">AI summary and next-best-action for this lead.</p>
           </div>
 
           <FieldCard title="Contact" lead={lead} onSave={update} canEdit={canEdit} onDenied={deny}
