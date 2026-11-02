@@ -1,0 +1,2188 @@
+import React, { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
+import { toast } from "sonner";
+import { Plus, Trash, ArrowsClockwise, Copy, Phone, DotsSixVertical, FacebookLogo, WhatsappLogo, EnvelopeSimple, GoogleLogo, PencilSimple, LockSimple } from "@phosphor-icons/react";
+import { API, apiErr, fmtDate } from "../lib/api";
+import { useAuth, useCatalogs, useCatalogMaps } from "../context/AuthContext";
+import { Spinner, TagChip } from "../components/Bits";
+import { MetaCapiTab } from "../components/MetaCapiTab";
+
+const TABS = ["Users", "Tags", "Dropdowns", "KPI Settings", "Custom Fields", "Webhooks", "Automations", "Assignment", "Attendance", "Telephony", "Facebook", "Meta CAPI", "WhatsApp", "Email", "Duplicates", "System Health"];
+
+export default function Admin() {
+  const { user } = useAuth();
+  const [tab, setTab] = useState("Users");
+  useEffect(() => {
+    const p = new URLSearchParams(window.location.search);
+    if (p.get("tab")) setTab(p.get("tab"));
+    if (p.get("gmail") === "connected") toast.success("Gmail connected — live email is now active ✓");
+    else if (p.get("gmail")) toast.error(`Gmail connection failed${p.get("reason") ? " — " + p.get("reason") : " — check redirect URI & consent"}`, { duration: 12000 });
+  }, []);
+  return (
+    <div className="p-6" data-testid="admin-page">
+      <h1 className="font-display text-2xl font-extrabold text-slate-900">Admin</h1>
+      <p className="text-sm text-slate-500">Manage everything that powers your CRM</p>
+      <div className="mt-4 flex flex-wrap gap-2">
+        {TABS.map((t) => (
+          <button key={t} data-testid={`admin-tab-${t.toLowerCase().replace(/\s/g, "-")}`} onClick={() => setTab(t)}
+            className={`rounded-full border px-4 py-2 text-sm font-bold transition-colors ${tab === t ? "border-[#1A73E8] bg-[#1A73E8]/10 text-[#1557B0]" : "border-slate-200 bg-white text-slate-500 hover:bg-slate-50"}`}>
+            {t}
+          </button>
+        ))}
+      </div>
+      <div className="mt-5">
+        {tab === "Users" && <UsersTab isAdmin={user.role === "admin"} />}
+        {tab === "Tags" && <CatalogTab ctype="tag" title="Disposition Tags" withColor />}
+        {tab === "Dropdowns" && <DropdownsTab />}
+        {tab === "KPI Settings" && <KpiSettingsTab isAdmin={user.role === "admin"} />}
+        {tab === "Custom Fields" && <CustomFieldsTab />}
+        {tab === "Webhooks" && <WebhooksTab />}
+        {tab === "Automations" && <AutomationsTab />}
+        {tab === "Assignment" && <AssignmentTab />}
+        {tab === "Attendance" && <AttendanceTab />}
+        {tab === "Telephony" && <TelephonyTab isAdmin={user.role === "admin"} />}
+        {tab === "Facebook" && <FacebookTab isAdmin={user.role === "admin"} />}
+        {tab === "Meta CAPI" && <MetaCapiTab isAdmin={user.role === "admin"} />}
+        {tab === "WhatsApp" && <WhatsAppTab isAdmin={user.role === "admin"} />}
+        {tab === "Email" && <EmailTab isAdmin={user.role === "admin"} />}
+        {tab === "Duplicates" && <DuplicatesTab />}
+        {tab === "System Health" && <SystemHealthTab />}
+      </div>
+    </div>
+  );
+}
+
+function SystemHealthTab() {
+  const [summary, setSummary] = useState(null);
+  const [logs, setLogs] = useState(null);
+  const [kind, setKind] = useState("");
+  const [expanded, setExpanded] = useState(null);
+  const [dbHealth, setDbHealth] = useState(null);
+
+  const load = () => {
+    Promise.all([
+      API.get("/admin/error-logs/summary"),
+      API.get("/admin/error-logs", { params: kind ? { kind, limit: 150 } : { limit: 150 } }),
+    ]).then(([s, l]) => { setSummary(s.data); setLogs(l.data.logs); })
+      .catch((e) => toast.error(apiErr(e)));
+  };
+  // Fetched INDEPENDENTLY of the log endpoints: during an Atlas outage the log queries 503,
+  // but this bounded probe must still render so the admin can see the DB is the culprit.
+  const loadDbHealth = () => {
+    API.get("/admin/db-health")
+      .then(({ data }) => setDbHealth(data))
+      .catch(() => setDbHealth({ reachable: false, latency_ms: null, detail: "Could not reach the server" }));
+  };
+  useEffect(() => {
+    load(); loadDbHealth();
+    const t = setInterval(() => { load(); loadDbHealth(); }, 15000);
+    return () => clearInterval(t); /* eslint-disable-next-line */
+  }, [kind]);
+
+  const clearLogs = async () => {
+    if (!window.confirm("Clear all captured error/slow logs? This cannot be undone.")) return;
+    try { await API.delete("/admin/error-logs"); toast.success("Logs cleared"); load(); }
+    catch (e) { toast.error(apiErr(e)); }
+  };
+
+  const statusCls = (s) => (s >= 500 ? "bg-rose-50 text-rose-600" : "bg-amber-50 text-amber-600");
+
+  const Card = ({ label, value, tone }) => (
+    <div className="crm-card p-4" data-testid={`health-card-${label.toLowerCase().replace(/\s/g, "-")}`}>
+      <p className={`font-display text-2xl font-extrabold ${tone}`}>{value ?? "—"}</p>
+      <p className="mt-0.5 text-xs font-semibold uppercase tracking-wider text-slate-500">{label}</p>
+    </div>
+  );
+
+  return (
+    <div className="space-y-5" data-testid="system-health-tab">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h3 className="font-display text-lg font-extrabold text-slate-900">System Health</h3>
+          <p className="text-sm text-slate-500">Server-side 5xx errors & slow requests, captured live (auto-refreshes every 15s, kept 7 days)</p>
+        </div>
+        <div className="flex gap-2">
+          <button onClick={load} className="crm-btn-secondary !py-1.5 text-xs" data-testid="health-refresh"><ArrowsClockwise size={14} className="mr-1 inline" />Refresh</button>
+          <button onClick={clearLogs} className="crm-btn-secondary !py-1.5 text-xs text-rose-600" data-testid="health-clear"><Trash size={14} className="mr-1 inline" />Clear</button>
+        </div>
+      </div>
+
+      <div className={`flex flex-wrap items-center justify-between gap-3 rounded-xl border p-3.5 ${dbHealth ? (dbHealth.reachable ? "border-emerald-200 bg-emerald-50" : "border-rose-200 bg-rose-50") : "border-slate-200 bg-slate-50"}`} data-testid="db-health-banner">
+        <div className="flex items-center gap-3">
+          <span className={`relative flex h-3 w-3 ${dbHealth && !dbHealth.reachable ? "" : ""}`}>
+            {dbHealth?.reachable && <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-60" />}
+            <span className={`relative inline-flex h-3 w-3 rounded-full ${dbHealth ? (dbHealth.reachable ? "bg-emerald-500" : "bg-rose-500") : "bg-slate-300"}`} data-testid="db-health-dot" />
+          </span>
+          <div>
+            <p className={`font-display text-sm font-extrabold ${dbHealth ? (dbHealth.reachable ? "text-emerald-700" : "text-rose-700") : "text-slate-500"}`} data-testid="db-health-status">
+              {dbHealth ? (dbHealth.reachable ? "Database reachable" : "Database unreachable") : "Checking database…"}
+              {dbHealth?.reachable && dbHealth.latency_ms != null && <span className="ml-2 font-semibold text-emerald-600">· {dbHealth.latency_ms} ms</span>}
+            </p>
+            <p className="text-xs text-slate-500" data-testid="db-health-detail">
+              {dbHealth ? dbHealth.detail : "Bounded live ping to MongoDB"}
+              {dbHealth && !dbHealth.reachable && " — if the app is up but this is red, the issue is the database (Atlas), not the app."}
+            </p>
+          </div>
+        </div>
+        <span className={`rounded-full px-3 py-1 text-xs font-bold ${dbHealth ? (dbHealth.reachable ? "bg-emerald-100 text-emerald-700" : "bg-rose-100 text-rose-700") : "bg-slate-100 text-slate-500"}`} data-testid="db-health-pill">
+          {dbHealth ? (dbHealth.reachable ? "● LIVE" : "● DOWN") : "…"}
+        </span>
+      </div>
+
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
+        <Card label="Errors last 1h" value={summary?.errors_1h} tone={summary?.errors_1h ? "text-rose-600" : "text-emerald-600"} />
+        <Card label="Errors last 24h" value={summary?.errors_24h} tone={summary?.errors_24h ? "text-rose-600" : "text-emerald-600"} />
+        <Card label="Slow (>8s) last 24h" value={summary?.slow_24h} tone={summary?.slow_24h ? "text-amber-600" : "text-emerald-600"} />
+      </div>
+
+      {summary?.top_paths?.length > 0 && (
+        <div className="crm-card p-4" data-testid="health-top-paths">
+          <h4 className="mb-2 text-sm font-bold text-slate-700">Top failing endpoints (24h)</h4>
+          <div className="space-y-1.5">
+            {summary.top_paths.map((t, i) => (
+              <div key={i} className="flex items-center justify-between text-sm">
+                <span className="flex items-center gap-2">
+                  <span className={`rounded px-1.5 py-0.5 text-xs font-bold ${statusCls(t.status)}`}>{t.status}</span>
+                  <code className="text-slate-700">{t.path}</code>
+                </span>
+                <span className="text-xs text-slate-500">{t.count}× · last {t.last}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div className="flex gap-2">
+        {[["", "All"], ["error", "Errors only"], ["slow", "Slow only"]].map(([v, lbl]) => (
+          <button key={v} onClick={() => setKind(v)} data-testid={`health-filter-${v || "all"}`}
+            className={`rounded-full border px-3 py-1 text-xs font-bold transition-colors ${kind === v ? "border-[#1A73E8] bg-[#1A73E8]/10 text-[#1557B0]" : "border-slate-200 bg-white text-slate-500"}`}>
+            {lbl}
+          </button>
+        ))}
+      </div>
+
+      <div className="crm-card overflow-hidden">
+        {logs === null ? (
+          <div className="p-6"><Spinner /></div>
+        ) : logs.length === 0 ? (
+          <div className="p-8 text-center text-sm text-slate-500" data-testid="health-empty">No errors or slow requests captured 🎉</div>
+        ) : (
+          <table className="w-full text-sm" data-testid="health-log-table">
+            <thead>
+              <tr className="border-b border-slate-100 text-left text-[11px] uppercase tracking-wider text-slate-400">
+                <th className="px-3 py-2">Time (IST)</th><th className="px-3 py-2">Status</th>
+                <th className="px-3 py-2">Endpoint</th><th className="px-3 py-2 text-right">Duration</th>
+                <th className="px-3 py-2">User</th><th className="px-3 py-2">Error</th>
+              </tr>
+            </thead>
+            <tbody>
+              {logs.map((l, i) => (
+                <React.Fragment key={i}>
+                  <tr className="border-b border-slate-50 last:border-0 hover:bg-slate-50/60 cursor-pointer"
+                    data-testid={`health-log-row-${i}`}
+                    onClick={() => setExpanded(expanded === i ? null : (l.traceback ? i : null))}>
+                    <td className="px-3 py-2 whitespace-nowrap text-xs text-slate-500">{l.ts_ist || l.ts}</td>
+                    <td className="px-3 py-2"><span className={`rounded px-1.5 py-0.5 text-xs font-bold ${statusCls(l.status)}`}>{l.status}</span></td>
+                    <td className="px-3 py-2"><span className="text-xs font-semibold text-slate-400">{l.method}</span> <code className="text-slate-700">{l.path}</code></td>
+                    <td className="px-3 py-2 text-right text-xs text-slate-600">{(l.duration_ms / 1000).toFixed(2)}s</td>
+                    <td className="px-3 py-2 text-xs text-slate-600">{l.user_name || (l.user_id ? `#${l.user_id}` : "—")}</td>
+                    <td className="px-3 py-2 text-xs text-rose-600">{l.error_type ? `${l.error_type}: ${l.error || ""}`.slice(0, 60) : "—"}</td>
+                  </tr>
+                  {expanded === i && l.traceback && (
+                    <tr data-testid={`health-log-trace-${i}`}>
+                      <td colSpan={6} className="bg-slate-900 px-4 py-3">
+                        <pre className="max-h-72 overflow-auto whitespace-pre-wrap text-[11px] leading-relaxed text-slate-200">{l.traceback}</pre>
+                      </td>
+                    </tr>
+                  )}
+                </React.Fragment>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function UsersTab({ isAdmin }) {
+  const [users, setUsers] = useState(null);
+  const [show, setShow] = useState(false);
+  const [editUser, setEditUser] = useState(null);
+  const [form, setForm] = useState({ name: "", email: "", password: "", role: "caller" });
+  const { refreshCatalogs } = useCatalogs();
+
+  const load = () => API.get("/users").then(({ data }) => setUsers(data));
+  useEffect(() => { load(); }, []);
+
+  const create = async (e) => {
+    e.preventDefault();
+    try {
+      await API.post("/users", form);
+      toast.success("User created");
+      setShow(false); setForm({ name: "", email: "", password: "", role: "caller" });
+      load(); refreshCatalogs();
+    } catch (err) { toast.error(apiErr(err)); }
+  };
+
+  const patch = async (id, updates) => {
+    try {
+      await API.patch(`/users/${id}`, updates);
+      toast.success("Updated");
+      load(); refreshCatalogs();
+    } catch (err) { toast.error(apiErr(err)); }
+  };
+
+  const remove = async (u) => {
+    if (!window.confirm(`Delete user "${u.name}" permanently? (If they have active leads, reassign or deactivate instead.)`)) return;
+    try {
+      await API.delete(`/users/${u.id}`);
+      toast.success("User deleted");
+      load(); refreshCatalogs();
+    } catch (err) { toast.error(apiErr(err)); }
+  };
+
+  if (!users) return <Spinner />;
+  return (
+    <div className="space-y-4">
+    <div className="crm-card overflow-hidden">
+      <div className="flex items-center justify-between border-b border-slate-100 p-4">
+        <p className="text-sm font-bold text-slate-700">{users.length} users</p>
+        {isAdmin && <button data-testid="add-user-button" onClick={() => setShow(true)} className="crm-btn-primary !py-1.5 text-xs"><Plus size={14} /> Add user</button>}
+      </div>
+      <table className="w-full text-sm" data-testid="users-table">
+        <thead className="bg-slate-50">
+          <tr className="border-b border-slate-200 text-left text-[11px] uppercase tracking-wider text-slate-400">
+            <th className="px-4 py-2">Name</th><th className="px-2 py-2">Email</th><th className="px-2 py-2">Role</th><th className="px-2 py-2">Status</th>{isAdmin && <th className="px-2 py-2">Actions</th>}
+          </tr>
+        </thead>
+        <tbody>
+          {users.map((u) => (
+            <tr key={u.id} className="border-b border-slate-50">
+              <td className="px-4 py-2 font-semibold text-slate-700">{u.name}</td>
+              <td className="px-2 py-2 text-slate-500">{u.email}</td>
+              <td className="px-2 py-2">
+                {isAdmin ? (
+                  <select className="crm-select !py-1" value={u.role} onChange={(e) => patch(u.id, { role: e.target.value })} data-testid={`role-select-${u.id}`}>
+                    <option value="admin">admin</option><option value="manager">manager</option><option value="caller">caller</option>
+                  </select>
+                ) : <span className="capitalize">{u.role}</span>}
+              </td>
+              <td className="px-2 py-2">
+                <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${u.active ? "bg-emerald-50 text-emerald-600" : "bg-slate-100 text-slate-400"}`}>{u.active ? "active" : "inactive"}</span>
+              </td>
+              {isAdmin && (
+                <td className="px-2 py-2">
+                  <button className="mr-2 text-xs font-bold text-[#1A73E8]" data-testid={`edit-user-${u.id}`} onClick={() => setEditUser(u)}>Edit</button>
+                  <button className="mr-2 text-xs font-bold text-[#1557B0]" onClick={() => { const p = window.prompt(`New password for ${u.name}:`); if (p) patch(u.id, { password: p }); }}>Reset pwd</button>
+                  <button className="mr-2 text-xs font-bold text-slate-400" onClick={() => patch(u.id, { active: !u.active })}>{u.active ? "Deactivate" : "Activate"}</button>
+                  <button className="text-xs font-bold text-rose-500" data-testid={`delete-user-${u.id}`} onClick={() => remove(u)}>Delete</button>
+                </td>
+              )}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {show && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4" onClick={() => setShow(false)}>
+          <form onSubmit={create} onClick={(e) => e.stopPropagation()} className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-xl" data-testid="add-user-modal">
+            <h3 className="font-display text-lg font-extrabold">New User</h3>
+            <div className="mt-4 space-y-3">
+              <input data-testid="user-name-input" required className="crm-input" placeholder="Full name" value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} />
+              <input data-testid="user-email-input" required type="email" className="crm-input" placeholder="Email" value={form.email} onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))} />
+              <input data-testid="user-password-input" required className="crm-input" placeholder="Password" value={form.password} onChange={(e) => setForm((f) => ({ ...f, password: e.target.value }))} />
+              <select data-testid="user-role-select" className="crm-select w-full" value={form.role} onChange={(e) => setForm((f) => ({ ...f, role: e.target.value }))}>
+                <option value="caller">Caller</option><option value="manager">Manager</option><option value="admin">Admin</option>
+              </select>
+            </div>
+            <div className="mt-5 flex justify-end gap-2">
+              <button type="button" onClick={() => setShow(false)} className="crm-btn-secondary">Cancel</button>
+              <button data-testid="user-create-submit" type="submit" className="crm-btn-primary">Create</button>
+            </div>
+          </form>
+        </div>
+      )}
+      {editUser && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4" onClick={() => setEditUser(null)}>
+          <form data-testid="edit-user-modal" onClick={(e) => e.stopPropagation()}
+            onSubmit={async (e) => {
+              e.preventDefault();
+              try {
+                await API.patch(`/users/${editUser.id}`, { name: editUser.name, email: editUser.email, role: editUser.role });
+                toast.success("User updated");
+                setEditUser(null); load(); refreshCatalogs();
+              } catch (err) { toast.error(apiErr(err)); }
+            }}
+            className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-xl">
+            <h3 className="font-display text-lg font-extrabold">Edit User</h3>
+            <div className="mt-4 space-y-3">
+              <input data-testid="edit-user-name" required className="crm-input" placeholder="Full name" value={editUser.name || ""} onChange={(e) => setEditUser((u) => ({ ...u, name: e.target.value }))} />
+              <input data-testid="edit-user-email" required type="email" className="crm-input" placeholder="Email" value={editUser.email || ""} onChange={(e) => setEditUser((u) => ({ ...u, email: e.target.value }))} />
+              <select data-testid="edit-user-role" className="crm-select w-full" value={editUser.role} onChange={(e) => setEditUser((u) => ({ ...u, role: e.target.value }))}>
+                <option value="caller">Caller</option><option value="manager">Manager</option><option value="admin">Admin</option>
+              </select>
+              <p className="text-[11px] text-slate-400">To change the password, use <b>Reset pwd</b> on the user row.</p>
+            </div>
+            <div className="mt-5 flex justify-end gap-2">
+              <button type="button" onClick={() => setEditUser(null)} className="crm-btn-secondary">Cancel</button>
+              <button data-testid="edit-user-submit" type="submit" className="crm-btn-primary">Save Changes</button>
+            </div>
+          </form>
+        </div>
+      )}
+    </div>
+      <RolesAccessControl isAdmin={isAdmin} />
+    </div>
+  );
+}
+
+function RolesAccessControl({ isAdmin }) {
+  const [data, setData] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const load = () => API.get("/admin/role-permissions").then(({ data }) => setData(data));
+  useEffect(() => { load(); }, []);
+  if (!data) return null;
+
+  const roles = ["admin", "manager", "caller"];
+  const groups = [["Module access", data.module_perms], ["Actions & data scope", data.action_perms]];
+
+  const toggle = (role, perm) => {
+    if (!isAdmin || role === "admin") return;
+    setData((d) => ({ ...d, matrix: { ...d.matrix, [role]: { ...d.matrix[role], [perm]: !d.matrix[role][perm] } } }));
+  };
+  const save = async () => {
+    setSaving(true);
+    try {
+      const { data: res } = await API.patch("/admin/role-permissions", { matrix: { manager: data.matrix.manager, caller: data.matrix.caller } });
+      setData((d) => ({ ...d, matrix: res.matrix }));
+      toast.success("Access control saved — users will see it on next login/refresh");
+    } catch (e) { toast.error(apiErr(e)); } finally { setSaving(false); }
+  };
+
+  return (
+    <div className="crm-card p-4" data-testid="roles-access-control">
+      <div className="flex items-center justify-between">
+        <div>
+          <h3 className="font-display text-sm font-extrabold text-slate-800">Roles &amp; Access Control</h3>
+          <p className="mt-1 text-xs text-slate-500">Define what each role can see and do. Admin always has full access. Changes apply on the user's next login or refresh.</p>
+        </div>
+        {isAdmin && <button data-testid="roles-save-button" onClick={save} disabled={saving} className="crm-btn-primary !py-1.5 text-xs">{saving ? "Saving…" : "Save changes"}</button>}
+      </div>
+      <div className="mt-4 overflow-x-auto">
+        <table className="w-full text-sm" data-testid="roles-matrix-table">
+          <thead>
+            <tr className="border-b border-slate-200 text-left text-[11px] uppercase tracking-wider text-slate-400">
+              <th className="px-2 py-2">Permission</th>
+              {roles.map((r) => (
+                <th key={r} className="px-2 py-2 text-center capitalize">{r}{r === "admin" && <LockSimple size={11} className="ml-1 inline text-slate-300" />}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {groups.map(([gLabel, perms]) => (
+              <React.Fragment key={gLabel}>
+                <tr className="bg-slate-50"><td colSpan={4} className="px-2 py-1.5 text-[10px] font-extrabold uppercase tracking-wider text-slate-400">{gLabel}</td></tr>
+                {perms.map((perm) => (
+                  <tr key={perm} className="border-b border-slate-50" data-testid={`perm-row-${perm}`}>
+                    <td className="px-2 py-2 font-semibold text-slate-600">{data.labels[perm] || perm}</td>
+                    {roles.map((role) => {
+                      const checked = !!data.matrix[role][perm];
+                      const locked = role === "admin" || !isAdmin;
+                      return (
+                        <td key={role} className="px-2 py-2 text-center">
+                          <input type="checkbox" checked={checked} disabled={locked}
+                            onChange={() => toggle(role, perm)} data-testid={`perm-${role}-${perm}`}
+                            className={locked ? "cursor-not-allowed opacity-60" : "cursor-pointer accent-[#1A73E8]"} />
+                        </td>
+                      );
+                    })}
+                  </tr>
+                ))}
+              </React.Fragment>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function CatalogTab({ ctype, title, withColor }) {
+  const { catalogs, refreshCatalogs } = useCatalogs();
+  const [name, setName] = useState("");
+  const items = catalogs?.[ctype] || [];
+
+  const add = async (e) => {
+    e.preventDefault();
+    if (!name.trim()) return;
+    try {
+      await API.post(`/catalogs/${ctype}`, { name: name.trim(), color: withColor ? Math.floor(Math.random() * 11) + 1 : undefined });
+      setName(""); refreshCatalogs(); toast.success("Added");
+    } catch (err) { toast.error(apiErr(err)); }
+  };
+
+  const toggle = async (item) => {
+    await API.patch(`/catalogs/${ctype}/${item.id}`, { active: item.active === false });
+    refreshCatalogs();
+  };
+
+  const rename = async (item) => {
+    const n = window.prompt("Rename:", item.name);
+    if (n && n !== item.name) {
+      await API.patch(`/catalogs/${ctype}/${item.id}`, { name: n });
+      refreshCatalogs();
+    }
+  };
+
+  return (
+    <div className="crm-card p-4">
+      <h3 className="font-display text-sm font-extrabold text-slate-800">{title} ({items.length})</h3>
+      <form onSubmit={add} className="mt-3 flex gap-2">
+        <input data-testid={`add-${ctype}-input`} className="crm-input !w-64" placeholder={`New ${title.toLowerCase().replace(/s$/, "")}…`} value={name} onChange={(e) => setName(e.target.value)} />
+        <button data-testid={`add-${ctype}-button`} type="submit" className="crm-btn-primary !py-2"><Plus size={14} /> Add</button>
+      </form>
+      <div className="mt-4 flex flex-wrap gap-2" data-testid={`${ctype}-list`}>
+        {items.map((t) => (
+          <span key={t.id} className={`group inline-flex items-center gap-1 ${t.active === false ? "opacity-40" : ""}`}>
+            {withColor ? <TagChip tag={t} /> : <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-600">{t.name}</span>}
+            <button onClick={() => rename(t)} className="hidden text-[10px] font-bold text-slate-400 group-hover:inline">edit</button>
+            <button onClick={() => toggle(t)} className="hidden text-[10px] font-bold text-slate-400 group-hover:inline">{t.active === false ? "enable" : "disable"}</button>
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function DispositionMapEditor() {
+  const { refreshCatalogs } = useCatalogs();
+  const [map, setMap] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const [newTag, setNewTag] = useState({});
+
+  useEffect(() => { API.get("/catalogs/disposition-map").then(({ data }) => setMap(data.map || {})); }, []);
+
+  const addTag = (stage) => {
+    const t = (newTag[stage] || "").trim();
+    if (!t) return;
+    setMap((m) => ({ ...m, [stage]: [...(m[stage] || []).filter((x) => x !== t), t] }));
+    setNewTag((n) => ({ ...n, [stage]: "" }));
+  };
+  const removeTag = (stage, t) => setMap((m) => ({ ...m, [stage]: (m[stage] || []).filter((x) => x !== t) }));
+  const save = async () => {
+    setSaving(true);
+    try {
+      await API.put("/catalogs/disposition-map", { map });
+      toast.success("Disposition mapping saved");
+      refreshCatalogs();
+    } catch (e) { toast.error(apiErr(e)); } finally { setSaving(false); }
+  };
+
+  if (map === null) return <Spinner />;
+  return (
+    <div className="crm-card p-4" data-testid="disposition-map-editor">
+      <div className="mb-3 flex items-center justify-between">
+        <div>
+          <h3 className="font-display text-sm font-extrabold text-slate-800">Disposition Tag → Stage Mapping</h3>
+          <p className="text-xs text-slate-500">A caller may only pick a tag that belongs to a stage; selecting a tag auto-sets the lead's stage.</p>
+        </div>
+        <button data-testid="disposition-map-save" onClick={save} disabled={saving} className="crm-btn-primary !py-1.5 text-xs">{saving ? "Saving…" : "Save mapping"}</button>
+      </div>
+      <div className="grid gap-3 sm:grid-cols-2">
+        {Object.keys(map).map((stage) => (
+          <div key={stage} className="rounded-xl border border-slate-100 p-3" data-testid={`disposition-stage-${stage.replace(/\s/g, "-")}`}>
+            <p className="mb-1.5 text-[11px] font-bold uppercase tracking-wider text-[#1557B0]">{stage}</p>
+            <div className="flex flex-wrap gap-1.5">
+              {(map[stage] || []).map((t) => (
+                <span key={t} className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-600">
+                  {t}<button onClick={() => removeTag(stage, t)} className="text-slate-400 hover:text-rose-500"><Trash size={11} /></button>
+                </span>
+              ))}
+            </div>
+            <div className="mt-2 flex gap-2">
+              <input className="crm-input !py-1 text-xs" placeholder="Add tag…" value={newTag[stage] || ""} onChange={(e) => setNewTag((n) => ({ ...n, [stage]: e.target.value }))} onKeyDown={(e) => e.key === "Enter" && addTag(stage)} data-testid={`disposition-add-input-${stage.replace(/\s/g, "-")}`} />
+              <button onClick={() => addTag(stage)} className="crm-btn-secondary !py-1 text-xs"><Plus size={12} /> Add</button>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function KpiSettingsTab({ isAdmin }) {
+  const { catalogs } = useCatalogs();
+  const tagNames = (catalogs?.tag || []).filter((t) => t.active !== false).map((t) => t.name);
+  const [cfg, setCfg] = useState(null);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    API.get("/admin/settings").then(({ data }) => {
+      const k = data.kpi_config || {};
+      setCfg({ milestones: k.milestones || [], valid_tags: k.valid_tags || [] });
+    }).catch((e) => toast.error(apiErr(e)));
+  }, []);
+
+  const setMs = (i, v) => setCfg((c) => {
+    const ms = [...c.milestones];
+    ms[i] = v;
+    return { ...c, milestones: ms.filter(Boolean) };
+  });
+  const toggleValid = (t) => setCfg((c) => ({
+    ...c, valid_tags: c.valid_tags.includes(t) ? c.valid_tags.filter((x) => x !== t) : [...c.valid_tags, t],
+  }));
+  const save = async () => {
+    setSaving(true);
+    try {
+      await API.patch("/admin/settings", { key: "kpi_config", value: cfg });
+      toast.success("KPI settings saved");
+    } catch (e) { toast.error(apiErr(e)); } finally { setSaving(false); }
+  };
+
+  if (!cfg) return <Spinner />;
+  const slots = Math.min(cfg.milestones.length + 1, 4);
+  return (
+    <div className="space-y-4" data-testid="kpi-settings-tab">
+      <div className="crm-card p-4">
+        <div className="mb-3 flex items-center justify-between">
+          <div>
+            <h3 className="font-display text-sm font-extrabold text-slate-800">Conversion milestones</h3>
+            <p className="text-xs text-slate-500">Up to 4 disposition tags, in order (e.g. Demo Booked → Demo Done → Proposal Sent → Won). They power the Lead Pulse KPI cards, funnel and milestone-to-milestone conversion %.</p>
+          </div>
+          {isAdmin && <button data-testid="kpi-settings-save" onClick={save} disabled={saving} className="crm-btn-primary !py-1.5 text-xs">{saving ? "Saving…" : "Save KPI settings"}</button>}
+        </div>
+        {tagNames.length === 0 && <p className="text-xs text-amber-600" data-testid="kpi-settings-no-tags">No disposition tags yet — add them in Admin → Tags / Dropdowns first.</p>}
+        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+          {Array.from({ length: slots }).map((_, i) => (
+            <label key={i} className="text-xs font-semibold text-slate-500">
+              Milestone {i + 1}
+              <select data-testid={`kpi-milestone-select-${i}`} disabled={!isAdmin} className="crm-select mt-1 w-full" value={cfg.milestones[i] || ""} onChange={(e) => setMs(i, e.target.value)}>
+                <option value="">— none —</option>
+                {tagNames.filter((t) => t === cfg.milestones[i] || !cfg.milestones.includes(t)).map((t) => <option key={t} value={t}>{t}</option>)}
+              </select>
+            </label>
+          ))}
+        </div>
+      </div>
+      <div className="crm-card p-4">
+        <h3 className="font-display text-sm font-extrabold text-slate-800">Valid leads definition</h3>
+        <p className="mb-3 text-xs text-slate-500">A lead counts as "valid" on Lead Pulse when it carries any of these tags.</p>
+        <div className="flex flex-wrap gap-1.5">
+          {tagNames.map((t) => {
+            const on = cfg.valid_tags.includes(t);
+            return (
+              <button key={t} type="button" disabled={!isAdmin} onClick={() => toggleValid(t)} data-testid={`kpi-valid-tag-${t.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`}
+                className={`rounded-full border px-2.5 py-1 text-xs font-semibold transition-colors ${on ? "border-[#1A73E8] bg-[#1A73E8]/10 text-[#1557B0]" : "border-slate-200 bg-white text-slate-500 hover:bg-slate-50"}`}>
+                {t}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function DropdownsTab() {
+  return (
+    <div className="space-y-4">
+      <DispositionMapEditor />
+      <CatalogTab ctype="lead_stage" title="Lead Stages" />
+      <CatalogTab ctype="follow_up_tag" title="Follow-up Tags" />
+      <CatalogTab ctype="followup_status" title="Follow-up Statuses" />
+      <CatalogTab ctype="lost_reason" title="Lost Reasons" />
+      <CatalogTab ctype="source_lead" title="Lead Sources" />
+      <CatalogTab ctype="stage" title="Pipeline Stages" />
+      <CatalogTab ctype="utm_source" title="UTM Sources" />
+      <CatalogTab ctype="utm_medium" title="UTM Mediums" />
+      <CatalogTab ctype="utm_campaign" title="UTM Campaigns" />
+      <CatalogTab ctype="activity_type" title="Activity Types" />
+    </div>
+  );
+}
+
+/* ---------- Case 2: drag-drop custom form builder ---------- */
+const FIELD_TYPES = [
+  { t: "char", label: "Text" },
+  { t: "text", label: "Multiline Text" },
+  { t: "integer", label: "Integer" },
+  { t: "float", label: "Decimal" },
+  { t: "monetary", label: "Monetary (₹)" },
+  { t: "date", label: "Date" },
+  { t: "datetime", label: "Date & Time" },
+  { t: "boolean", label: "Checkbox" },
+  { t: "selection", label: "Dropdown" },
+];
+const SECTIONS = [
+  { key: "qa", title: "Meta / Google Q&A card" },
+  { key: "general", title: "Custom Fields card" },
+];
+
+function CustomFieldsTab() {
+  const { refreshCatalogs } = useCatalogs();
+  const [fields, setFields] = useState(null);
+  const [drag, setDrag] = useState(null); // {kind:'new'|'field', type?, id?}
+  const [overSection, setOverSection] = useState(null);
+  const [modal, setModal] = useState(null); // {section, field_type}
+
+  const load = () => API.get("/catalogs/custom-fields/all").then(({ data }) => setFields(data));
+  useEffect(() => { load(); }, []);
+
+  const persistOrder = async (ordered) => {
+    setFields(ordered);
+    await API.post("/catalogs/custom-fields/reorder", { order: ordered.map((f) => f.id) });
+    refreshCatalogs();
+  };
+
+  const onDropToSection = async (sectionKey, beforeId = null) => {
+    if (!drag) return;
+    setOverSection(null);
+    if (drag.kind === "new") {
+      setModal({ section: sectionKey, field_type: drag.type });
+      setDrag(null);
+      return;
+    }
+    // move existing field
+    const moving = fields.find((f) => f.id === drag.id);
+    if (!moving) { setDrag(null); return; }
+    if (moving.section !== sectionKey) {
+      await API.patch(`/catalogs/custom-fields/${moving.id}`, { section: sectionKey });
+      moving.section = sectionKey;
+    }
+    const rest = fields.filter((f) => f.id !== moving.id);
+    let idx = rest.length;
+    if (beforeId != null) { const i = rest.findIndex((f) => f.id === beforeId); if (i >= 0) idx = i; }
+    rest.splice(idx, 0, moving);
+    await persistOrder(rest);
+    setDrag(null);
+  };
+
+  const toggle = async (f) => { await API.patch(`/catalogs/custom-fields/${f.id}`, { active: f.active === false }); load(); refreshCatalogs(); };
+  const del = async (f) => { if (window.confirm(`Disable field '${f.label}'?`)) { await API.delete(`/catalogs/custom-fields/${f.id}`); load(); refreshCatalogs(); } };
+  const hardDelete = async (f) => { if (window.confirm(`Permanently delete '${f.label}'? This removes it from the builder for good.`)) { await API.delete(`/catalogs/custom-fields/${f.id}`, { params: { hard: true } }); load(); refreshCatalogs(); } };
+
+  if (!fields) return <Spinner />;
+  const active = fields.filter((f) => f.active !== false);
+
+  return (
+    <div className="grid grid-cols-1 gap-4 lg:grid-cols-4" data-testid="form-builder">
+      {/* Components palette */}
+      <div className="crm-card p-4 lg:col-span-1">
+        <h3 className="font-display text-sm font-extrabold text-slate-800">Components</h3>
+        <p className="mt-1 text-[11px] text-slate-400">Drag a field type onto a card → or click to add.</p>
+        <div className="mt-3 space-y-1.5" data-testid="components-palette">
+          {FIELD_TYPES.map((ft) => (
+            <div key={ft.t} draggable data-testid={`palette-${ft.t}`}
+              onDragStart={() => setDrag({ kind: "new", type: ft.t })}
+              onDragEnd={() => setDrag(null)}
+              onClick={() => setModal({ section: "general", field_type: ft.t })}
+              className="flex cursor-grab items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-bold text-slate-600 transition-colors hover:border-[#1A73E8] hover:bg-[#1A73E8]/5 active:cursor-grabbing">
+              <DotsSixVertical size={14} className="text-slate-300" /> {ft.label}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Form canvas */}
+      <div className="space-y-4 lg:col-span-3">
+        {SECTIONS.map((sec) => {
+          const secFields = active.filter((f) => f.section === sec.key);
+          return (
+            <div key={sec.key}
+              onDragOver={(e) => { e.preventDefault(); setOverSection(sec.key); }}
+              onDragLeave={() => setOverSection((s) => (s === sec.key ? null : s))}
+              onDrop={(e) => { e.preventDefault(); onDropToSection(sec.key); }}
+              data-testid={`section-dropzone-${sec.key}`}
+              className={`crm-card p-4 transition-colors ${overSection === sec.key ? "ring-2 ring-[#1A73E8] ring-offset-1" : ""}`}>
+              <h3 className="font-display text-sm font-extrabold text-slate-800">{sec.title} <span className="text-[11px] font-normal text-slate-400">({secFields.length})</span></h3>
+              <div className="mt-3 space-y-2 min-h-[56px]" data-testid={`section-fields-${sec.key}`}>
+                {secFields.length === 0 && (
+                  <div className="rounded-xl border-2 border-dashed border-slate-200 py-6 text-center text-xs text-slate-400">Drag a component here</div>
+                )}
+                {secFields.map((f) => (
+                  <div key={f.id} draggable data-testid={`field-card-${f.id}`}
+                    onDragStart={() => setDrag({ kind: "field", id: f.id })}
+                    onDragEnd={() => setDrag(null)}
+                    onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }}
+                    onDrop={(e) => { e.preventDefault(); e.stopPropagation(); onDropToSection(sec.key, f.id); }}
+                    className="flex items-center gap-3 rounded-xl border border-slate-100 bg-white p-3 shadow-sm">
+                    <DotsSixVertical size={16} className="shrink-0 cursor-grab text-slate-300" />
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-bold text-slate-700">{f.label}</p>
+                      <p className="text-[11px] text-slate-400">
+                        {FIELD_TYPES.find((t) => t.t === f.field_type)?.label || f.field_type}
+                        {f.field_type === "selection" && (f.options || []).length > 0 && ` · ${f.options.join(", ")}`}
+                        {(f.aliases || []).length > 0 && ` · aliases: ${f.aliases.join(", ")}`}
+                      </p>
+                    </div>
+                    <code className="rounded bg-slate-50 px-1.5 py-0.5 text-[10px] text-slate-400">{f.key}</code>
+                    <button onClick={() => setModal({ section: f.section, field_type: f.field_type, field: f })} data-testid={`edit-field-${f.id}`} className="text-slate-300 hover:text-[#1A73E8]"><PencilSimple size={15} /></button>
+                    <button onClick={() => del(f)} className="text-slate-300 hover:text-rose-500"><Trash size={15} /></button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          );
+        })}
+        {fields.some((f) => f.active === false) && (
+          <div className="crm-card p-4">
+            <h3 className="font-display text-xs font-extrabold uppercase tracking-wider text-slate-400">Disabled fields</h3>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {fields.filter((f) => f.active === false).map((f) => (
+                <span key={f.id} className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-bold text-slate-400" data-testid={`disabled-field-${f.id}`}>
+                  <button onClick={() => toggle(f)} className="hover:text-emerald-600" data-testid={`reenable-field-${f.id}`}>{f.label} · enable</button>
+                  <button onClick={() => hardDelete(f)} className="hover:text-rose-500" data-testid={`harddelete-field-${f.id}`} title="Delete permanently"><Trash size={12} /></button>
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {modal && <AddFieldModal section={modal.section} fieldType={modal.field_type} field={modal.field} onClose={() => setModal(null)}
+        onCreated={() => { setModal(null); load(); refreshCatalogs(); }} />}
+    </div>
+  );
+}
+
+function AddFieldModal({ section, fieldType, field, onClose, onCreated }) {
+  const isEdit = !!field;
+  const [form, setForm] = useState({
+    label: field?.label || "",
+    field_type: field?.field_type || fieldType || "char",
+    section: field?.section || section,
+    options: (field?.options || []).join(", "),
+    aliases: (field?.aliases || []).join(", "),
+  });
+  const create = async (e) => {
+    e.preventDefault();
+    if (!form.label.trim()) return;
+    const payload = {
+      label: form.label.trim(),
+      field_type: form.field_type,
+      options: form.field_type === "selection" ? form.options.split(",").map((s) => s.trim()).filter(Boolean) : [],
+      section: form.section,
+      aliases: form.aliases.split(",").map((s) => s.trim()).filter(Boolean),
+    };
+    try {
+      if (isEdit) {
+        await API.patch(`/catalogs/custom-fields/${field.id}`, payload);
+        toast.success("Field updated");
+      } else {
+        await API.post("/catalogs/custom-fields/create", payload);
+        toast.success("Field added — it now shows on every lead");
+      }
+      onCreated();
+    } catch (err) { toast.error(apiErr(err)); }
+  };
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4" onClick={onClose}>
+      <form onSubmit={create} onClick={(e) => e.stopPropagation()} className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl" data-testid="add-field-modal">
+        <h3 className="font-display text-lg font-extrabold">{isEdit ? "Edit Field" : "New Field"}</h3>
+        <div className="mt-4 space-y-3">
+          <div>
+            <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Field label</label>
+            <input data-testid="field-label-input" required autoFocus className="crm-input mt-1" placeholder="e.g. Company Size"
+              value={form.label} onChange={(e) => setForm((f) => ({ ...f, label: e.target.value }))} />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Type</label>
+              <select data-testid="field-type-select" className="crm-select mt-1 w-full" value={form.field_type} onChange={(e) => setForm((f) => ({ ...f, field_type: e.target.value }))}>
+                {FIELD_TYPES.map((ft) => <option key={ft.t} value={ft.t}>{ft.label}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Show under</label>
+              <select data-testid="field-section-select" className="crm-select mt-1 w-full" value={form.section} onChange={(e) => setForm((f) => ({ ...f, section: e.target.value }))}>
+                {SECTIONS.map((s) => <option key={s.key} value={s.key}>{s.title}</option>)}
+              </select>
+            </div>
+          </div>
+          {form.field_type === "selection" && (
+            <div>
+              <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Dropdown options (comma-separated)</label>
+              <input data-testid="field-options-input" className="crm-input mt-1" placeholder="e.g. 1-10, 11-50, 51-200, 200+"
+                value={form.options} onChange={(e) => setForm((f) => ({ ...f, options: e.target.value }))} />
+            </div>
+          )}
+          <div>
+            <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Webhook / ads aliases (optional)</label>
+            <input data-testid="field-aliases-input" className="crm-input mt-1" placeholder="e.g. company_size, team_size"
+              value={form.aliases} onChange={(e) => setForm((f) => ({ ...f, aliases: e.target.value }))} />
+          </div>
+        </div>
+        <div className="mt-5 flex justify-end gap-2">
+          <button type="button" onClick={onClose} className="crm-btn-secondary">Cancel</button>
+          <button type="submit" className="crm-btn-primary" data-testid="field-create-submit"><Plus size={14} /> {isEdit ? "Save field" : "Add field"}</button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+function WebhooksTab() {
+  const { catalogs } = useCatalogs();
+  const [hooks, setHooks] = useState(null);
+  const [name, setName] = useState("");
+  const [open, setOpen] = useState(null);
+
+  const load = () => API.get("/webhooks").then(({ data }) => setHooks(data));
+  useEffect(() => { load(); }, []);
+
+  const create = async (e) => {
+    e.preventDefault();
+    if (!name.trim()) return;
+    try {
+      await API.post("/webhooks", { name: name.trim() });
+      setName(""); load(); toast.success("Webhook created");
+    } catch (err) { toast.error(apiErr(err)); }
+  };
+
+  if (!hooks) return <Spinner />;
+  const base = process.env.REACT_APP_BACKEND_URL;
+  return (
+    <div className="crm-card p-4">
+      <h3 className="font-display text-sm font-extrabold text-slate-800">Lead Capture Webhooks</h3>
+      <p className="mt-1 text-xs text-slate-500">Point your landing pages, chatbot, app & forms at these URLs (POST JSON: name, phone, email, state, …). Incoming leads are auto-created & round-robin assigned.</p>
+      <form onSubmit={create} className="mt-3 flex gap-2">
+        <input data-testid="webhook-name-input" className="crm-input !w-64" placeholder="e.g. Website Landing Page" value={name} onChange={(e) => setName(e.target.value)} />
+        <button data-testid="webhook-create-button" type="submit" className="crm-btn-primary !py-2"><Plus size={14} /> Create</button>
+      </form>
+      <div className="mt-4 space-y-2" data-testid="webhooks-list">
+        {hooks.map((h) => (
+          <div key={h.id} className="rounded-xl border border-slate-100 p-3">
+            <div className="flex flex-wrap items-center gap-3">
+              <div className="min-w-40">
+                <p className="text-sm font-bold text-slate-700">{h.name}</p>
+                <p className="text-[11px] text-slate-400">{h.hits || 0} leads captured · {h.active ? "active" : "disabled"}</p>
+              </div>
+              <code className="flex-1 truncate rounded-lg bg-slate-50 px-2 py-1.5 text-[11px] text-slate-600">{base}/api/webhook/lead/{h.token}</code>
+              <button title="Copy URL" onClick={() => { navigator.clipboard.writeText(`${base}/api/webhook/lead/${h.token}`); toast.success("Copied"); }} className="text-slate-400 hover:text-[#1A73E8]"><Copy size={16} /></button>
+              <button data-testid={`webhook-payload-${h.id}`} onClick={() => setOpen(open === h.id ? null : h.id)} className="text-xs font-bold text-[#1557B0]">{open === h.id ? "Hide payload" : "Last payload"}</button>
+              <button onClick={async () => { await API.patch(`/webhooks/${h.id}`, { active: !h.active }); load(); }} className="text-xs font-bold text-slate-400">{h.active ? "Disable" : "Enable"}</button>
+              <button onClick={async () => { if (window.confirm("Delete webhook?")) { await API.delete(`/webhooks/${h.id}`); load(); } }} className="text-slate-300 hover:text-rose-500"><Trash size={16} /></button>
+            </div>
+            {open === h.id && (
+              <div className="mt-3 rounded-lg bg-slate-900 p-3 text-[11px] leading-relaxed text-emerald-200" data-testid={`webhook-payload-view-${h.id}`}>
+                {h.last_payload_at ? (
+                  <>
+                    <p className="text-slate-400">Last received: <span className="text-emerald-300">{h.last_payload_at} UTC</span></p>
+                    <p className="mt-1 text-slate-400">Resolved UTMs: <span className="text-emerald-300">source={h.last_utm?.utm_source || "—"} · medium={h.last_utm?.utm_medium || "—"} · campaign={h.last_utm?.utm_campaign || "—"}</span></p>
+                    {h.last_query && Object.keys(h.last_query).length > 0 && (
+                      <p className="mt-1 text-slate-400">URL query params: <span className="text-amber-200">{JSON.stringify(h.last_query)}</span></p>
+                    )}
+                    <p className="mt-2 text-slate-400">Raw payload received:</p>
+                    <pre className="mt-1 overflow-x-auto whitespace-pre-wrap">{JSON.stringify(h.last_payload || {}, null, 2)}</pre>
+                  </>
+                ) : (
+                  <p className="text-slate-400">No payload received on this webhook yet. Send a test lead, then reopen this.</p>
+                )}
+              </div>
+            )}
+          </div>
+        ))}
+        {hooks.length === 0 && <p className="py-6 text-center text-sm text-slate-400">No webhooks yet — create your first one above.</p>}
+      </div>
+
+      <div className="mt-6 rounded-xl border border-slate-100 bg-slate-50/60 p-4" data-testid="lead-form-guide">
+        <h4 className="font-display text-sm font-extrabold text-slate-800">📘 Website / Google Ads Lead Form — Setup Guide</h4>
+        <p className="mt-1 text-xs text-slate-500">Send a POST request (JSON or form-encoded) to your webhook URL above. These standard field names are auto-mapped:</p>
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          {["name", "phone", "email", "city", "state", "query", "campaign_name", "ads_platform", "ads_name", "utm_source", "utm_medium", "utm_campaign", "page_url"].map((f) => (
+            <code key={f} className="rounded bg-white px-2 py-0.5 text-[11px] font-semibold text-slate-600 ring-1 ring-slate-200">{f}</code>
+          ))}
+        </div>
+        <p className="mt-3 text-xs text-slate-500"><b>UTM / attribution</b> is captured 3 ways: as body fields (<code className="text-[11px]">utm_source</code>…), as query params on the webhook URL itself (<code className="text-[11px]">…/webhook/lead/TOKEN?utm_source=googleads&utm_medium=Youtube</code>), or embedded in a forwarded <code className="text-[11px]">page_url</code> like <code className="text-[11px]">https://fundle.ai/?utm_source=googleads&utm_medium=Youtube</code>. Use <b>"Last payload"</b> above to see exactly what your site sends.</p>
+        <p className="mt-3 text-xs text-slate-500">Any extra fields are saved under the lead's custom data. To map a specific extra field, create it in <b>Admin → Custom Fields</b> (matching the form field name).</p>
+        <p className="mt-3 text-[10px] font-bold uppercase tracking-wider text-slate-400">Sample HTML lead form</p>
+        <pre className="mt-1 overflow-x-auto rounded-lg bg-slate-900 p-3 text-[11px] leading-relaxed text-emerald-200" data-testid="lead-form-sample">{`<form id="leadForm">
+  <input name="name" placeholder="Full name" required />
+  <input name="phone" placeholder="Phone" required />
+  <input name="email" placeholder="Email" />
+  <input name="city" placeholder="City" />
+  <select name="state">...</select>
+  <button type="submit">Submit</button>
+</form>
+<script>
+leadForm.onsubmit = async (e) => {
+  e.preventDefault();
+  const data = Object.fromEntries(new FormData(leadForm));
+  await fetch("${base}/api/webhook/lead/${hooks[0]?.token || "YOUR_TOKEN"}", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data)
+  });
+  alert("Thank you! We'll call you shortly.");
+};
+</script>`}</pre>
+        <button onClick={() => { navigator.clipboard.writeText(document.querySelector('[data-testid="lead-form-sample"]').innerText); toast.success("Sample form copied"); }}
+          className="mt-2 text-xs font-bold text-[#1557B0]" data-testid="copy-sample-form">Copy sample form</button>
+      </div>
+    </div>
+  );
+}
+
+function AutomationsTab() {
+  const { catalogs } = useCatalogs();
+  const [rules, setRules] = useState(null);
+  const [show, setShow] = useState(false);
+  const [editId, setEditId] = useState(null);
+  const [form, setForm] = useState({ name: "", trigger: "on_create", tag_id: "", lead_stage: "", actions: [{ type: "send_whatsapp_template", value: "" }] });
+  const [waTemplates, setWaTemplates] = useState([]);
+  const [emailTemplates, setEmailTemplates] = useState([]);
+
+  const load = () => API.get("/admin/automations").then(({ data }) => setRules(data));
+  useEffect(() => {
+    load();
+    API.get("/templates/whatsapp").then(({ data }) => setWaTemplates(data));
+    API.get("/templates/email").then(({ data }) => setEmailTemplates(data));
+  }, []);
+
+  const resetForm = () => { setForm({ name: "", trigger: "on_create", tag_id: "", lead_stage: "", actions: [{ type: "send_whatsapp_template", value: "" }] }); setEditId(null); };
+  const closeModal = () => { setShow(false); resetForm(); };
+
+  const startEdit = (r) => {
+    setEditId(r.id);
+    setForm({
+      name: r.name || "",
+      trigger: r.trigger || "on_create",
+      tag_id: r.condition?.tag_id ? String(r.condition.tag_id) : "",
+      lead_stage: r.condition?.lead_stage || "",
+      actions: (r.actions || []).length ? r.actions.map((a) => ({ type: a.type, value: String(a.value) })) : [{ type: "send_whatsapp_template", value: "" }],
+    });
+    setShow(true);
+  };
+
+  const create = async (e) => {
+    e.preventDefault();
+    const condition = {};
+    if (form.trigger === "on_tag_set" && form.tag_id) condition.tag_id = parseInt(form.tag_id);
+    if (form.trigger === "on_stage_set" && form.lead_stage) condition.lead_stage = form.lead_stage;
+    const actions = form.actions
+      .filter((a) => a.value !== "" && a.value != null)
+      .map((a) => ({
+        type: a.type,
+        value: ["send_whatsapp_template", "send_email_template", "add_tag", "assign_user"].includes(a.type)
+          ? (parseInt(a.value) || a.value) : a.value,
+      }));
+    if (!actions.length) { toast.error("Add at least one action"); return; }
+    try {
+      if (editId) {
+        await API.patch(`/admin/automations/${editId}`, { name: form.name, trigger: form.trigger, condition, actions });
+        toast.success("Automation updated");
+      } else {
+        await API.post("/admin/automations", { name: form.name, trigger: form.trigger, condition, actions });
+        toast.success("Automation created");
+      }
+      closeModal();
+      load();
+    } catch (err) { toast.error(apiErr(err)); }
+  };
+
+  const addAction = () => setForm((f) => ({ ...f, actions: [...f.actions, { type: "add_tag", value: "" }] }));
+  const removeAction = (idx) => setForm((f) => ({ ...f, actions: f.actions.filter((_, i) => i !== idx) }));
+  const updateAction = (idx, patch) => setForm((f) => ({ ...f, actions: f.actions.map((a, i) => (i === idx ? { ...a, ...patch } : a)) }));
+
+  if (!rules) return <Spinner />;
+  return (
+    <div className="crm-card p-4">
+      <div className="flex items-center justify-between">
+        <div>
+          <h3 className="font-display text-sm font-extrabold text-slate-800">Automation Rules</h3>
+          <p className="text-xs text-slate-500">Automate lead follow-ups (welcome WhatsApp/email on new lead, tag triggers…). Template sends queue until live APIs are connected.</p>
+        </div>
+        <button data-testid="add-automation-button" onClick={() => { resetForm(); setShow(true); }} className="crm-btn-primary !py-1.5 text-xs"><Plus size={14} /> New rule</button>
+      </div>
+      <div className="mt-4 space-y-2" data-testid="automations-list">
+        {rules.map((r) => (
+          <div key={r.id} data-testid={`automation-rule-${r.id}`} className="flex items-center gap-3 rounded-xl border border-slate-100 p-3">
+            <div className="flex-1">
+              <p className="text-sm font-bold text-slate-700">{r.name}</p>
+              <p className="text-[11px] text-slate-400">
+                Trigger: {r.trigger} {r.condition?.tag_id ? `(tag #${r.condition.tag_id})` : ""}{r.condition?.lead_stage ? `(stage ${r.condition.lead_stage})` : ""} → {(r.actions || []).map((a) => a.type).join(", ")}
+              </p>
+            </div>
+            <button data-testid={`automation-toggle-${r.id}`} onClick={async () => { await API.patch(`/admin/automations/${r.id}`, { active: !r.active }); load(); }}
+              className={`rounded-full px-2.5 py-1 text-[10px] font-bold ${r.active ? "bg-emerald-50 text-emerald-600" : "bg-slate-100 text-slate-400"}`}>
+              {r.active ? "ACTIVE" : "OFF"}
+            </button>
+            <button data-testid={`automation-edit-${r.id}`} onClick={() => startEdit(r)} className="text-slate-300 hover:text-[#1A73E8]"><PencilSimple size={16} /></button>
+            <button data-testid={`automation-delete-${r.id}`} onClick={async () => { if (window.confirm("Delete rule?")) { await API.delete(`/admin/automations/${r.id}`); load(); } }} className="text-slate-300 hover:text-rose-500"><Trash size={16} /></button>
+          </div>
+        ))}
+        {rules.length === 0 && <p className="py-6 text-center text-sm text-slate-400">No automation rules yet.</p>}
+      </div>
+      {show && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4" onClick={closeModal}>
+          <form onSubmit={create} onClick={(e) => e.stopPropagation()} className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl" data-testid="automation-modal">
+            <h3 className="font-display text-lg font-extrabold">{editId ? "Edit Automation" : "New Automation"}</h3>
+            <div className="mt-4 space-y-3">
+              <input required className="crm-input" placeholder="Rule name" value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} data-testid="automation-name-input" />
+              <select className="crm-select w-full" value={form.trigger} onChange={(e) => setForm((f) => ({ ...f, trigger: e.target.value }))}>
+                <option value="on_create">When lead is created</option>
+                <option value="on_tag_set">When tag is added</option>
+                <option value="on_stage_set">When stage changes</option>
+              </select>
+              {form.trigger === "on_tag_set" && (
+                <select className="crm-select w-full" value={form.tag_id} onChange={(e) => setForm((f) => ({ ...f, tag_id: e.target.value }))}>
+                  <option value="">Any tag…</option>
+                  {(catalogs?.tag || []).map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+                </select>
+              )}
+              {form.trigger === "on_stage_set" && (
+                <select className="crm-select w-full" value={form.lead_stage} onChange={(e) => setForm((f) => ({ ...f, lead_stage: e.target.value }))}>
+                  <option value="">Any stage…</option>
+                  {(catalogs?.lead_stage || []).map((s) => <option key={s.id} value={s.name}>{s.name}</option>)}
+                </select>
+              )}
+              <div className="space-y-2 rounded-xl bg-slate-50 p-3">
+                <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Actions to do (runs all, in order)</label>
+                {form.actions.map((a, idx) => {
+                  const tpl = a.type === "send_whatsapp_template" ? waTemplates.find((t) => String(t.id) === String(a.value))
+                    : a.type === "send_email_template" ? emailTemplates.find((t) => String(t.id) === String(a.value)) : null;
+                  return (
+                  <div key={idx} data-testid={`action-row-${idx}`}>
+                   <div className="flex gap-2">
+                    <select className="crm-select flex-1" value={a.type} onChange={(e) => updateAction(idx, { type: e.target.value, value: "" })} data-testid={`action-type-${idx}`}>
+                      <option value="send_whatsapp_template">Send WhatsApp template</option>
+                      <option value="send_email_template">Send Email template</option>
+                      <option value="add_tag">Add tag</option>
+                      <option value="set_lead_stage">Set lead stage</option>
+                      <option value="assign_user">Assign to user</option>
+                    </select>
+                    <select required className="crm-select flex-1" value={a.value} onChange={(e) => updateAction(idx, { value: e.target.value })} data-testid={`action-value-${idx}`}>
+                      <option value="">Choose…</option>
+                      {a.type === "send_whatsapp_template" && waTemplates.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+                      {a.type === "send_email_template" && emailTemplates.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+                      {a.type === "add_tag" && (catalogs?.tag || []).map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+                      {a.type === "set_lead_stage" && (catalogs?.lead_stage || []).map((s) => <option key={s.id} value={s.name}>{s.name}</option>)}
+                      {a.type === "assign_user" && (catalogs?.users || []).filter((u) => u.active).map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
+                    </select>
+                    {form.actions.length > 1 && (
+                      <button type="button" onClick={() => removeAction(idx)} className="shrink-0 text-slate-300 hover:text-rose-500" data-testid={`remove-action-${idx}`}><Trash size={16} /></button>
+                    )}
+                   </div>
+                   {tpl && (
+                     <div className="mt-1.5 rounded-lg border border-slate-200 bg-white p-2" data-testid={`action-preview-${idx}`}>
+                       <p className="text-[9px] font-bold uppercase tracking-wider text-slate-400">Preview — {tpl.name}</p>
+                       {a.type === "send_email_template" && tpl.subject && <p className="mt-0.5 text-[11px] font-bold text-slate-600">{tpl.subject}</p>}
+                       {a.type === "send_whatsapp_template" ? (
+                         <div className="mt-1 rounded-lg rounded-tl-sm bg-[#dcf8c6] p-2 text-[11px] text-slate-700 whitespace-pre-wrap">{(tpl.body || "").replace(/\{\{1\}\}/g, "Riya Sharma") || "(empty template)"}</div>
+                       ) : (
+                         <div className="chatter-body mt-1 max-h-32 overflow-auto text-[11px] text-slate-600" dangerouslySetInnerHTML={{ __html: (tpl.body || "(empty template)").replace(/\{\{1\}\}/g, "Riya Sharma") }} />
+                       )}
+                     </div>
+                   )}
+                  </div>
+                  );
+                })}
+                <button type="button" onClick={addAction} className="text-xs font-bold text-[#1557B0]" data-testid="add-action-row">+ Add another action</button>
+              </div>
+            </div>
+            <div className="mt-5 flex justify-end gap-2">
+              <button type="button" onClick={closeModal} className="crm-btn-secondary">Cancel</button>
+              <button type="submit" className="crm-btn-primary" data-testid="automation-submit">{editId ? "Save" : "Create"}</button>
+            </div>
+          </form>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AssignmentTab() {
+  const { catalogs } = useCatalogs();
+  const [settings, setSettings] = useState(null);
+
+  useEffect(() => {
+    API.get("/admin/settings").then(({ data }) => setSettings(data.assignment || { enabled: false, user_ids: [] }));
+  }, []);
+
+  const save = async (next) => {
+    setSettings(next);
+    await API.patch("/admin/settings", { key: "assignment", value: { enabled: next.enabled, user_ids: next.user_ids, pointer: next.pointer || 0 } });
+    toast.success("Saved");
+  };
+
+  if (!settings) return <Spinner />;
+  const callers = (catalogs?.users || []).filter((u) => u.active);
+  return (
+    <div className="crm-card p-4" data-testid="assignment-settings">
+      <h3 className="font-display text-sm font-extrabold text-slate-800">Round-robin Auto Assignment</h3>
+      <p className="mt-1 text-xs text-slate-500">Incoming webhook &amp; Facebook leads are distributed across callers automatically. Routing is <b>presence-based</b>: only callers marked <b>Available</b> or <b>On Call</b> receive new leads. If everyone is on a break / Offline, the lead waits in the queue and is auto-assigned the moment a caller becomes available. Selecting callers below limits the pool; leave all unselected to rotate across every available caller.</p>
+      <label className="mt-3 flex items-center gap-2 text-sm font-semibold text-slate-700">
+        <input type="checkbox" data-testid="assignment-enabled-checkbox" checked={!!settings.enabled} onChange={(e) => save({ ...settings, enabled: e.target.checked })} />
+        Enable auto-assignment
+      </label>
+      <div className="mt-3 grid grid-cols-2 gap-1.5 md:grid-cols-3">
+        {callers.map((u) => (
+          <label key={u.id} className="flex items-center gap-2 rounded-lg border border-slate-100 px-2 py-1.5 text-sm text-slate-600">
+            <input type="checkbox" checked={(settings.user_ids || []).includes(u.id)}
+              onChange={(e) => save({ ...settings, user_ids: e.target.checked ? [...(settings.user_ids || []), u.id] : settings.user_ids.filter((x) => x !== u.id) })} />
+            {u.name} <span className="text-[10px] text-slate-400">({u.role})</span>
+          </label>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+const fmtDur = (s) => {
+  s = parseInt(s || 0, 10);
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
+  if (h) return `${h}h ${m}m`;
+  if (m) return `${m}m`;
+  return `${s}s`;
+};
+const ATT_STATUS_CLS = {
+  "Available": "bg-emerald-50 text-emerald-600", "On Call": "bg-indigo-50 text-indigo-600",
+  "Lunch Break": "bg-amber-50 text-amber-600", "Washroom Break": "bg-amber-50 text-amber-600",
+  "Refreshment Break": "bg-amber-50 text-amber-600", "Meeting": "bg-sky-50 text-sky-600",
+  "Offline": "bg-slate-100 text-slate-500",
+};
+
+function SummaryCard({ label, value, cls }) {
+  return (
+    <div className="crm-card p-3">
+      <p className="text-[10px] uppercase tracking-wider text-slate-400">{label}</p>
+      <p className={`mt-1 font-display text-xl font-extrabold ${cls}`}>{value}</p>
+    </div>
+  );
+}
+
+function AttendanceTab() {
+  const [mode, setMode] = useState("day");
+  const [day, setDay] = useState(new Date().toISOString().slice(0, 10));
+  const [month, setMonth] = useState(new Date().toISOString().slice(0, 7));
+  const [data, setData] = useState(null);
+  const [openUser, setOpenUser] = useState(null);
+  const [timeline, setTimeline] = useState(null);
+
+  const load = () => {
+    setData(null); setOpenUser(null); setTimeline(null);
+    const params = mode === "month" ? { month } : { date: day };
+    API.get("/agent/attendance", { params }).then(({ data }) => setData(data)).catch((e) => toast.error(apiErr(e)));
+  };
+  useEffect(() => { load(); }, [mode, day, month]);
+
+  const openTimeline = async (uid) => {
+    if (openUser === uid) { setOpenUser(null); setTimeline(null); return; }
+    setOpenUser(uid); setTimeline(null);
+    const params = mode === "month" ? { month, user_id: uid } : { date: day, user_id: uid };
+    const { data: d } = await API.get("/agent/attendance", { params });
+    setTimeline(d.timeline || []);
+  };
+
+  const forceOffline = async (uid, name) => {
+    try {
+      await API.post("/agent/admin/set-status", { user_id: uid, status: "Offline" });
+      toast.success(`${name} set to Offline — no new leads will be assigned to them`);
+      load();
+    } catch (e) { toast.error(apiErr(e)); }
+  };
+
+  const order = data?.status_order || [];
+  const t = data?.totals;
+
+  return (
+    <div data-testid="attendance-tab">
+      <div className="mb-3 flex flex-wrap items-center gap-3">
+        <div className="flex overflow-hidden rounded-full border border-slate-200" data-testid="attendance-mode-toggle">
+          {["day", "month"].map((m) => (
+            <button key={m} data-testid={`attendance-mode-${m}`} onClick={() => setMode(m)}
+              className={`px-4 py-1.5 text-xs font-bold transition-colors ${mode === m ? "bg-[#1A73E8] text-white" : "bg-white text-slate-500 hover:bg-slate-50"}`}>
+              {m === "day" ? "Day-wise" : "Month-wise"}
+            </button>
+          ))}
+        </div>
+        {mode === "day" ? (
+          <input type="date" value={day} onChange={(e) => setDay(e.target.value)} className="crm-input !w-44 !py-1.5 text-sm" data-testid="attendance-date" />
+        ) : (
+          <input type="month" value={month} onChange={(e) => setMonth(e.target.value)} className="crm-input !w-44 !py-1.5 text-sm" data-testid="attendance-month" />
+        )}
+        <button onClick={load} className="crm-btn-secondary !py-1.5 text-xs" data-testid="attendance-refresh"><ArrowsClockwise size={14} /> Refresh</button>
+      </div>
+
+      {!data ? <Spinner /> : (
+        <>
+          <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-4" data-testid="attendance-summary">
+            <SummaryCard label="Callers" value={t.caller_count} cls="text-slate-900" />
+            <SummaryCard label={mode === "month" ? "Present (any day)" : "Present today"} value={t.present_count} cls="text-emerald-600" />
+            <SummaryCard label="Total working time" value={fmtDur(t.working_seconds)} cls="text-[#1557B0]" />
+            <SummaryCard label="Total break time" value={fmtDur(t.break_seconds)} cls="text-amber-600" />
+          </div>
+
+          {data.rows.length === 0 ? (
+            <div className="crm-card p-10 text-center text-sm text-slate-400">No status activity recorded for this {mode === "month" ? "month" : "day"}.</div>
+          ) : (
+            <div className="crm-card overflow-x-auto">
+              <table className="w-full text-sm" data-testid="attendance-table">
+                <thead>
+                  <tr className="border-b border-slate-100 bg-slate-50 text-left text-[11px] uppercase tracking-wider text-slate-400">
+                    <th className="px-3 py-2">Caller</th>
+                    <th className="px-3 py-2">Attendance</th>
+                    <th className="px-3 py-2">Live status</th>
+                    {mode === "month" && <th className="px-3 py-2 text-right">Days</th>}
+                    <th className="px-3 py-2">First seen</th>
+                    <th className="px-3 py-2">Last seen</th>
+                    <th className="px-3 py-2 text-right">Working</th>
+                    <th className="px-3 py-2 text-right">Break</th>
+                    <th className="px-3 py-2">Breakdown</th>
+                    <th className="px-3 py-2" />
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.rows.map((r) => (
+                    <React.Fragment key={r.user_id}>
+                      <tr className="border-b border-slate-50 hover:bg-slate-50/50" data-testid={`attendance-row-${r.user_id}`}>
+                        <td className="px-3 py-2 font-semibold text-slate-700">{r.name} <span className="text-[10px] text-slate-400">({r.role})</span></td>
+                        <td className="px-3 py-2">
+                          <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${r.present ? "bg-emerald-50 text-emerald-600" : "bg-rose-50 text-rose-500"}`} data-testid={`attendance-present-${r.user_id}`}>
+                            {r.present ? "Present" : "Absent"}
+                          </span>
+                        </td>
+                        <td className="px-3 py-2">
+                          <div className="flex items-center gap-2">
+                            <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${ATT_STATUS_CLS[r.current_status] || "bg-slate-100 text-slate-500"}`} data-testid={`attendance-live-status-${r.user_id}`}>
+                              {r.current_status}
+                            </span>
+                            {r.current_status !== "Offline" && (
+                              <button onClick={() => forceOffline(r.user_id, r.name)} data-testid={`attendance-force-offline-${r.user_id}`}
+                                className="rounded-full border border-rose-200 px-2 py-0.5 text-[10px] font-bold text-rose-500 transition-colors hover:bg-rose-50" title="Force this caller Offline — stops new lead assignment immediately">
+                                Set Offline
+                              </button>
+                            )}
+                          </div>
+                        </td>
+                        {mode === "month" && <td className="px-3 py-2 text-right text-slate-500">{r.days_present}</td>}
+                        <td className="px-3 py-2 text-xs text-slate-400">{r.first_seen ? fmtDate(r.first_seen) : "—"}</td>
+                        <td className="px-3 py-2 text-xs text-slate-400">{r.last_seen ? fmtDate(r.last_seen) : "—"}</td>
+                        <td className="px-3 py-2 text-right font-bold text-[#1557B0]">{fmtDur(r.working_seconds)}</td>
+                        <td className="px-3 py-2 text-right font-bold text-amber-600">{fmtDur(r.break_seconds)}</td>
+                        <td className="px-3 py-2">
+                          <div className="flex flex-wrap gap-1">
+                            {order.filter((s) => r.by_status[s]).map((s) => (
+                              <span key={s} className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${ATT_STATUS_CLS[s] || "bg-slate-100 text-slate-500"}`}>
+                                {s}: {fmtDur(r.by_status[s])}
+                              </span>
+                            ))}
+                            {order.every((s) => !r.by_status[s]) && <span className="text-[10px] text-slate-300">—</span>}
+                          </div>
+                        </td>
+                        <td className="px-3 py-2 text-right">
+                          <button onClick={() => openTimeline(r.user_id)} className="text-xs font-bold text-[#1557B0] hover:underline" data-testid={`attendance-timeline-btn-${r.user_id}`}>
+                            {openUser === r.user_id ? "Hide" : "Timeline"}
+                          </button>
+                        </td>
+                      </tr>
+                      {openUser === r.user_id && (
+                        <tr className="bg-slate-50/60" data-testid={`attendance-timeline-${r.user_id}`}>
+                          <td colSpan={mode === "month" ? 10 : 9} className="px-4 py-3">
+                            {timeline === null ? <div className="py-2 text-xs text-slate-400">Loading timeline…</div>
+                              : timeline.length === 0 ? <div className="py-2 text-xs text-slate-400">No status changes in this period.</div>
+                              : (
+                                <div className="space-y-1.5">
+                                  {timeline.map((lg) => (
+                                    <div key={lg.id} className="flex flex-wrap items-center gap-2 text-xs">
+                                      <span className={`rounded-full px-2 py-0.5 font-bold ${ATT_STATUS_CLS[lg.status] || "bg-slate-100 text-slate-500"}`}>{lg.status}</span>
+                                      <span className="text-slate-500">{fmtDate(lg.start)} → {lg.end ? fmtDate(lg.end) : <span className="font-semibold text-amber-600">ongoing</span>}</span>
+                                      <span className="ml-auto font-bold text-slate-600">{fmtDur(lg.duration_sec)}</span>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                          </td>
+                        </tr>
+                      )}
+                    </React.Fragment>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+
+function TelephonyTab({ isAdmin }) {
+  const [cfg, setCfg] = useState(null);
+  const [users, setUsers] = useState(null);
+  const [calls, setCalls] = useState(null);
+  const screenPopUrl = `${window.location.origin}/screen-pop`;
+
+  const loadCfg = () => API.get("/admin/settings").then(({ data }) =>
+    setCfg(data.ozonetel || { domain: "in1-ccaas-api.ozonetel.com", username: "", api_key: "", campaign_name: "", priority: "" }));
+  const loadUsers = () => API.get("/users").then(({ data }) => setUsers(data));
+  const loadCalls = () => API.get("/calls", { params: { limit: 20 } }).then(({ data }) => setCalls(data.items));
+  useEffect(() => { loadCfg(); loadUsers(); loadCalls(); }, []);
+
+  const saveCfg = async (e) => {
+    e.preventDefault();
+    try {
+      await API.patch("/admin/settings", {
+        key: "ozonetel",
+        value: {
+          domain: (cfg.domain || "in1-ccaas-api.ozonetel.com").trim(),
+          username: (cfg.username || "").trim(),
+          api_key: (cfg.api_key || "").trim(),
+          campaign_name: (cfg.campaign_name || "").trim(),
+          priority: (cfg.priority || "").toString().trim(),
+        },
+      });
+      toast.success("Ozonetel settings saved");
+    } catch (err) { toast.error(apiErr(err)); }
+  };
+
+  const patchUser = async (id, updates) => {
+    try { await API.patch(`/users/${id}`, updates); loadUsers(); toast.success("Agent mapping saved"); }
+    catch (err) { toast.error(apiErr(err)); }
+  };
+
+  if (!cfg) return <Spinner />;
+  return (
+    <div className="space-y-4" data-testid="telephony-tab">
+      <div className="crm-card p-4">
+        <h3 className="font-display text-sm font-extrabold text-slate-800">Ozonetel Telephony</h3>
+        <p className="mt-1 text-xs text-slate-500">
+          Incoming calls pop the matching lead on the agent's screen. Configure your CloudAgent account below,
+          then paste the Screen-Pop URL into Ozonetel (Admin → Settings → Screen Pop URL).
+        </p>
+
+        <div className="mt-3 flex flex-wrap items-center gap-2 rounded-xl bg-[#1A73E8]/5 p-3">
+          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Screen-Pop URL</span>
+          <code className="flex-1 truncate rounded-lg bg-white px-2 py-1.5 text-[11px] text-slate-600" data-testid="screen-pop-url">{screenPopUrl}?phoneNumber=&#123;phoneNumber&#125;&amp;ucid=&#123;ucid&#125;&amp;callerID=&#123;callerID&#125;&amp;did=&#123;did&#125;&amp;agentID=&#123;agentID&#125;&amp;phoneName=&#123;phoneName&#125;</code>
+          <button title="Copy URL" onClick={() => { navigator.clipboard.writeText(screenPopUrl); toast.success("Copied"); }} className="text-slate-400 hover:text-[#1A73E8]"><Copy size={16} /></button>
+        </div>
+
+        <form onSubmit={saveCfg} className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2">
+          <div>
+            <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400">API Domain</label>
+            <input data-testid="ozonetel-domain-input" disabled={!isAdmin} className="crm-input mt-1" placeholder="in1-ccaas-api.ozonetel.com"
+              value={cfg.domain || ""} onChange={(e) => setCfg((c) => ({ ...c, domain: e.target.value }))} />
+          </div>
+          <div>
+            <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400">CloudAgent Username</label>
+            <input data-testid="ozonetel-username-input" disabled={!isAdmin} className="crm-input mt-1" placeholder="your-ozonetel-user"
+              value={cfg.username || ""} onChange={(e) => setCfg((c) => ({ ...c, username: e.target.value }))} />
+          </div>
+          <div>
+            <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400">API Key</label>
+            <input data-testid="ozonetel-apikey-input" type="password" disabled={!isAdmin} className="crm-input mt-1" placeholder="KK…"
+              value={cfg.api_key || ""} onChange={(e) => setCfg((c) => ({ ...c, api_key: e.target.value }))} />
+          </div>
+          <div>
+            <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Outbound Campaign (for click-to-dial)</label>
+            <input data-testid="ozonetel-campaign-input" disabled={!isAdmin} className="crm-input mt-1" placeholder="e.g. Fundle_Outbound"
+              value={cfg.campaign_name || ""} onChange={(e) => setCfg((c) => ({ ...c, campaign_name: e.target.value }))} />
+          </div>
+          {isAdmin && (
+            <div className="md:col-span-2">
+              <button data-testid="save-ozonetel-button" type="submit" className="crm-btn-primary !py-2"><Phone size={14} /> Save Telephony Settings</button>
+            </div>
+          )}
+        </form>
+      </div>
+
+      <div className="crm-card p-4">
+        <h3 className="font-display text-sm font-extrabold text-slate-800">Agent Mapping</h3>
+        <p className="mt-1 text-xs text-slate-500">Map each CRM agent to their Ozonetel Agent ID (or login name) so incoming calls pop on the right person's screen.</p>
+        {!users ? <Spinner /> : (
+          <table className="mt-3 w-full text-sm" data-testid="agent-mapping-table">
+            <thead><tr className="border-b border-slate-100 text-left text-[11px] uppercase tracking-wider text-slate-400">
+              <th className="py-2">Agent</th><th className="py-2">Ozonetel Agent ID</th><th className="py-2">Ozonetel Login Name</th></tr></thead>
+            <tbody>
+              {users.filter((u) => u.active).map((u) => (
+                <tr key={u.id} className="border-b border-slate-50">
+                  <td className="py-2 font-semibold text-slate-700">{u.name} <span className="text-[10px] text-slate-400">({u.role})</span></td>
+                  <td className="py-2">
+                    <input data-testid={`agent-id-input-${u.id}`} disabled={!isAdmin} defaultValue={u.ozonetel_agent_id || ""} placeholder="e.g. 84822"
+                      onBlur={(e) => { const v = e.target.value.trim(); if (v !== (u.ozonetel_agent_id || "")) patchUser(u.id, { ozonetel_agent_id: v }); }}
+                      className="crm-input !w-36 !py-1 text-xs" />
+                  </td>
+                  <td className="py-2">
+                    <input data-testid={`agent-name-input-${u.id}`} disabled={!isAdmin} defaultValue={u.ozonetel_phone_name || ""} placeholder="e.g. agent1"
+                      onBlur={(e) => { const v = e.target.value.trim(); if (v !== (u.ozonetel_phone_name || "")) patchUser(u.id, { ozonetel_phone_name: v }); }}
+                      className="crm-input !w-36 !py-1 text-xs" />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+
+      <div className="crm-card p-4">
+        <div className="flex items-center justify-between">
+          <h3 className="font-display text-sm font-extrabold text-slate-800">Recent Calls</h3>
+          <button onClick={loadCalls} className="crm-btn-secondary !py-1.5 text-xs"><ArrowsClockwise size={14} /> Refresh</button>
+        </div>
+        {!calls ? <Spinner /> : calls.length === 0 ? (
+          <p className="py-6 text-center text-sm text-slate-400">No calls logged yet. Calls appear here as Ozonetel routes them.</p>
+        ) : (
+          <table className="mt-3 w-full text-sm" data-testid="recent-calls-table">
+            <thead><tr className="border-b border-slate-100 text-left text-[11px] uppercase tracking-wider text-slate-400">
+              <th className="py-2">Direction</th><th className="py-2">Number</th><th className="py-2">Lead</th><th className="py-2">Agent</th><th className="py-2">When</th></tr></thead>
+            <tbody>
+              {calls.map((c) => (
+                <tr key={c.id} className="border-b border-slate-50">
+                  <td className="py-2 capitalize text-slate-600">{c.direction}</td>
+                  <td className="py-2 text-slate-700">{c.phone || "—"}</td>
+                  <td className="py-2">{c.lead_id ? <a className="font-semibold text-[#1557B0]" href={`/leads/${c.lead_id}`}>{c.lead_name || `#${c.lead_id}`}</a> : <span className="text-slate-400">No match</span>}</td>
+                  <td className="py-2 text-slate-500">{c.agent_name || c.agent_phone_name || "—"}</td>
+                  <td className="py-2 text-xs text-slate-400">{fmtDate(c.created_at)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </div>
+  );
+}
+
+const FB_CRM_FIELDS = [
+  ["contact_name", "Contact Name"], ["phone", "Phone"], ["email_from", "Email"],
+  ["city", "City"], ["state_name", "State"], ["query", "Query"],
+  ["campaign_name", "Campaign"],
+];
+
+function FacebookTab({ isAdmin }) {
+  const { catalogs } = useCatalogs();
+  const [cfg, setCfg] = useState(null);
+  const [status, setStatus] = useState(null);
+  const [maps, setMaps] = useState([]); // [{fb, crm}]
+  const [test, setTest] = useState([{ name: "full_name", value: "" }, { name: "phone_number", value: "" }, { name: "email", value: "" }]);
+  const [diag, setDiag] = useState(null);
+  const [diagBusy, setDiagBusy] = useState(false);
+  const [recentLeads, setRecentLeads] = useState(null);
+  const [backfillDays, setBackfillDays] = useState(7);
+  const [backfillBusy, setBackfillBusy] = useState(false);
+  const [backfillResult, setBackfillResult] = useState(null);
+  const callbackUrl = `${process.env.REACT_APP_BACKEND_URL}/api/webhooks/facebook`;
+  const customFields = (catalogs?.custom_fields || []).filter((f) => f.active !== false);
+
+  const load = () => {
+    API.get("/admin/settings").then(({ data }) => {
+      const fb = data.facebook || { graph_api_version: "v25.0", source_default: "Meta Lead Ads" };
+      setCfg(fb);
+      setMaps(Object.entries(fb.field_mapping || {}).map(([k, v]) => ({ fb: k, crm: v })));
+    });
+    API.get("/admin/facebook/status").then(({ data }) => setStatus(data));
+    API.get("/admin/facebook/recent-leads").then(({ data }) => setRecentLeads(data)).catch(() => {});
+  };
+  useEffect(() => { load(); }, []);
+
+  const save = async (e) => {
+    e?.preventDefault();
+    const field_mapping = {};
+    maps.forEach((m) => { if (m.fb.trim() && m.crm) field_mapping[m.fb.trim()] = m.crm; });
+    try {
+      await API.patch("/admin/settings", {
+        key: "facebook",
+        value: {
+          app_id: (cfg.app_id || "").trim(), app_secret: (cfg.app_secret || "").trim(),
+          page_id: (cfg.page_id || "").trim(), page_access_token: (cfg.page_access_token || "").trim(),
+          verify_token: (cfg.verify_token || "").trim(),
+          graph_api_version: (cfg.graph_api_version || "v25.0").trim(),
+          source_default: (cfg.source_default || "Meta Lead Ads").trim(),
+          field_mapping,
+        },
+      });
+      toast.success("Facebook settings saved"); load();
+    } catch (err) { toast.error(apiErr(err)); }
+  };
+
+  const subscribe = async () => {
+    try { const { data } = await API.post("/admin/facebook/subscribe"); toast.success("Page subscribed to leadgen ✓"); console.log(data); diagnose(); }
+    catch (err) { toast.error(apiErr(err)); }
+  };
+
+  const registerWebhook = async () => {
+    try {
+      const { data } = await API.post("/admin/facebook/register-webhook", { callback_url: callbackUrl });
+      toast.success("Leadgen webhook registered with Meta ✓"); console.log(data); diagnose();
+    } catch (err) { toast.error(apiErr(err)); }
+  };
+
+  const diagnose = async () => {
+    setDiagBusy(true);
+    try { const { data } = await API.get("/admin/facebook/diagnose"); setDiag(data); }
+    catch (err) { toast.error(apiErr(err)); } finally { setDiagBusy(false); }
+  };
+
+  const sendTest = async () => {
+    const field_data = test.filter((t) => t.name.trim() && t.value.trim()).map((t) => ({ name: t.name.trim(), values: [t.value.trim()] }));
+    if (!field_data.length) { toast.error("Add at least one test field"); return; }
+    try {
+      const { data } = await API.post("/admin/facebook/test", { field_data, leadgen_id: "MANUAL_TEST" });
+      toast.success(`Test lead #${data.lead_id} created — open it to verify mapping`);
+      load();
+    } catch (err) { toast.error(apiErr(err)); }
+  };
+
+  const runBackfill = async (dryRun) => {
+    setBackfillBusy(true); setBackfillResult(null);
+    try {
+      await API.post("/admin/facebook/backfill", { since_days: Number(backfillDays) || 7, dry_run: dryRun });
+      toast.success(dryRun ? "Preview started — scanning Meta…" : "Recovery started — pulling leads from Meta…");
+      // Poll the background job until it finishes.
+      const poll = setInterval(async () => {
+        try {
+          const { data } = await API.get("/admin/facebook/backfill/status");
+          setBackfillResult(data);
+          if (data.status !== "running") {
+            clearInterval(poll); setBackfillBusy(false);
+            if (data.status === "error") toast.error(`Backfill failed: ${(data.errors || [])[0] || "unknown error"}`);
+            else if (data.dry_run) toast.success(`Preview done: ${data.would_recover} lead(s) can be recovered`);
+            else { toast.success(`Recovered ${data.recovered} missing Meta lead(s)`); load(); }
+          }
+        } catch (e) { clearInterval(poll); setBackfillBusy(false); toast.error(apiErr(e)); }
+      }, 2500);
+    } catch (err) { setBackfillBusy(false); toast.error(apiErr(err)); }
+  };
+
+  if (!cfg) return <Spinner />;
+  return (
+    <div className="space-y-4" data-testid="facebook-tab">
+      <div className="crm-card p-4">
+        <div className="flex items-center gap-2">
+          <FacebookLogo size={20} weight="fill" className="text-[#1877F2]" />
+          <h3 className="font-display text-sm font-extrabold text-slate-800">Facebook Lead Ads</h3>
+          {status && <span className={`ml-2 rounded-full px-2 py-0.5 text-[10px] font-bold ${status.configured ? "bg-emerald-50 text-emerald-600" : "bg-amber-50 text-amber-600"}`}>{status.configured ? "CONFIGURED" : "NOT CONNECTED"}</span>}
+          {status && <span className="text-[11px] text-slate-400">· {status.leads_captured} leads captured</span>}
+        </div>
+        <p className="mt-1 text-xs text-slate-500">Auto-capture leads from your Facebook Page lead forms. Connect your Meta app below, paste the callback URL into Meta, then map the form fields.</p>
+
+        <div className="mt-3 space-y-2">
+          <div className="flex flex-wrap items-center gap-2 rounded-xl bg-[#1877F2]/5 p-3">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Webhook Callback URL</span>
+            <code className="flex-1 truncate rounded-lg bg-white px-2 py-1.5 text-[11px] text-slate-600" data-testid="fb-callback-url">{callbackUrl}</code>
+            <button title="Copy" onClick={() => { navigator.clipboard.writeText(callbackUrl); toast.success("Copied"); }} className="text-slate-400 hover:text-[#1877F2]"><Copy size={16} /></button>
+          </div>
+        </div>
+
+        <form onSubmit={save} className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2">
+          {[["app_id", "App ID", "text"], ["app_secret", "App Secret", "password"], ["page_id", "Page ID", "text"],
+            ["page_access_token", "Page Access Token", "password"], ["verify_token", "Verify Token (you choose)", "text"],
+            ["graph_api_version", "Graph API Version", "text"]].map(([k, label, type]) => (
+            <div key={k}>
+              <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400">{label}</label>
+              <input data-testid={`fb-${k}-input`} type={type} disabled={!isAdmin} className="crm-input mt-1"
+                value={cfg[k] || ""} onChange={(e) => setCfg((c) => ({ ...c, [k]: e.target.value }))} />
+            </div>
+          ))}
+          {isAdmin && (
+            <div className="flex flex-wrap items-end gap-2 md:col-span-2">
+              <button data-testid="fb-save-button" type="submit" className="crm-btn-primary !py-2"><FacebookLogo size={14} /> Save Settings</button>
+              <button type="button" onClick={subscribe} className="crm-btn-secondary !py-2" data-testid="fb-subscribe-button">Subscribe Page to leadgen</button>
+              <button type="button" onClick={registerWebhook} className="crm-btn-secondary !py-2" data-testid="fb-register-webhook-button">Register leadgen webhook with Meta</button>
+              <button type="button" onClick={diagnose} disabled={diagBusy} className="crm-btn-secondary !py-2" data-testid="fb-diagnose-button">{diagBusy ? "Checking…" : "Check connection"}</button>
+            </div>
+          )}
+        </form>
+
+        {diag && (
+          <div className="mt-4 rounded-xl border border-slate-100 bg-slate-50/70 p-4" data-testid="fb-diagnose-result">
+            <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Connection diagnostic</p>
+            <div className="mt-2 space-y-1.5">
+              {diag.checks.map((c, i) => (
+                <div key={i} className="flex items-start gap-2 text-sm" data-testid={`fb-diag-check-${i}`}>
+                  <span className={c.ok ? "text-emerald-500" : "text-rose-500"}>{c.ok ? "✓" : "✕"}</span>
+                  <span className="font-semibold text-slate-700">{c.name}:</span>
+                  <span className="text-slate-500">{c.detail}</span>
+                </div>
+              ))}
+            </div>
+            {diag.next_step && (
+              <p className="mt-3 rounded-lg bg-[#1877F2]/5 p-2.5 text-xs font-semibold text-[#1877F2]" data-testid="fb-diag-next-step">
+                Next: {diag.next_step}
+              </p>
+            )}
+            {diag.recent_webhook_deliveries && diag.recent_webhook_deliveries.length > 0 && (
+              <div className="mt-3" data-testid="fb-webhook-deliveries">
+                <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Recent webhook deliveries from Meta</p>
+                <div className="mt-2 space-y-1.5">
+                  {diag.recent_webhook_deliveries.map((d, i) => {
+                    const color = d.status === "created" ? "text-emerald-600 bg-emerald-50"
+                      : d.status === "rejected" || d.status === "error" ? "text-rose-600 bg-rose-50"
+                      : "text-amber-600 bg-amber-50";
+                    return (
+                      <div key={i} className="rounded-lg border border-slate-100 bg-white p-2 text-xs" data-testid={`fb-delivery-${i}`}>
+                        <div className="flex items-center gap-2">
+                          <span className={`rounded px-1.5 py-0.5 text-[10px] font-bold uppercase ${color}`}>{d.status}</span>
+                          <span className="text-slate-400">{d.at}</span>
+                        </div>
+                        <p className="mt-1 text-slate-600">{d.detail}</p>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+            {diag.recent_webhook_deliveries && diag.recent_webhook_deliveries.length === 0 && (
+              <p className="mt-3 text-xs text-slate-400" data-testid="fb-no-deliveries">
+                No webhook deliveries received yet. If Meta's "Track status" shows <b>webhooks.delivery.rejected</b>, it means the callback was rejected before reaching here — usually the saved App Secret does not match the app delivering the webhook.
+              </p>
+            )}
+          </div>
+        )}
+      </div>
+
+      <div className="crm-card p-4" data-testid="fb-recent-leads-card">
+        <div className="flex items-center justify-between">
+          <div>
+            <h3 className="font-display text-sm font-extrabold text-slate-800">Recently captured Facebook leads</h3>
+            <p className="mt-1 text-xs text-slate-500">Every lead captured from Meta, newest first — a direct view (ignores date sort, assignment and caller filters).</p>
+          </div>
+          <div className="flex items-center gap-2">
+            {recentLeads && <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-bold text-emerald-600" data-testid="fb-recent-total">{recentLeads.total} total</span>}
+            <button type="button" onClick={() => API.get("/admin/facebook/recent-leads").then(({ data }) => setRecentLeads(data)).catch(() => {})} className="crm-btn-secondary !py-1.5 text-xs" data-testid="fb-recent-refresh"><ArrowsClockwise size={13} /> Refresh</button>
+          </div>
+        </div>
+        <div className="mt-3" data-testid="fb-recent-leads-list">
+          {!recentLeads || recentLeads.leads.length === 0 ? (
+            <p className="text-xs text-slate-400" data-testid="fb-recent-empty">No Facebook leads captured yet. Once a Meta lead is delivered and retrieved successfully, it will appear here.</p>
+          ) : (
+            <div className="overflow-hidden rounded-xl border border-slate-100">
+              <table className="w-full text-sm">
+                <thead className="bg-slate-50 text-[10px] uppercase tracking-wider text-slate-400">
+                  <tr>
+                    <th className="px-3 py-2 text-left">Name</th>
+                    <th className="px-3 py-2 text-left">Phone</th>
+                    <th className="px-3 py-2 text-left">Form</th>
+                    <th className="px-3 py-2 text-left">Assigned</th>
+                    <th className="px-3 py-2 text-left">Captured</th>
+                    <th className="px-3 py-2"></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {recentLeads.leads.map((l) => (
+                    <tr key={l.id} className="border-t border-slate-50 hover:bg-slate-50/60" data-testid={`fb-recent-lead-${l.id}`}>
+                      <td className="px-3 py-2 font-semibold text-slate-700">{l.contact_name || l.name || "—"}</td>
+                      <td className="px-3 py-2 text-slate-500">{l.phone || "—"}</td>
+                      <td className="px-3 py-2 text-slate-500">{l.fb_form_name || "—"}</td>
+                      <td className="px-3 py-2 text-slate-500">{l.assigned_to}</td>
+                      <td className="px-3 py-2 text-slate-400">{fmtDate(l.create_date_ist || l.create_date)}</td>
+                      <td className="px-3 py-2 text-right">
+                        <Link to={`/leads/${l.id}`} className="text-xs font-bold text-[#1557B0] hover:underline" data-testid={`fb-recent-open-${l.id}`}>Open →</Link>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div className="crm-card p-4" data-testid="fb-backfill-card">
+        <h3 className="font-display text-sm font-extrabold text-slate-800">Recover missing Meta leads</h3>
+        <p className="mt-1 text-xs text-slate-500">Pulls leads straight from your Meta Lead Ads forms via the Graph API and re-creates any that never reached the CRM (e.g. dropped during an outage). Already-present leads are skipped; original submission time is preserved. Run <b>Preview</b> first to see how many would be recovered.</p>
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <label className="text-xs font-semibold text-slate-500">Look back</label>
+          <select className="crm-select !py-1 !w-auto" value={backfillDays} onChange={(e) => setBackfillDays(e.target.value)} data-testid="fb-backfill-days">
+            <option value={1}>Last 24 hours</option>
+            <option value={3}>Last 3 days</option>
+            <option value={7}>Last 7 days</option>
+            <option value={30}>Last 30 days</option>
+            <option value={90}>Last 90 days</option>
+          </select>
+          <button onClick={() => runBackfill(true)} disabled={backfillBusy} className="crm-btn-secondary !py-1.5 text-xs" data-testid="fb-backfill-preview">
+            {backfillBusy ? "Working…" : "Preview"}
+          </button>
+          {isAdmin && (
+            <button onClick={() => runBackfill(false)} disabled={backfillBusy} className="crm-btn !py-1.5 text-xs" data-testid="fb-backfill-run">
+              {backfillBusy ? "Working…" : "Recover now"}
+            </button>
+          )}
+        </div>
+        {backfillResult && (
+          <div className="mt-3 rounded-xl border border-slate-100 bg-slate-50/60 p-3 text-xs" data-testid="fb-backfill-result">
+            <div className="mb-1.5 font-bold text-slate-600">
+              {backfillResult.status === "running" ? "⏳ Scanning Meta… (live)" : backfillResult.status === "error" ? "❌ Failed" : backfillResult.dry_run ? "✓ Preview complete" : "✓ Recovery complete"}
+            </div>
+            <div className="flex flex-wrap gap-x-5 gap-y-1">
+              <span>Forms scanned: <b>{backfillResult.forms}</b></span>
+              <span>Leads scanned: <b>{backfillResult.fetched}</b></span>
+              <span>Already in CRM: <b>{backfillResult.already_present}</b></span>
+              <span className="text-emerald-600">{backfillResult.dry_run ? "Would recover" : "Recovered"}: <b>{backfillResult.dry_run ? backfillResult.would_recover : backfillResult.recovered}</b></span>
+            </div>
+            {backfillResult.errors?.length > 0 && (
+              <p className="mt-2 text-rose-500">{backfillResult.errors.length} error(s): {backfillResult.errors.slice(0, 3).join("; ")}</p>
+            )}
+          </div>
+        )}
+      </div>
+
+
+      <div className="crm-card p-4">
+        <h3 className="font-display text-sm font-extrabold text-slate-800">Field Mapping</h3>
+        <p className="mt-1 text-xs text-slate-500">Map each Facebook lead-form field name to a CRM field. Unmapped answers are still saved to the lead's Q&A card. Custom fields you build appear here too.</p>
+        <div className="mt-3 space-y-2" data-testid="fb-mapping-list">
+          {maps.map((m, idx) => (
+            <div key={idx} className="flex items-center gap-2" data-testid={`fb-map-row-${idx}`}>
+              <input className="crm-input !py-1" placeholder="Facebook field (e.g. full_name)" value={m.fb}
+                onChange={(e) => setMaps((arr) => arr.map((x, i) => (i === idx ? { ...x, fb: e.target.value } : x)))} data-testid={`fb-map-fbname-${idx}`} />
+              <span className="text-slate-400">→</span>
+              <select className="crm-select !py-1 flex-1" value={m.crm} onChange={(e) => setMaps((arr) => arr.map((x, i) => (i === idx ? { ...x, crm: e.target.value } : x)))} data-testid={`fb-map-crm-${idx}`}>
+                <option value="">Choose CRM field…</option>
+                {FB_CRM_FIELDS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+                {customFields.map((f) => <option key={f.key} value={f.key}>{f.label} (custom)</option>)}
+              </select>
+              <button type="button" onClick={() => setMaps((arr) => arr.filter((_, i) => i !== idx))} className="text-slate-300 hover:text-rose-500"><Trash size={15} /></button>
+            </div>
+          ))}
+          <div className="flex gap-2">
+            <button type="button" onClick={() => setMaps((arr) => [...arr, { fb: "", crm: "" }])} className="text-xs font-bold text-[#1557B0]" data-testid="fb-add-map">+ Add mapping</button>
+            {isAdmin && <button type="button" onClick={save} className="crm-btn-primary !py-1 text-xs" data-testid="fb-save-mapping">Save mapping</button>}
+          </div>
+        </div>
+      </div>
+
+      <div className="crm-card p-4">
+        <h3 className="font-display text-sm font-extrabold text-slate-800">Test a Lead</h3>
+        <p className="mt-1 text-xs text-slate-500">Simulate a Facebook lead to verify your mapping end-to-end (creates a real lead you can delete afterwards).</p>
+        <div className="mt-3 space-y-2" data-testid="fb-test-rows">
+          {test.map((t, idx) => (
+            <div key={idx} className="flex items-center gap-2" data-testid={`fb-test-row-${idx}`}>
+              <input className="crm-input !py-1" placeholder="FB field name" value={t.name} onChange={(e) => setTest((arr) => arr.map((x, i) => (i === idx ? { ...x, name: e.target.value } : x)))} data-testid={`fb-test-name-${idx}`} />
+              <input className="crm-input !py-1 flex-1" placeholder="Value" value={t.value} onChange={(e) => setTest((arr) => arr.map((x, i) => (i === idx ? { ...x, value: e.target.value } : x)))} data-testid={`fb-test-value-${idx}`} />
+              <button type="button" onClick={() => setTest((arr) => arr.filter((_, i) => i !== idx))} className="text-slate-300 hover:text-rose-500"><Trash size={15} /></button>
+            </div>
+          ))}
+          <div className="flex gap-2">
+            <button type="button" onClick={() => setTest((arr) => [...arr, { name: "", value: "" }])} className="text-xs font-bold text-[#1557B0]">+ Add field</button>
+            <button type="button" onClick={sendTest} className="crm-btn-primary !py-1 text-xs" data-testid="fb-send-test">Send test lead</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function EmailTab({ isAdmin }) {
+  const [status, setStatus] = useState(null);
+  const [testTo, setTestTo] = useState("");
+  const [senderName, setSenderName] = useState("");
+  const load = () => API.get("/admin/gmail/status").then(({ data }) => { setStatus(data); setSenderName(data.sender_name || "Fundle.ai"); }).catch(() => setStatus({ connected: false }));
+  useEffect(() => { load(); }, []);
+
+  const saveSenderName = async () => {
+    try { const { data } = await API.post("/admin/gmail/sender-name", { sender_name: senderName.trim() || "Fundle.ai" }); setSenderName(data.sender_name); toast.success("Sender name saved ✓"); }
+    catch (e) { toast.error(apiErr(e)); }
+  };
+
+  const connect = async () => {
+    try {
+      const origin = window.location.origin;
+      const { data } = await API.get("/admin/gmail/auth-url", { params: { origin } });
+      window.location.href = data.url;
+    }
+    catch (e) { toast.error(apiErr(e)); }
+  };
+  const disconnect = async () => {
+    if (!window.confirm("Disconnect Gmail? Emails will queue until reconnected.")) return;
+    await API.post("/admin/gmail/disconnect"); toast.success("Gmail disconnected"); load();
+  };
+  const sendTest = async () => {
+    if (!testTo.trim()) { toast.error("Enter a recipient email"); return; }
+    try { await API.post("/admin/gmail/send-test", { to: testTo.trim() }); toast.success("Test email sent ✓"); }
+    catch (e) { toast.error(apiErr(e)); }
+  };
+
+  const redirectUri = `${window.location.origin}/api/oauth/gmail/callback`;
+
+  if (!status) return <Spinner />;
+  return (
+    <div className="space-y-4" data-testid="email-tab">
+      <div className="crm-card p-4">
+        <div className="flex items-center gap-2">
+          <EnvelopeSimple size={20} weight="fill" className="text-[#EA4335]" />
+          <h3 className="font-display text-sm font-extrabold text-slate-800">Email Sending — Gmail (Google OAuth)</h3>
+          <span className={`ml-2 rounded-full px-2 py-0.5 text-[10px] font-bold ${status.connected ? "bg-emerald-50 text-emerald-600" : "bg-amber-50 text-amber-600"}`}>
+            {status.connected ? "CONNECTED" : "NOT CONNECTED"}
+          </span>
+        </div>
+        <p className="mt-1 text-xs text-slate-500">Connect a Google account once. Lead emails & marketing email campaigns then send live via Gmail.</p>
+
+        <div className="mt-3 flex flex-wrap items-center gap-2 rounded-xl bg-[#1A73E8]/5 p-3">
+          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Add this exact Redirect URI in Google Cloud Console</span>
+          <code className="flex-1 truncate rounded-lg bg-white px-2 py-1.5 text-[11px] text-slate-600" data-testid="gmail-redirect-uri">{redirectUri}</code>
+          <button title="Copy" onClick={() => { navigator.clipboard.writeText(redirectUri); toast.success("Copied"); }} className="text-slate-400 hover:text-[#1557B0]"><Copy size={16} /></button>
+        </div>
+
+        {status.connected ? (
+          <div className="mt-4">
+            <p className="text-sm text-slate-700">Connected as <b>{status.email}</b></p>
+            {isAdmin && (
+              <div className="mt-3 flex flex-wrap items-end gap-2">
+                <div className="flex-1 min-w-[220px]">
+                  <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Sender display name (shown to recipients)</label>
+                  <input data-testid="gmail-sender-name" className="crm-input mt-1" placeholder="Fundle.ai" value={senderName} onChange={(e) => setSenderName(e.target.value)} />
+                </div>
+                <button onClick={saveSenderName} className="crm-btn-secondary !py-2" data-testid="gmail-save-sender-name">Save name</button>
+              </div>
+            )}
+            <p className="mt-1 text-[11px] text-slate-400">Emails will appear from <b>{senderName || "Fundle.ai"}</b> &lt;{status.email}&gt;</p>
+            <div className="mt-3 flex flex-wrap items-end gap-2">
+              <div className="flex-1 min-w-[220px]">
+                <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Send test email to</label>
+                <input data-testid="gmail-test-to" className="crm-input mt-1" placeholder="someone@example.com" value={testTo} onChange={(e) => setTestTo(e.target.value)} />
+              </div>
+              <button onClick={sendTest} className="crm-btn-primary !py-2" data-testid="gmail-send-test">Send test</button>
+              {isAdmin && <button onClick={disconnect} className="crm-btn-secondary !py-2" data-testid="gmail-disconnect">Disconnect</button>}
+            </div>
+          </div>
+        ) : (
+          isAdmin && (
+            <button onClick={connect} className="mt-4 inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 shadow-sm hover:bg-slate-50" data-testid="gmail-connect">
+              <GoogleLogo size={18} weight="bold" className="text-[#EA4335]" /> Connect Google account
+            </button>
+          )
+        )}
+      </div>
+    </div>
+  );
+}
+
+function WhatsAppTab({ isAdmin }) {
+  const [cfg, setCfg] = useState(null);
+  const [status, setStatus] = useState(null);
+  const [phones, setPhones] = useState(null);
+  const [templates, setTemplates] = useState(null);
+  const [testTo, setTestTo] = useState("");
+  const [subs, setSubs] = useState(null);
+  const [whLog, setWhLog] = useState(null);
+  const [diag, setDiag] = useState(null);
+  const [diagLoading, setDiagLoading] = useState(false);
+  const callbackUrl = `${process.env.REACT_APP_BACKEND_URL}/api/webhooks/whatsapp`;
+
+  const load = () => {
+    API.get("/admin/settings").then(({ data }) => setCfg(data.whatsapp_cloud || { graph_api_version: "v25.0" }));
+    API.get("/admin/whatsapp/status").then(({ data }) => setStatus(data));
+  };
+  useEffect(() => { load(); }, []);
+
+  const save = async (e) => {
+    e?.preventDefault();
+    try {
+      await API.patch("/admin/settings", {
+        key: "whatsapp_cloud",
+        value: {
+          access_token: (cfg.access_token || "").trim(), waba_id: (cfg.waba_id || "").trim(),
+          app_id: (cfg.app_id || "").trim(),
+          phone_number_id: (cfg.phone_number_id || "").trim(), app_secret: (cfg.app_secret || "").trim(),
+          verify_token: (cfg.verify_token || "").trim(), graph_api_version: (cfg.graph_api_version || "v25.0").trim(),
+        },
+      });
+      toast.success("WhatsApp settings saved"); load();
+    } catch (err) { toast.error(apiErr(err)); }
+  };
+
+  const fetchPhones = async () => {
+    try { const { data } = await API.post("/admin/whatsapp/phone-numbers"); setPhones(data.data || []); }
+    catch (err) { toast.error(apiErr(err)); }
+  };
+  const fetchTemplates = async () => {
+    try {
+      const { data } = await API.post("/admin/whatsapp/templates");
+      const items = data.data || [];
+      // Approved first, then alphabetical, so a freshly-approved template is easy to spot.
+      items.sort((a, b) =>
+        (a.status === "APPROVED" ? 0 : 1) - (b.status === "APPROVED" ? 0 : 1) ||
+        (a.name || "").localeCompare(b.name || ""));
+      setTemplates(items);
+      toast.success(`Fetched ${items.length} templates · ${items.filter((t) => t.status === "APPROVED").length} approved`);
+    } catch (err) { toast.error(apiErr(err)); }
+  };
+  const syncTemplates = async () => {
+    try {
+      const { data } = await API.post("/admin/whatsapp/templates/sync");
+      toast.success(`Synced to CRM · ${data.created} new, ${data.updated} updated (${data.total_approved} approved)`);
+      fetchTemplates();
+    } catch (err) { toast.error(apiErr(err)); }
+  };
+  const sendTest = async () => {
+    if (!testTo.trim()) { toast.error("Enter a number (with country code)"); return; }
+    try { await API.post("/admin/whatsapp/send-test", { to: testTo.trim() }); toast.success("Test message sent ✓"); }
+    catch (err) { toast.error(apiErr(err)); }
+  };
+  const subscribeWaba = async () => {
+    try {
+      const { data } = await API.post("/admin/whatsapp/subscribe");
+      setSubs(data.subscribed_apps?.data || []);
+      toast.success("WABA subscribed — delivered/read status will now flow in ✓");
+    } catch (err) { toast.error(apiErr(err)); }
+  };
+  const loadWebhookLog = async () => {
+    try { const { data } = await API.get("/admin/whatsapp/webhook-log"); setWhLog(data.items || []); }
+    catch (err) { toast.error(apiErr(err)); }
+  };
+  const runDiagnose = async () => {
+    setDiagLoading(true);
+    try { const { data } = await API.get("/admin/whatsapp/diagnose"); setDiag(data); }
+    catch (err) { toast.error(apiErr(err)); }
+    finally { setDiagLoading(false); }
+  };
+
+  if (!cfg) return <Spinner />;
+  return (
+    <div className="space-y-4" data-testid="whatsapp-tab">
+      <div className="crm-card p-4">
+        <div className="flex items-center gap-2">
+          <WhatsappLogo size={20} weight="fill" className="text-[#25D366]" />
+          <h3 className="font-display text-sm font-extrabold text-slate-800">WhatsApp Business Cloud API</h3>
+          {status && <span className={`ml-2 rounded-full px-2 py-0.5 text-[10px] font-bold ${status.configured ? "bg-emerald-50 text-emerald-600" : "bg-amber-50 text-amber-600"}`}>{status.configured ? "CONNECTED" : "NOT CONNECTED"}</span>}
+        </div>
+        <p className="mt-1 text-xs text-slate-500">Send template & session messages live and receive inbound replies. Connect your Meta WhatsApp account, then paste the callback URL into Meta → WhatsApp → Configuration → Webhook.</p>
+
+        <div className="mt-3 flex flex-wrap items-center gap-2 rounded-xl bg-[#25D366]/5 p-3">
+          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Webhook Callback URL</span>
+          <code className="flex-1 truncate rounded-lg bg-white px-2 py-1.5 text-[11px] text-slate-600" data-testid="wa-callback-url">{callbackUrl}</code>
+          <button title="Copy" onClick={() => { navigator.clipboard.writeText(callbackUrl); toast.success("Copied"); }} className="text-slate-400 hover:text-[#25D366]"><Copy size={16} /></button>
+        </div>
+
+        <form onSubmit={save} className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2">
+          {[["access_token", "System User Access Token", "password"], ["waba_id", "WhatsApp Business Account ID", "text"],
+            ["app_id", "App ID", "text"],
+            ["phone_number_id", "Phone Number ID", "text"], ["app_secret", "App Secret", "password"],
+            ["verify_token", "Verify Token (you choose)", "text"], ["graph_api_version", "Graph API Version", "text"]].map(([k, label, type]) => (
+            <div key={k}>
+              <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400">{label}</label>
+              <input data-testid={`wa-${k}-input`} type={type} disabled={!isAdmin} className="crm-input mt-1"
+                value={cfg[k] || ""} onChange={(e) => setCfg((c) => ({ ...c, [k]: e.target.value }))} />
+            </div>
+          ))}
+          {isAdmin && (
+            <div className="flex flex-wrap items-end gap-2 md:col-span-2">
+              <button data-testid="wa-save-button" type="submit" className="crm-btn-primary !py-2"><WhatsappLogo size={14} /> Save Settings</button>
+              <button type="button" onClick={fetchPhones} className="crm-btn-secondary !py-2" data-testid="wa-fetch-phones">Fetch phone numbers</button>
+              <button type="button" onClick={fetchTemplates} className="crm-btn-secondary !py-2" data-testid="wa-fetch-templates">Fetch templates</button>
+              <button type="button" onClick={syncTemplates} className="crm-btn-primary !py-2 !bg-emerald-600" data-testid="wa-sync-templates">Sync approved → CRM</button>
+              <button type="button" onClick={subscribeWaba} className="crm-btn-secondary !py-2" data-testid="wa-subscribe-button">Subscribe WABA to webhooks</button>
+              <button type="button" onClick={loadWebhookLog} className="crm-btn-secondary !py-2" data-testid="wa-webhook-log-button">Recent webhook deliveries</button>
+              <button type="button" onClick={runDiagnose} disabled={diagLoading} className="crm-btn-primary !py-2 !bg-slate-800" data-testid="wa-diagnose-button">{diagLoading ? "Diagnosing…" : "Diagnose delivery status"}</button>
+            </div>
+          )}
+        </form>
+
+        {diag && (
+          <div className="mt-3 rounded-xl border border-slate-200 bg-white p-3" data-testid="wa-diagnose-result">
+            <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">WhatsApp delivery diagnosis</p>
+            <div className={`mt-1 rounded-lg p-2 text-xs font-semibold ${diag.verdict === "healthy" ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`} data-testid="wa-diagnose-verdict">
+              {diag.verdict === "healthy" ? "✓ " : "⚠ "}{diag.next_step}
+            </div>
+            <div className="mt-2 space-y-1">
+              {(diag.checks || []).map((ch) => (
+                <div key={ch.key} className="flex items-start gap-2 text-[11px]">
+                  <span className={`mt-0.5 font-bold ${ch.ok ? "text-emerald-600" : "text-rose-500"}`}>{ch.ok ? "✓" : "✕"}</span>
+                  <span className="font-semibold text-slate-700">{ch.label}</span>
+                  <span className="ml-auto max-w-[45%] truncate text-right text-slate-400" title={typeof ch.detail === "object" ? JSON.stringify(ch.detail) : String(ch.detail)}>{typeof ch.detail === "object" ? JSON.stringify(ch.detail) : String(ch.detail)}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+        {subs && (
+          <div className="mt-3 rounded-xl bg-emerald-50/60 p-3 text-xs" data-testid="wa-subscribed-apps">
+            <p className="text-[10px] font-bold uppercase tracking-wider text-emerald-600">Subscribed apps</p>
+            {subs.length === 0 ? <p className="text-slate-400">No app subscribed to this WABA yet — that's why status stops at "Sent". Click again after checking your token permissions.</p>
+              : subs.map((a, i) => <p key={i} className="font-semibold text-slate-600">{a.whatsapp_business_api_data?.name || a.name || JSON.stringify(a)}</p>)}
+          </div>
+        )}
+        {whLog && (
+          <div className="mt-3 rounded-xl bg-slate-50 p-3" data-testid="wa-webhook-log">
+            <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Recent webhook deliveries (last 30)</p>
+            {whLog.length === 0 ? <p className="mt-1 text-xs text-slate-400">No webhooks received yet. If sends work but status stays "Sent", Meta isn't delivering status events — click "Subscribe WABA to webhooks" and ensure the <b>messages</b> field is subscribed in Meta → WhatsApp → Configuration.</p>
+              : whLog.map((w) => (
+                <div key={w.id} className="mt-1 flex flex-wrap items-center gap-2 border-b border-slate-100 py-1 text-[11px]">
+                  <span className="text-slate-400">{w.create_date}</span>
+                  {(w.statuses || []).length > 0
+                    ? (w.statuses || []).map((s, i) => <span key={i} className="rounded-full bg-white px-2 py-0.5 font-bold text-slate-600">{s.status}</span>)
+                    : <span className="text-slate-400">inbound message</span>}
+                  <span className={`ml-auto font-bold ${w.matched ? "text-emerald-600" : "text-amber-600"}`}>{w.matched ? `${w.matched} matched` : "0 matched"}</span>
+                </div>
+              ))}
+          </div>
+        )}
+
+        {phones && (
+          <div className="mt-3 rounded-xl bg-slate-50 p-3" data-testid="wa-phones-list">
+            <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Phone numbers</p>
+            {phones.length === 0 && <p className="text-xs text-slate-400">None returned.</p>}
+            {phones.map((p) => (
+              <div key={p.id} className="mt-1 flex items-center gap-2 text-sm">
+                <span className="font-semibold text-slate-700">{p.display_phone_number}</span>
+                <code className="rounded bg-white px-1.5 py-0.5 text-[10px] text-slate-500">{p.id}</code>
+                {isAdmin && <button onClick={() => setCfg((c) => ({ ...c, phone_number_id: p.id }))} className="text-xs font-bold text-[#1557B0]">Use</button>}
+              </div>
+            ))}
+          </div>
+        )}
+        {templates && (
+          <div className="mt-3 rounded-xl bg-slate-50 p-3" data-testid="wa-templates-list">
+            <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Templates · {templates.filter((t) => t.status === "APPROVED").length} approved / {templates.length} total</p>
+            {templates.length === 0 && <p className="text-xs text-slate-400">None returned.</p>}
+            <div className="mt-1 flex flex-wrap gap-1.5">
+              {templates.map((t) => (
+                <span key={`${t.name}-${t.language}`} className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${t.status === "APPROVED" ? "bg-emerald-50 text-emerald-600" : "bg-slate-200 text-slate-500"}`}>{t.name} · {t.language}</span>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div className="crm-card p-4">
+        <h3 className="font-display text-sm font-extrabold text-slate-800">Send a test message</h3>
+        <p className="mt-1 text-xs text-slate-500">Sends a session text to a number that has messaged your business in the last 24h.</p>
+        <div className="mt-3 flex gap-2">
+          <input data-testid="wa-test-to" className="crm-input" placeholder="Recipient number e.g. 919812345678" value={testTo} onChange={(e) => setTestTo(e.target.value)} />
+          <button onClick={sendTest} className="crm-btn-primary" data-testid="wa-send-test">Send</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+/* ---------- Duplicate lead cleanup (scan by date, keep oldest, delete newer) ---------- */
+function DuplicatesTab() {
+  const [dupFrom, setDupFrom] = useState("2026-06-01");
+  const [dupTo, setDupTo] = useState(new Date().toISOString().slice(0, 10));
+  const [dupSource, setDupSource] = useState("");
+  const [sources, setSources] = useState([]);
+  const [dupScan, setDupScan] = useState(null);
+  const [dupBusy, setDupBusy] = useState(false);
+  const [dupConfirm, setDupConfirm] = useState(false);
+
+  useEffect(() => {
+    API.get("/catalogs").then(({ data }) => setSources((data.source_lead || []).map((s) => s.name))).catch(() => {});
+  }, []);
+
+  const runDupScan = async () => {
+    setDupBusy(true); setDupScan(null);
+    try {
+      const { data } = await API.post("/admin/duplicates/scan", { date_from: dupFrom, date_to: dupTo, source: dupSource || null });
+      const sid = data.scan_id;
+      let tries = 0;
+      const poll = setInterval(async () => {
+        tries += 1;
+        try {
+          const { data: d } = await API.get("/admin/duplicates/scan/status");
+          if (d && d.status && d.status !== "running" && d.scan_id === sid) {
+            clearInterval(poll); setDupBusy(false);
+            if (d.status === "error") { toast.error("Scan failed: " + (d.error || "").slice(0, 150)); return; }
+            setDupScan(d);
+            toast.success(`Found ${d.total_delete} duplicate lead(s) across ${d.group_count} name + mobile combo(s)`);
+          } else if (tries > 60) { clearInterval(poll); setDupBusy(false); toast.error("Scan timed out — please try again."); }
+        } catch (e) { clearInterval(poll); setDupBusy(false); toast.error(apiErr(e)); }
+      }, 3000);
+    } catch (e) { setDupBusy(false); toast.error(apiErr(e)); }
+  };
+
+  const doDupDelete = async () => {
+    setDupConfirm(false);
+    try {
+      const { data } = await API.post("/admin/duplicates/delete", { scan_id: dupScan.scan_id });
+      toast.success(`Deleted ${data.deleted} duplicate lead(s) (archived for recovery)`);
+      setDupScan(null);
+    } catch (e) { toast.error(apiErr(e)); }
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="crm-card p-4" data-testid="dup-cleanup-card">
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <h3 className="font-display text-sm font-extrabold text-slate-800">Duplicate Lead Cleanup</h3>
+            <p className="text-xs text-slate-500">Finds leads that share the <b>same name + mobile number</b>, keeps the <b>oldest</b> one, and lets you delete the newer duplicates created in a date range. Filter by <b>Source</b> to clean only one source (e.g. Website AI Agent). Deleted leads are archived (recoverable).</p>
+          </div>
+          <div className="flex flex-wrap items-end gap-2">
+            <div>
+              <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400">Source</label>
+              <select value={dupSource} onChange={(e) => setDupSource(e.target.value)} data-testid="dup-source-select"
+                className="mt-1 rounded-lg border border-slate-200 px-2 py-1.5 text-sm">
+                <option value="">All sources</option>
+                {sources.map((s) => <option key={s} value={s}>{s}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400">Created from</label>
+              <input type="date" value={dupFrom} onChange={(e) => setDupFrom(e.target.value)} data-testid="dup-from-input"
+                className="mt-1 rounded-lg border border-slate-200 px-2 py-1.5 text-sm" />
+            </div>
+            <div>
+              <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400">to</label>
+              <input type="date" value={dupTo} onChange={(e) => setDupTo(e.target.value)} data-testid="dup-to-input"
+                className="mt-1 rounded-lg border border-slate-200 px-2 py-1.5 text-sm" />
+            </div>
+            <button data-testid="dup-scan-button" onClick={runDupScan} disabled={dupBusy} className="crm-btn-primary !py-1.5 text-xs">
+              {dupBusy ? "Scanning…" : "Find Duplicates"}
+            </button>
+          </div>
+        </div>
+
+        {dupScan && dupScan.status === "done" && (
+          <div className="mt-4" data-testid="dup-scan-result">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="text-sm text-slate-600">
+                <b className="text-rose-600" data-testid="dup-total">{dupScan.total_delete}</b> duplicate lead(s) to delete across <b>{dupScan.group_count}</b> name + mobile combo(s) · created {dupScan.date_from} → {dupScan.date_to} · <b>{dupScan.source ? dupScan.source : "All sources"}</b>
+              </p>
+              {dupScan.total_delete > 0 && (
+                <button data-testid="dup-delete-button" onClick={() => setDupConfirm(true)} className="rounded-lg bg-rose-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-rose-700">
+                  Delete {dupScan.total_delete} duplicate(s)
+                </button>
+              )}
+            </div>
+            {dupScan.total_delete === 0 ? (
+              <p className="mt-3 rounded-lg bg-emerald-50 p-3 text-sm text-emerald-700">No duplicates found in this range. ✓</p>
+            ) : (
+              <div className="mt-3 max-h-96 overflow-auto rounded-xl border border-slate-100">
+                <table className="w-full text-sm" data-testid="dup-table">
+                  <thead className="sticky top-0 bg-slate-50 text-left text-[11px] uppercase tracking-wider text-slate-400">
+                    <tr><th className="p-2">Name + Mobile</th><th className="p-2">Keep (oldest)</th><th className="p-2">Delete (newer duplicates)</th></tr>
+                  </thead>
+                  <tbody>
+                    {(dupScan.groups || []).map((g) => (
+                      <tr key={`${g.name}|${g.phone}`} className="border-t border-slate-50 align-top">
+                        <td className="p-2 font-semibold text-slate-700">{g.name || "—"}<br /><span className="text-[11px] text-slate-400">{g.phone}</span></td>
+                        <td className="p-2 text-emerald-700">
+                          #{g.keeper.id} · {g.keeper.name || "—"}<br />
+                          <span className="text-[11px] text-slate-400">{g.keeper.create_date}</span>
+                        </td>
+                        <td className="p-2 text-rose-600">
+                          {g.candidates.map((c) => (
+                            <div key={c.id}>#{c.id} · {c.name || "—"} <span className="text-[11px] text-slate-400">({c.create_date})</span></div>
+                          ))}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {dupConfirm && dupScan && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4" onClick={() => setDupConfirm(false)}>
+          <div onClick={(e) => e.stopPropagation()} className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl" data-testid="dup-confirm-modal">
+            <h3 className="font-display text-lg font-extrabold text-slate-900">Delete {dupScan.total_delete} duplicate lead(s)?</h3>
+            <div className="mt-3 rounded-xl bg-rose-50 p-3 text-sm text-slate-700">
+              This permanently removes the <b>newer</b> duplicate leads (created {dupScan.date_from} → {dupScan.date_to}{dupScan.source ? <>, source <b>{dupScan.source}</b></> : ", all sources"}), keeping the oldest lead for each <b>name + mobile</b> combination. Deleted leads are <b>archived</b> and can be recovered if needed.
+            </div>
+            <div className="mt-5 flex justify-end gap-2">
+              <button onClick={() => setDupConfirm(false)} className="crm-btn-secondary" data-testid="dup-cancel-button">Cancel</button>
+              <button onClick={doDupDelete} className="rounded-lg bg-rose-600 px-4 py-2 text-sm font-bold text-white hover:bg-rose-700" data-testid="dup-confirm-delete-button">Yes, delete</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

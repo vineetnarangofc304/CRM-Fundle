@@ -1,0 +1,59 @@
+@import url("https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800;900&family=Figtree:wght@400;500;600;700&display=swap");
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --crm-primary: #1A73E8;
+  --crm-primary-dark: #1557B0;
+  --crm-violet: #0B1F3A;
+}
+
+body {
+  margin: 0;
+  font-family: "Figtree", sans-serif;
+  background-color: #f8fafc;
+  color: #0f172a;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1, h2, h3, h4, .font-display {
+  font-family: "Nunito", sans-serif;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #cbd5e1 transparent;
+}
+*::-webkit-scrollbar { width: 6px; height: 6px; }
+*::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
+
+::selection { background: #1A73E8; color: white; }
+
+.chatter-body p { margin: 0 0 4px 0; }
+.chatter-body a { color: #1A73E8; text-decoration: underline; }
+.chatter-body img { max-width: 240px; border-radius: 8px; }
+.chatter-body ul { padding-left: 18px; }
+
+input[type="date"] { font-family: "Figtree", sans-serif; }
+
+.crm-input {
+  @apply w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-[#1A73E8]/40 focus:border-[#1A73E8] transition-colors;
+}
+
+.crm-select {
+  @apply rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-[#1A73E8]/40 cursor-pointer;
+}
+
+.crm-btn-primary {
+  @apply inline-flex items-center gap-2 rounded-full bg-[#1A73E8] px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-[#1557B0] focus:outline-none focus:ring-2 focus:ring-[#1A73E8] focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed;
+}
+
+.crm-btn-secondary {
+  @apply inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-[#1A73E8]/30;
+}
+
+.crm-card {
+  @apply rounded-2xl border border-slate-200 bg-white;
+}
