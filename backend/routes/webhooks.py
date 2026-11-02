@@ -25,6 +25,10 @@ FIELD_ALIASES = {
     "company_name": ["company_name", "company", "organization", "organisation"],
     "designation": ["designation", "job_title", "title", "role"],
     "team_size": ["team_size", "company_size", "employees"],
+    "alternate_number": ["alternate_number", "alternate_phone", "alt_phone", "phone_2"],
+    "country": ["country"],
+    "remark": ["remark", "remarks", "notes"],
+    "deal_value": ["deal_value", "budget_amount", "expected_value"],
     "campaign_name": ["campaign_name", "campaign", "utm_campaign"],
     "ads_platform": ["ads_platform", "platform", "utm_source"],
     "ads_name": ["ads_name", "ad_name"],
@@ -111,6 +115,17 @@ async def webhook_lead(token: str, request: Request):
 
     now = now_utc_str()
     phone_digits = re.sub(r"\D", "", data.get("phone") or "")[-10:]
+    if len(phone_digits) < 8 and not data.get("email_from"):
+        raise HTTPException(status_code=422, detail="A valid phone (or email) is required")
+    if "deal_value" in data:
+        try:
+            data["deal_value"] = float(re.sub(r"[\s,₹]", "", data["deal_value"])) or None
+        except ValueError:
+            data.pop("deal_value")
+        if data.get("deal_value") is None or data["deal_value"] < 0:
+            data.pop("deal_value", None)
+    if phone_digits and len(phone_digits) < 8:
+        phone_digits = ""
 
     # SAME-DAY de-dupe (client requirement): if an ACTIVE lead for this number was already
     # created TODAY, do NOT create another lead or consume a caller assignment (the Website AI
@@ -119,7 +134,7 @@ async def webhook_lead(token: str, request: Request):
     existing_today = await check_duplicate_today(phone_digits)
     if existing_today:
         existing_id = existing_today
-        src = data.get("source_lead") or hook.get("source_default") or "website"
+        src = data.get("source_lead") or hook.get("source_default") or "Website Form"
         bits = [f"source: {src}"]
         if data.get("query"):
             bits.append(f"query: {data['query']}")
@@ -155,7 +170,7 @@ async def webhook_lead(token: str, request: Request):
 
     # Canonical source: reuse the catalog's existing casing (ensure_catalog matches
     # case-insensitively) so "website"/"Website" never split into two separate sources.
-    src_raw = data.get("source_lead") or hook.get("source_default") or "website"
+    src_raw = data.get("source_lead") or hook.get("source_default") or "Website Form"
     _src_cat = await ensure_catalog("source_lead", src_raw)
     source_lead = _src_cat.get("name") or src_raw
 
@@ -199,7 +214,7 @@ async def webhook_lead(token: str, request: Request):
 
 class WebhookCreate(BaseModel):
     name: str
-    source_default: Optional[str] = "website"
+    source_default: Optional[str] = "Website Form"
     lead_stage_default: Optional[str] = None
     tag_ids: Optional[list] = None
     assign_round_robin: bool = True
