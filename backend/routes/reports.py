@@ -230,6 +230,35 @@ _dash_inflight: dict = {}
 _DASH_TTL = 45
 
 
+async def deal_sums(base: dict, windows: dict) -> dict:
+    """Sum deal_value: open pipeline (not Converted/Closed), won total, and won per create-date window."""
+    is_won = {"$eq": ["$lead_stage", "Converted"]}
+    grp = {
+        "_id": None,
+        "pipeline": {"$sum": {"$cond": [{"$in": ["$lead_stage", ["Converted", "Closed"]]}, 0, "$deal_value"]}},
+        "pipeline_count": {"$sum": {"$cond": [{"$in": ["$lead_stage", ["Converted", "Closed"]]}, 0, 1]}},
+        "won": {"$sum": {"$cond": [is_won, "$deal_value", 0]}},
+    }
+    for name, (start, end) in windows.items():
+        conds = [is_won, {"$gte": ["$create_date_ist", start]}]
+        if end:
+            conds.append({"$lte": ["$create_date_ist", end]})
+        grp[f"won_{name}"] = {"$sum": {"$cond": [{"$and": conds}, "$deal_value", 0]}}
+    res = await db.leads.aggregate([
+        {"$match": {**base, "deal_value": {"$gt": 0}}}, {"$group": grp},
+    ], allowDiskUse=True, maxTimeMS=20000).to_list(1)
+    out = res[0] if res else {}
+    out.pop("_id", None)
+    return {k: out.get(k, 0) for k in grp if k != "_id"}
+
+
+async def _kpi_deals(base, today, month_start, year_start, month_end, is_current, days_in_month):
+    d = await deal_sums(base, {"ftd": (today, None), "mtd": (month_start, month_end), "ytd": (year_start, month_end)})
+    if not is_current:
+        d["won_ftd"] = round(d["won_mtd"] / days_in_month) if days_in_month else 0
+    return d
+
+
 @router.get("/dashboard")
 async def dashboard(date_from: str = None, date_to: str = None, section: str = "all",
                     user: dict = Depends(get_current_user)):
@@ -288,7 +317,7 @@ async def _compute_dashboard(date_from: str = None, date_to: str = None, user: d
     # ---- Fast section: index-covered counts (KPI cards + range header) ----
     if want_kpis:
         (leads_today, leads_mtd, total_leads, converted_mtd, followups_today,
-         followups_overdue, leads_range, converted_range) = await asyncio.gather(
+         followups_overdue, leads_range, converted_range, deals) = await asyncio.gather(
             db.leads.count_documents({**base, "create_date_ist": {"$gte": today}}),
             db.leads.count_documents({**base, "create_date_ist": {"$gte": month + "-01"}}),
             db.leads.count_documents(base),
@@ -297,12 +326,15 @@ async def _compute_dashboard(date_from: str = None, date_to: str = None, user: d
             db.leads.count_documents({**base, "follow_up_date": {"$lt": today, "$gt": ""}}),
             db.leads.count_documents(range_match),
             db.leads.count_documents({**range_match, "lead_stage": "Converted"}),
+            deal_sums(base, {"mtd": (month + "-01", None), "range": (range_start, range_end + " 23:59:59")}),
         )
         out.update({
             "leads_today": leads_today, "leads_mtd": leads_mtd, "total_leads": total_leads,
             "converted_mtd": converted_mtd, "followups_today": followups_today,
             "followups_overdue": followups_overdue,
             "leads_range": leads_range, "converted_range": converted_range,
+            "pipeline_value": deals["pipeline"], "pipeline_count": deals["pipeline_count"],
+            "won_value_mtd": deals["won_mtd"], "won_value_range": deals["won_range"],
         })
 
     # ---- Heavy section: aggregations (funnel / 14-day chart / leaderboard / tags) ----
@@ -651,6 +683,9 @@ async def kpi_overview(month: Optional[str] = None, user: dict = Depends(require
         "milestones": [row(nm) for nm in kcfg["milestones"]],
         "valid": {"tags": kcfg["valid_tags"],
                   **{f: sum(row(nm)[f] for nm in kcfg["valid_tags"]) for f in ("ftd", "mtd", "ytd")}},
+        "deals": await _kpi_deals(base, today, month_start, year_start,
+                                  None if is_current else f"{month}-{days_in_month:02d} 23:59:59",
+                                  is_current, days_in_month),
     }
     _kpi_cache[ck] = (now, out)
     return out

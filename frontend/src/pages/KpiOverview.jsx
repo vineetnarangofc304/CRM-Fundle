@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState, useCallback } from "react"
 import { Link } from "react-router-dom";
 import Chart from "chart.js/auto";
 import { API, apiErr } from "../lib/api";
+import { inr } from "../lib/money";
 import { toast } from "sonner";
 import "./LeadPulse.css";
 
@@ -252,6 +253,14 @@ export default function KpiOverview() {
             <div className="cmp">{monLbl} <b className="num">{fmt(k.m)}</b> · YTD <b className="num">{fmt(k.y)}</b></div>
           </div>
         ))}
+        {data.deals && (
+          <div className="kpi" style={{ "--k": "#1A73E8" }} data-testid="kpi-deal-value">
+            <div className="label">Won Deal Value</div>
+            <div className="big num">{inr(data.deals.won_ftd)}</div>
+            <div className="cmp">{monLbl} <b className="num">{inr(data.deals.won_mtd)}</b> · YTD <b className="num">{inr(data.deals.won_ytd)}</b></div>
+            <div className="cmp" data-testid="kpi-pipeline-value">Open pipeline <b className="num">{inr(data.deals.pipeline)}</b> · {fmt(data.deals.pipeline_count)} deals</div>
+          </div>
+        )}
         {!D.hasMs && (
           <div className="kpi" style={{ "--k": "#94A3B8" }} data-testid="kpi-milestones-empty">
             <div className="label">Conversion milestones</div>

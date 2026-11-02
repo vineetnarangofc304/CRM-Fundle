@@ -281,6 +281,7 @@ INDEX_SPECS = [
     ("leads", [("tags", 1), ("create_dt", -1)], {"partialFilterExpression": {"active": True}}),
     # Follow-up filters (today / overdue / upcoming) + dashboard follow-up counts.
     ("leads", [("follow_up_date", 1)], {"partialFilterExpression": {"active": True}}),
+    ("leads", [("lead_stage", 1), ("deal_value", 1)], {"partialFilterExpression": {"active": True, "deal_value": {"$gt": 0}}}),
     # "Ozonetel Lead" tab — a POSITIVE, selective match (only ~200 docs carry pipeline=False),
     # which is Support's recommended replacement for the old non-selective pipeline!=False filter.
     ("leads", [("pipeline", 1), ("create_dt", -1)], {}),
@@ -757,4 +758,22 @@ async def _seed_defaults():
                 await ensure_catalog("tag", t)
         await db.settings.update_one({"key": "disposition_map"}, {"$set": {"map": disp_map}}, upsert=True)
         logger.info("Seeded disposition tag→stage mapping")
+    # One-time SaaS starter funnel. Flag-guarded so admin edits/deletions are never re-added.
+    if await db.settings.find_one({"key": "seed_saas_starter"}) is None:
+        starter = {"Contacted": ["Demo Booked", "Proposal Sent"], "Converted": ["Demo Done", "Won"]}
+        dm_doc = await db.settings.find_one({"key": "disposition_map"}) or {}
+        dm = dm_doc.get("map") or {}
+        for stage, names in starter.items():
+            for t in names:
+                await ensure_catalog("tag", t)
+                if t not in dm.setdefault(stage, []):
+                    dm[stage].append(t)
+        await db.settings.update_one({"key": "disposition_map"}, {"$set": {"map": dm}}, upsert=True)
+        if await db.settings.find_one({"key": "kpi_config"}) is None:
+            await db.settings.update_one({"key": "kpi_config"}, {"$set": {
+                "milestones": ["Demo Booked", "Demo Done", "Proposal Sent", "Won"],
+                "valid_tags": ["Call back for first pitch", "Demo Booked", "Demo Done", "Proposal Sent", "Won",
+                               "Valid Not Interested"]}}, upsert=True)
+        await db.settings.insert_one({"key": "seed_saas_starter", "done": True})
+        logger.info("Seeded SaaS starter funnel tags + KPI milestones")
     logger.info("Seed defaults complete")

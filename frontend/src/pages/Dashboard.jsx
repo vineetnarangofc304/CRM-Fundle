@@ -2,8 +2,9 @@ import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Link } from "react-router-dom";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
-import { UsersThree, TrendUp, ClockCountdown, Warning, Trophy, Tag, Broadcast } from "@phosphor-icons/react";
+import { UsersThree, TrendUp, ClockCountdown, Warning, Trophy, Tag, Broadcast, CurrencyInr } from "@phosphor-icons/react";
 import { API, leadsUrl, apiErr } from "../lib/api";
+import { inr } from "../lib/money";
 import { toast } from "sonner";
 import { StageBadge } from "../components/Bits";
 
@@ -170,6 +171,17 @@ export default function Dashboard() {
           </>
         )}
       </div>
+
+      {kpis && (
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-3" data-testid="deal-value-strip">
+          <Kpi icon={CurrencyInr} label={`Open Pipeline Value · ${(kpis.pipeline_count || 0).toLocaleString("en-IN")} deals`} value={inr(kpis.pipeline_value)} testid="kpi-pipeline-value"
+            onClick={() => navigate("/leads")} />
+          <Kpi icon={CurrencyInr} label="Won Value MTD" value={inr(kpis.won_value_mtd)} tone="green" testid="kpi-won-value-mtd"
+            onClick={() => navigate(leadsUrl({ lead_stage: "Converted", date_from: monthStart }))} />
+          <Kpi icon={CurrencyInr} label={hasRange ? "Won Value · In Range" : "Won Value · This Month"} value={inr(kpis.won_value_range)} tone="violet" testid="kpi-won-value-range"
+            onClick={() => navigate(leadsUrl({ lead_stage: "Converted", date_from: meta.range_start, date_to: meta.range_end }))} />
+        </div>
+      )}
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         {!panels ? (

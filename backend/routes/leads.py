@@ -28,6 +28,7 @@ LIST_PROJECTION = {
     "probability": 1, "appointment_date": 1, "lost_reason_id": 1, "is_duplicate": 1, "duplicate_of": 1,
     "ozonetel_lead": 1, "in_pipeline": 1, "conversion_page": 1,
     "utm_source": 1, "utm_medium": 1, "utm_campaign": 1, "total_follow_ups": 1,
+    "company_name": 1, "deal_value": 1,
 }
 
 EDITABLE_FIELDS = {
@@ -38,10 +39,12 @@ EDITABLE_FIELDS = {
     "ads_name", "description", "priority", "query", "remark", "lost_reason_id", "custom", "conversion_page",
     "source_id", "medium_id", "campaign_id",
     "utm_source", "utm_medium", "utm_campaign",
+    "company_name", "designation", "team_size", "deal_value",
 }
 
 TRACKED = ["stage_id", "lead_stage", "user_id", "tags", "follow_up_date", "follow_up_tag", "lost_reason_id",
-           "name", "contact_name", "phone", "alternate_number", "email_from", "city", "state_name", "priority"]
+           "name", "contact_name", "phone", "alternate_number", "email_from", "city", "state_name", "priority",
+           "company_name", "designation", "team_size", "deal_value"]
 
 
 def _parse_day(s, end=False):
@@ -416,6 +419,10 @@ class LeadCreate(BaseModel):
     follow_up_tag: Optional[str] = None
     query: Optional[str] = None
     country: Optional[str] = None
+    company_name: Optional[str] = None
+    designation: Optional[str] = None
+    team_size: Optional[str] = None
+    deal_value: Optional[float] = None
 
 
 @router.post("")
@@ -451,6 +458,18 @@ async def create_lead(body: LeadCreate, user: dict = Depends(get_current_user)):
 
 class LeadUpdate(BaseModel):
     updates: dict
+
+
+def _to_amount(v):
+    if v in (None, ""):
+        return None
+    try:
+        amt = float(re.sub(r"[^\d.]", "", str(v)))
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Deal value must be a number")
+    if amt < 0:
+        raise HTTPException(status_code=400, detail="Deal value cannot be negative")
+    return amt
 
 
 async def _track_changes(lead, updates, user):
@@ -516,6 +535,8 @@ async def update_lead(lead_id: int, body: LeadUpdate, user: dict = Depends(get_c
         merged = dict(lead.get("custom") or {})
         merged.update(updates["custom"])
         updates["custom"] = merged
+    if "deal_value" in updates:
+        updates["deal_value"] = _to_amount(updates["deal_value"])
     if "phone" in updates:
         updates["phone_digits"] = re.sub(r"\D", "", updates.get("phone") or "")[-10:]
     for _src, _dst in (("name", "name_lc"), ("contact_name", "contact_name_lc"), ("email_from", "email_lc")):

@@ -24,7 +24,8 @@ async def _label_maps():
 COLUMNS = [
     ("id", "Lead ID"), ("contact_name", "Name"), ("name", "Display Name"), ("phone", "Phone"),
     ("email_from", "Email"), ("street", "Address"), ("city", "City"), ("state_name", "State"),
-    ("country", "Country"), ("query", "Query"), ("remark", "Remark"),
+    ("country", "Country"), ("company_name", "Company"), ("designation", "Designation"),
+    ("team_size", "Team Size"), ("deal_value", "Deal Value (INR)"), ("query", "Query"), ("remark", "Remark"),
     ("lead_stage", "Lead Stage"), ("_tags", "Tags"), ("_agent", "Assigned Agent"),
     ("source_lead", "Source"), ("campaign_name", "Campaign"), ("ads_platform", "Ads Platform"),
     ("ads_campaign_name", "Ads Campaign"), ("ads_name", "Ad Name"),

@@ -73,6 +73,7 @@ STANDARD_LEAD_FIELDS = [
     ("contact_name", "Name"), ("phone", "Phone"), ("mobile", "Mobile"),
     ("email_from", "Email"), ("city", "City"), ("state_name", "State"),
     ("country", "Country"), ("street", "Address"),
+    ("company_name", "Company"), ("designation", "Designation"), ("team_size", "Team Size"),
     ("source_lead", "Source"), ("campaign_name", "Campaign"), ("follow_up_date", "Follow-up Date"),
 ]
 

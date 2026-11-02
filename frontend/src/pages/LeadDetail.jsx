@@ -320,6 +320,11 @@ export default function LeadDetail() {
           {/* Meta / Google Q&A — Case 3 */}
           <QACard lead={lead} onSave={update} catalogs={catalogs} labelOf={labelOf} canEdit={canEdit} onDenied={deny} />
 
+          <FieldCard title="Company & Deal" lead={lead} onSave={update} canEdit={canEdit} onDenied={deny} fields={[
+            ["company_name", "Company"], ["designation", "Designation"],
+            ["team_size", "Team Size", "select"], ["deal_value", "Deal Value (₹)"],
+          ]} selects={{ team_size: ["1-10", "11-50", "51-200", "201-1000", "1000+"] }} />
+
           <FieldCard title="Enquiry Details" lead={lead} onSave={update} canEdit={canEdit} onDenied={deny} fields={[
             ["query", "Query"], ["remark", "Remark"],
           ]} />
