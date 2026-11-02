@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { UploadSimple, DownloadSimple, FileXls, CheckCircle, WarningCircle, X } from "@phosphor-icons/react";
 import { API, apiErr } from "../lib/api";
-import { useCatalogMaps } from "../context/AuthContext";
+import { useCatalogMaps, useCatalogs } from "../context/AuthContext";
 
 const DUP_MODES = [
   ["skip", "Skip rows whose phone already exists"],
@@ -146,6 +146,7 @@ function ProgressStep({ job }) {
 
 export const ImportLeadsModal = ({ onClose, onDone }) => {
   const { userById } = useCatalogMaps();
+  const { refreshCatalogs } = useCatalogs();
   const users = Object.values(userById || {}).filter((u) => u.active !== false);
   const [file, setFile] = useState(null);
   const [preview, setPreview] = useState(null);
@@ -160,11 +161,16 @@ export const ImportLeadsModal = ({ onClose, onDone }) => {
       try {
         const { data } = await API.get(`/import/jobs/${job.id}`);
         setJob(data);
-        if (data.status === "done") { onDone?.(); toast.success(`Imported ${data.created} new leads`); }
+        if (data.status === "done") {
+          onDone?.();
+          refreshCatalogs?.();
+          const parts = [`${data.created} created`, data.updated && `${data.updated} updated`, data.skipped && `${data.skipped} skipped`, data.failed && `${data.failed} failed`].filter(Boolean);
+          (data.fatal ? toast.error(`Import stopped: ${data.fatal}`) : toast.success(`Import finished — ${parts.join(", ")}`));
+        }
       } catch (e) { /* keep polling */ }
     }, 1500);
     return () => clearInterval(t);
-  }, [job, onDone]);
+  }, [job, onDone, refreshCatalogs]);
 
   const start = async () => {
     setBusy(true);

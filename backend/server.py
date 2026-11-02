@@ -778,4 +778,6 @@ async def _seed_defaults():
                                "Valid Not Interested"]}}, upsert=True)
         await db.settings.insert_one({"key": "seed_saas_starter", "done": True})
         logger.info("Seeded SaaS starter funnel tags + KPI milestones")
+    await db.import_jobs.update_many({"status": "running"}, {"$set": {
+        "status": "done", "fatal": "Server restarted during the import — re-upload the file (duplicate mode 'skip' avoids repeats)"}})
     logger.info("Seed defaults complete")

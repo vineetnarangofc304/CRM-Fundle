@@ -1,0 +1,41 @@
+{
+  "summary": "Iteration 3 tested Bulk Lead Upload (backend + UI). Backend: 14 pytest tests, 13 pass. Covered: template xlsx headers including a custom field; CSV/XLSX preview and auto-mapping; rejection of non-xlsx/csv files, mappings with no phone/email and duplicate field mappings; caller 403 on all 4 endpoints; row rules (deal '1,50,000'->150000, 'abc' fails the row, rows with no phone/email fail, follow-up and Created Date formats parsed, created date back-dated as IST, tag->stage, unknown tag auto-created with a Note, agent matched by name or email, unknown agent fails the row, custom column saved under lead.custom); skip, update and create duplicate modes; user/round_robin assign modes; dashboard KPIs; a 2000-row xlsx finished in about 6s with intermediate progress. The 1 failure: update mode overwrites the existing lead's source with the default source. UI: bulk-upload-button shows for admin and is hidden for caller. Modal flow works end to end: template download, CSV upload, auto-mapping, a field can be chosen only once, options, start, progress, counts, issues list, issues CSV download, Done refreshes the list. Lead detail shows the Company & Deal card (Rs 1,50,000) and the bulk-upload chatter line. All test data was cleaned up.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/import/leads (duplicate_mode=update)", "issue": "The existing lead's source_lead is overwritten by options.default_source even when no Source column is mapped. _build_row applies default_source to every row, and the update branch $sets it. The UI always sends 'Bulk Upload', so every lead updated through the UI loses its original source (e.g. Website/Meta Lead Ads). Fix: apply default_source only on insert, or in update mode only when the Source column is mapped. The same applies to assign_mode round_robin/user, which silently reassigns existing leads during an update."},
+      {"endpoint": "_process (imports.py)", "issue": "Progress is saved only when n % 200 == 0, and that line is after the `continue` statements. On boundary rows that fail, are skipped or are updated, the progress write is missed. If a whole file is duplicates (re-uploading the same file in skip mode), progress stays at 0 until the job finishes. Move the progress update into a finally block or to the top of the loop."},
+      {"endpoint": "_process (imports.py)", "issue": "Unknown tags are auto-created before the duplicate-skip check, so skipped rows still create catalog tags. Also, the job runs as an in-process asyncio task: if the backend restarts mid-import, the job stays 'running' forever and the modal polls forever."},
+      {"endpoint": "GET /api/leads total and GET /api/reports/dashboard", "issue": "Neither cache (30s list count, 45s dashboard) is cleared after an import. Right after Done, the list footer showed '0 leads · page 1 of 1' with 2 rows visible, and the dashboard KPIs can be stale for up to 45s. Consider clearing _count_cache and _dash_cache when an import job finishes."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "ImportLeadsModal success toast", "issue": "Update-mode import shows 'Imported 0 new leads' even though 1 lead was updated. The toast should include the updated count.", "selector": "toast", "priority": "LOW"},
+      {"component": "Leads list after import", "issue": "Tags auto-created by the import (e.g. 'NoSuchTag') are not shown in the Tags column right after Done, because the catalog context isn't refreshed. They appear after navigating away and back. onDone should also reload the catalogs.", "selector": "leads table tags cell", "priority": "LOW"}
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": ["/app/backend/tests/test_bulk_import.py", "/app/backend/tests/cleanup_bulk_import.js", "/app/test_reports/pytest/pytest_iter3.xml"],
+  "action_items": [
+    "In update duplicate mode, don't overwrite source_lead with default_source (and consider not reassigning user_id via round_robin/user) unless the column is mapped",
+    "Make the import progress update run on every 200th row regardless of `continue` (try/finally)",
+    "Clear the leads count cache and dashboard cache when an import finishes, so the 'N leads' footer and KPIs are right immediately",
+    "Change the success toast to mention updated/skipped counts; reload catalogs in onDone so new tags show at once",
+    "Optional: mark 'running' import jobs as failed on startup; create new tags only for rows that actually get imported"
+  ],
+  "critical_code_review_comments": [
+    "imports.py: _build_row applies default_source and assign_mode to every row, including rows that end up in the update branch (root cause of the overwrite bug)",
+    "imports.py: does a find_one per row for duplicate checks; fine for 2000 rows (about 6s), but 50k rows will be slow. Consider batched lookups with $in on phone_digits",
+    "Chatter renders m.body with dangerouslySetInnerHTML, and the import message includes user['name'] unescaped (low risk, admin-set names)"
+  ],
+  "updated_files": ["/app/backend/tests/test_bulk_import.py", "/app/backend/tests/cleanup_bulk_import.js"],
+  "success_rate": {"backend": "93% (13/14)", "frontend": "95% (all flows work; 2 low-priority UX issues)"},
+  "test_credentials": "Admin admin@fundle.ai / Fundle@cf928c (from /app/memory/test_credentials.md). Temporary caller users were created and deleted.",
+  "seed_data_creation": "None left behind. Cleanup removed all bulk_import leads, their messages, test tags (TEST*, NoSuchTag), the test custom field, test sources, test caller users and all import_jobs. DB now has 0 leads, 21 starter tags, 1 admin user; disposition_map and kpi_config are untouched. The 'Bulk Upload' source_lead catalog entry was left (it's the app default).",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Run: cd /app/backend && REACT_APP_BACKEND_URL=... pytest tests/test_bulk_import.py -n0 -v (must run serially with -n0; tests share state). Then: mongosh test_database --quiet tests/cleanup_bulk_import.js. test_update_mode fails until the source-overwrite bug is fixed. The dashboard has a 45s cache, so the test sleeps 46s.",
+  "rca of the issue": "Update mode overwrites source: _build_row sets data['source_lead']=opts.default_source whenever no source column value is present. The update branch then does $set of every key in data, so the existing lead's source is replaced. Reproduce: import a CSV with Phone=<existing lead phone> using duplicate_mode=update and default_source='X'. The lead's source_lead becomes 'X'. Fix: apply the default only in _insert, or use setdefault semantics in update mode."
+}

@@ -1,6 +1,7 @@
 """Bulk lead upload from Excel (.xlsx) / CSV with column mapping, dedupe and assignment options."""
 import asyncio
 import csv
+import html
 import io
 import json
 import logging
@@ -238,6 +239,11 @@ def _build_row(row, headers, mapping, custom_keys, ctx, opts):
     pd = re.sub(r"\D", "", data.get("phone") or "")[-10:]
     if len(pd) < 8 and not data.get("email_from"):
         return None, None, None, None, "Missing a valid phone number or email"
+    return data, custom, tag_ids, stage, None
+
+
+def _apply_new_lead_defaults(data, ctx, opts):
+    """Assignment + default source apply only to NEW leads (never overwrite an existing lead)."""
     if opts.get("assign_mode") == "user" and opts.get("user_id"):
         data["user_id"] = int(opts["user_id"])
     elif opts.get("assign_mode") == "round_robin" and ctx.callers and "user_id" not in data:
@@ -247,15 +253,39 @@ def _build_row(row, headers, mapping, custom_keys, ctx, opts):
         data.pop("user_id", None)
     if not data.get("source_lead") and opts.get("default_source"):
         data["source_lead"] = opts["default_source"]
-    return data, custom, tag_ids, stage, None
+
+
+async def _resolve_new_tags(data, tag_ids, ctx, errors, n):
+    for t in data.pop("_new_tags", []):
+        if t.lower() not in ctx.tags:
+            ctx.tags[t.lower()] = (await ensure_catalog("tag", t))["id"]
+            errors.append({"row": n, "error": f"Note: new tag '{t}' created — map it to a stage in Admin → Dropdowns"})
+        tag_ids.append(ctx.tags[t.lower()])
 
 
 async def _process(job_id: int, headers, rows, mapping, opts, user):
+    try:
+        await _run(job_id, headers, rows, mapping, opts, user)
+    except Exception as e:
+        logger.exception("import job failed")
+        await db.import_jobs.update_one({"id": job_id}, {"$set": {"status": "done", "fatal": str(e)[:300]}})
+    finally:
+        _clear_caches()
+
+
+def _clear_caches():
+    from routes import leads as leads_routes, reports as reports_routes
+    leads_routes._count_cache.clear()
+    reports_routes._dash_cache.clear()
+
+
+async def _run(job_id: int, headers, rows, mapping, opts, user):
     ctx = await _Ctx().load()
     custom_keys = {c["key"] for c in await db.custom_fields.find({}, {"_id": 0, "key": 1}).to_list(300)}
     stats = {"created": 0, "updated": 0, "skipped": 0, "failed": 0}
     errors = []
     dup_mode = opts.get("duplicate_mode", "skip")
+    who = html.escape(user["name"])
     for n, row in enumerate(rows, start=2):
         try:
             data, custom, tag_ids, stage, err = _build_row(row, headers, mapping, custom_keys, ctx, opts)
@@ -265,38 +295,38 @@ async def _process(job_id: int, headers, rows, mapping, opts, user):
                 continue
             pd = re.sub(r"\D", "", data.get("phone") or "")[-10:]
             pd = pd if len(pd) >= 8 else ""
-            for t in data.pop("_new_tags", []):
-                if t.lower() not in ctx.tags:
-                    ctx.tags[t.lower()] = (await ensure_catalog("tag", t))["id"]
-                    errors.append({"row": n, "error": f"Note: new tag '{t}' created — map it to a stage in Admin → Dropdowns"})
-                tag_ids.append(ctx.tags[t.lower()])
             existing = None
             if pd:
                 hit = await db.leads.find_one(
                     {"phone_digits": pd, "active": True}, {"_id": 0, "id": 1}, sort=[("id", 1)], max_time_ms=5000)
                 existing = hit["id"] if hit else None
-            if data.get("source_lead") and data["source_lead"] not in ctx.sources:
-                await ensure_catalog("source_lead", data["source_lead"])
-                ctx.sources.add(data["source_lead"])
             created_ist = data.pop("_created", None)
             if existing and dup_mode == "skip":
                 stats["skipped"] += 1
                 errors.append({"row": n, "error": f"Skipped — phone already exists on lead #{existing}"})
                 continue
+            await _resolve_new_tags(data, tag_ids, ctx, errors, n)
+            if not (existing and dup_mode == "update"):
+                _apply_new_lead_defaults(data, ctx, opts)
+            if data.get("source_lead") and data["source_lead"] not in ctx.sources:
+                await ensure_catalog("source_lead", data["source_lead"])
+                ctx.sources.add(data["source_lead"])
             if existing and dup_mode == "update":
-                upd = {k: v for k, v in data.items()}
+                upd = dict(data)
                 if stage:
                     upd["lead_stage"] = stage
                 upd["write_date"] = now_utc_str()
                 if "contact_name" in upd:
                     upd["name"] = upd["contact_name"]
+                norm = search_norm(upd)
+                upd.update({k: v for k, v in norm.items() if v})
                 for k, v in custom.items():
                     upd[f"custom.{k}"] = v
-                op = {"$set": {**upd, **search_norm({**upd})}} if any(k in upd for k in ("name", "email_from")) else {"$set": upd}
+                op = {"$set": upd}
                 if tag_ids:
                     op["$addToSet"] = {"tags": {"$each": tag_ids}}
                 await db.leads.update_one({"id": existing}, op)
-                await log_message(existing, f"Lead updated from bulk upload by {user['name']}", author=user)
+                await log_message(existing, f"Lead updated from bulk upload by {who}", author=user)
                 stats["updated"] += 1
                 continue
             await _insert(data, custom, tag_ids, stage, pd, existing, created_ist, opts, user)
@@ -305,8 +335,9 @@ async def _process(job_id: int, headers, rows, mapping, opts, user):
             logger.exception("import row failed")
             stats["failed"] += 1
             errors.append({"row": n, "error": f"Unexpected error: {e}"[:200]})
-        if n % 200 == 0:
-            await db.import_jobs.update_one({"id": job_id}, {"$set": {**stats, "processed": n - 1}})
+        finally:
+            if n % 200 == 0:
+                await db.import_jobs.update_one({"id": job_id}, {"$set": {**stats, "processed": n - 1}})
     await db.import_jobs.update_one({"id": job_id}, {"$set": {
         **stats, "processed": len(rows), "status": "done", "errors": errors[:1000],
         "error_count": len(errors), "finished_at": now_utc_str()}})
@@ -332,7 +363,7 @@ async def _insert(data, custom, tag_ids, stage, pd, existing, created_ist, opts,
     doc.update(ist_date_parts(doc["create_date_ist"]))
     doc.update(search_norm(doc))
     await db.leads.insert_one(doc)
-    await log_message(lid, f"Lead created from bulk upload by {user['name']}", author=user)
+    await log_message(lid, f"Lead created from bulk upload by {html.escape(user['name'])}", author=user)
     if existing:
         await log_message(lid, f"⚠️ Possible duplicate — same phone as lead #{existing}", author=user, subtype="comment")
     if opts.get("run_automations"):
