@@ -1,0 +1,39 @@
+{
+  "summary": "Iteration 4: tested the chunked bulk upload (50k rows), Won Date tracking (import column, stamp_won via PATCH, bulk set_lead_stage and call disposition), won-value reports (KPI overview and dashboard), the Excel export Won Date column, and the Leads list Company/Deal Value columns with sorting and the min-deal filter. Results: 15/16 backend tests passed. The 50k-row xlsx took 13.6s in skip mode, 14.6s in update mode and 14.2s in create mode, all with correct counts and per-chunk progress. All UI flows passed. One backend bug: when a phone is repeated within the same chunk in update mode, the merged lead gets no won_date and its name and search fields are not refreshed.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/import/leads (update mode, in-file duplicates in same chunk)", "issue": "imports.py _run in_chunk merge branch (lines ~390-397) sets in_chunk['lead_stage']='Converted' but never sets won_date/won_date_ist. It also does not recompute name (stays first row's name) or search_norm fields (contact_name_lc stays 'test u1' although contact_name='TEST U1b'), so the lead cannot be found by the updated name. No 'Lead updated from bulk upload' chatter message is added either. Repro: CSV 'Name,Phone,Tags' rows 'TEST U1,9833300001,' and 'TEST U1b,9833300001,Won' with duplicate_mode=update. Result: created=1, updated=1, lead_stage Converted, won_date missing, name='TEST U1'."},
+      {"endpoint": "GET /api/reports/kpi-overview", "issue": "_kpi_cache (120s TTL) is not cleared by imports._clear_caches or by stage changes, so the KPI page shows stale won value and lead counts for up to 2 minutes after an import or conversion. The dashboard cache is cleared on import but not on PATCH stage changes (45s staleness)."},
+      {"endpoint": "GET /api/reports/dashboard section=kpis", "issue": "Inconsistent metrics: converted_mtd still counts by create_date_ist while won_value_mtd now counts by won_date_ist. A lead created last month and won this month adds to won value MTD but not to Converted MTD."},
+      {"endpoint": "POST /api/calls/{id}/disposition", "issue": "Disposition 'Converted' auto-creates a tag 'Converted' that is not in disposition_map (existing behaviour; noted only). The test-created tag was removed."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Leads list", "issues": ["The 'Min Deal ₹: 100000' chip shows the raw number. Format it in en-IN (₹1,00,000) to match the column.", "The footer reads 'Many leads · page 1 of 1' even when only 3 results are shown.", "The date filters still use the native browser date picker (type=date), not the shadcn calendar. This was already the case before this change."]},
+      {"screen": "Export modal", "issues": ["The active-filter chip shows only 'Min Deal ₹' without the amount."]}
+    ]
+  },
+  "test_report_links": ["/app/backend/tests/test_won_date_deals.py", "/app/backend/tests/test_big_upload_50k.py", "/app/test_reports/pytest/won_date_deals.xml", "/app/test_reports/pytest/big_upload_50k.xml"],
+  "action_items": [
+    "imports.py in_chunk update branch: when stage=='Converted', set in_chunk won_date/won_date_ist (from won_ist or the create date) if missing. Recompute in_chunk['name'] and search_norm after merging the data.",
+    "Clear reports._kpi_cache in imports._clear_caches. Consider clearing the dash/kpi caches on lead stage changes.",
+    "Decide whether converted_mtd should use the won date as well, for consistency with won_value_mtd.",
+    "Minor: format the Min Deal chip value as INR and show its value in the export modal chip."
+  ],
+  "critical_code_review_comments": [
+    "imports._run in-chunk merge path skips the won-date, name/search_norm and chatter logic that the DB-update path has. Extract a shared merge helper to avoid the drift.",
+    "leads.py min_deal_value silently ignores non-numeric input (returns all). Acceptable, but a 400 would be clearer.",
+    "leads.py (1034 lines) and facebook.py (756 lines) exceed 700 lines. Consider splitting them."
+  ],
+  "updated_files": ["/app/backend/tests/test_won_date_deals.py", "/app/backend/tests/test_big_upload_50k.py"],
+  "success_rate": {"backend": "94% (15/16)", "frontend": "100%"},
+  "seed_data_creation": "None left behind. All bulk_import leads, messages, import_jobs, related audit_logs, the test caller user, call_event 900001 and the auto-created 'Converted' tag were deleted. DB is back to 0 leads, 0 messages and 1 user.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "pytest.ini enables xdist, so these order-dependent files must run with -n 0. test_won_date_deals.py needs an empty DB (exact sums) and must use admin for kpi-overview (callers get 403). The KPI cache TTL is 120s, so run each test once with the cache cold. Use python3 /root/cleanup_bulk.py after runs. test_big_upload_50k.py uses /root/big.xlsx (49,001 unique plus 999 in-file duplicate phones). Verified: Won Date aliases auto-map; the import Won tag stamps won_date from the Won Date column, else the created date, else now; PATCH, bulk set_lead_stage and disposition stamp won_date only once; KPI and dashboard won_mtd use the won date; export has a Won Date column and respects min_deal_value; the UI legacy-prefs migration adds Company and Deal Value; sort headers and the filter chip work.",
+  "rca of the issue": "In imports._run, a repeated phone within one chunk in update mode merges into the pending in-memory doc (in_chunk) through a separate branch. That branch only updates the data, custom fields, tags and lead_stage. The won-date stamping (done in _new_doc only when the first row is Converted) and the name/search_norm computation (done once in _new_doc) are never re-run. Fix: after the merge, if stage=='Converted' and 'won_date' is not in in_chunk, set won_date from won_ist or in_chunk['create_date']. Then set in_chunk['name'] from contact_name and update in_chunk with search_norm(in_chunk)."
+}

@@ -283,6 +283,7 @@ def _clear_caches():
     from routes import leads as leads_routes, reports as reports_routes
     leads_routes._count_cache.clear()
     reports_routes._dash_cache.clear()
+    reports_routes._kpi_cache.clear()
 
 
 CHUNK = 1000
@@ -391,8 +392,15 @@ async def _run(job_id: int, headers, rows, mapping, opts, user):
                     in_chunk.update({k: v for k, v in data.items()})
                     in_chunk["custom"].update(custom)
                     in_chunk["tags"] = list(dict.fromkeys(in_chunk["tags"] + tag_ids))
+                    if data.get("contact_name"):
+                        in_chunk["name"] = data["contact_name"]
+                    in_chunk.update(search_norm(in_chunk))
                     if stage:
                         in_chunk["lead_stage"] = stage
+                        if stage == "Converted" and not in_chunk.get("won_date"):
+                            won = _ist_to_utc(won_ist) if won_ist else in_chunk["create_date"]
+                            in_chunk["won_date"], in_chunk["won_date_ist"] = won, to_ist_str(won)
+                    msgs.append((in_chunk["id"], f"Lead updated from bulk upload by {who}", "tracking"))
                     stats["updated"] += 1
                     continue
                 if is_update:

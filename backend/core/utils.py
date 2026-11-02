@@ -280,6 +280,9 @@ async def stamp_won(ids: list, stage: str):
     now = now_utc_str()
     await db.leads.update_many({"id": {"$in": ids}, "won_date": {"$exists": False}},
                                {"$set": {"won_date": now, "won_date_ist": to_ist_str(now)}})
+    from routes import reports
+    reports._dash_cache.clear()
+    reports._kpi_cache.clear()
 
 
 async def log_audit(lead_id: int, user: dict = None, action: str = "", field: str = None,

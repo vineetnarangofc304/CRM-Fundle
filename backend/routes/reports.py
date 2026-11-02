@@ -322,7 +322,9 @@ async def _compute_dashboard(date_from: str = None, date_to: str = None, user: d
             db.leads.count_documents({**base, "create_date_ist": {"$gte": today}}),
             db.leads.count_documents({**base, "create_date_ist": {"$gte": month + "-01"}}),
             db.leads.count_documents(base),
-            db.leads.count_documents({**base, "lead_stage": "Converted", "create_date_ist": {"$gte": month + "-01"}}),
+            db.leads.count_documents({**base, "lead_stage": "Converted", "$or": [
+                {"won_date_ist": {"$gte": month + "-01"}},
+                {"won_date_ist": {"$exists": False}, "create_date_ist": {"$gte": month + "-01"}}]}),
             db.leads.count_documents({**base, "follow_up_date": today}),
             db.leads.count_documents({**base, "follow_up_date": {"$lt": today, "$gt": ""}}),
             db.leads.count_documents(range_match),

@@ -418,7 +418,7 @@ export default function Leads() {
           )}
           {activeChips.map((f) => (
             <span key={f.key} className="inline-flex items-center gap-1 rounded-full bg-[#1A73E8]/10 px-2.5 py-1 text-[11px] font-semibold text-[#1557B0]">
-              {f.label}: {f.key === "user_id" ? (userById[params.get(f.key)]?.name || params.get(f.key)) : f.key === "tags" ? (tagById[params.get(f.key)]?.name || params.get(f.key)) : f.key === "duplicate" ? "Only" : params.get(f.key)}
+              {f.label}: {f.key === "user_id" ? (userById[params.get(f.key)]?.name || params.get(f.key)) : f.key === "tags" ? (tagById[params.get(f.key)]?.name || params.get(f.key)) : f.key === "duplicate" ? "Only" : f.key === "min_deal_value" ? inr(params.get(f.key)) : params.get(f.key)}
               <button onClick={() => setParam(f.key, "")}><X size={11} /></button>
             </span>
           ))}
@@ -708,7 +708,7 @@ function ExportModal({ onClose, filterParams = {}, activeChips = [] }) {
         {appliedCount > 0 && (
           <div className="mt-2 flex flex-wrap gap-1" data-testid="export-active-filters">
             {activeChips.map((f) => (
-              <span key={f.key} className="rounded-full bg-[#1A73E8]/10 px-2 py-0.5 text-[10px] font-bold text-[#1557B0]">{f.label}</span>
+              <span key={f.key} className="rounded-full bg-[#1A73E8]/10 px-2 py-0.5 text-[10px] font-bold text-[#1557B0]">{f.label}{f.key === "min_deal_value" && filterParams.min_deal_value ? `: ${inr(filterParams.min_deal_value)}` : ""}</span>
             ))}
           </div>
         )}
