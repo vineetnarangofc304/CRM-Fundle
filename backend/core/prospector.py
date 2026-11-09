@@ -90,6 +90,10 @@ def _url(v):
     return v if v.startswith("http") else (f"https://{v}" if v and "." in v and " " not in v else None)
 
 
+RETRY_COOLDOWN_H = 6
+MAX_RETRY_ROUNDS = 5
+
+
 class AiCreditsOut(Exception):
     pass
 
@@ -259,7 +263,8 @@ async def enrich(p: dict) -> dict:
         raise
     except Exception as e:
         status = "failed" if p.get("enrich_attempts", 0) + 1 >= 3 else "discovered"
-        await db.prospects.update_one({"id": p["id"]}, {"$set": {"status": status, "last_error": str(e)[:200]}})
+        await db.prospects.update_one({"id": p["id"]}, {"$set": {"status": status, "last_error": str(e)[:200],
+                                                                 **({"failed_at": now_utc_str()} if status == "failed" else {})}})
         await _log_run("enrich", PRO, False, e, time.time() - t, brand=p["brand_name"])
         return {"ok": False}
     li = d.get("ceo_linkedin") if isinstance(d.get("ceo_linkedin"), str) and "linkedin.com/" in d.get("ceo_linkedin", "") else None
@@ -357,6 +362,22 @@ async def _step(settings, stats) -> bool:
     return True
 
 
+async def requeue_failed():
+    """Put failed brands/contact lookups back in the queue: credit errors at once, others after a 6h cooldown (max 5 rounds)."""
+    quota = {"$regex": "spend limit|budget|insufficient balance|insufficient_quota", "$options": "i"}
+    cool = (datetime.now(timezone.utc) - timedelta(hours=RETRY_COOLDOWN_H)).strftime("%Y-%m-%d %H:%M:%S")
+    due = {"$or": [{"failed_at": {"$exists": False}}, {"failed_at": {"$lt": cool}}]}
+    await db.prospects.update_many({"status": "failed", "last_error": quota},
+                                   {"$set": {"status": "discovered", "enrich_attempts": 0}, "$unset": {"last_error": 1}})
+    await db.prospects.update_many({"status": "failed", "retry_rounds": {"$not": {"$gte": MAX_RETRY_ROUNDS}}, **due},
+                                   {"$set": {"status": "discovered", "enrich_attempts": 0}, "$inc": {"retry_rounds": 1}})
+    await db.prospects.update_many({"contacts_status": "failed", "contacts_error": quota},
+                                   {"$unset": {"contacts_status": 1, "contacts_error": 1}})
+    cdue = {"$or": [{"contacts_failed_at": {"$exists": False}}, {"contacts_failed_at": {"$lt": cool}}]}
+    await db.prospects.update_many({"contacts_status": "failed", "contacts_retry_rounds": {"$not": {"$gte": MAX_RETRY_ROUNDS}}, **cdue},
+                                   {"$unset": {"contacts_status": 1}, "$inc": {"contacts_retry_rounds": 1}})
+
+
 async def run_worker(max_seconds: int = 840, trigger: str = "cron"):
     now = datetime.now(timezone.utc)
     lock = await db.settings.find_one_and_update(
@@ -379,11 +400,7 @@ async def run_worker(max_seconds: int = 840, trigger: str = "cron"):
             {"$set": {"status": "discovered"}})
         await db.prospects.update_many({"contacts_status": "running", "contacts_started_at": {"$lt": stale}},
                                        {"$unset": {"contacts_status": 1}})
-        quota = {"$regex": "spend limit|budget|insufficient balance|insufficient_quota", "$options": "i"}
-        await db.prospects.update_many({"status": "failed", "last_error": quota},
-                                       {"$set": {"status": "discovered", "enrich_attempts": 0}, "$unset": {"last_error": 1}})
-        await db.prospects.update_many({"contacts_status": "failed", "contacts_error": quota},
-                                       {"$unset": {"contacts_status": 1, "contacts_error": 1}})
+        await requeue_failed()
         await ensure_catalog("source_lead", SOURCE)
         deadline = time.time() + max_seconds
         await asyncio.gather(*[_lane(deadline, settings, stats) for _ in range(max(1, min(settings["concurrency"], 6)))],

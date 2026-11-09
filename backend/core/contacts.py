@@ -69,7 +69,8 @@ async def find_contacts(p: dict) -> dict:
         await pe._log_run("contacts", pe.PRO, False, e, time.time() - t, brand=p["brand_name"])
         raise
     except Exception as e:
-        await db.prospects.update_one({"id": p["id"]}, {"$set": {"contacts_status": "failed", "contacts_error": str(e)[:200]}})
+        await db.prospects.update_one({"id": p["id"]}, {"$set": {"contacts_status": "failed", "contacts_error": str(e)[:200],
+                                                                 "contacts_failed_at": now_utc_str()}})
         await pe._log_run("contacts", pe.PRO, False, e, time.time() - t, brand=p["brand_name"])
         return {"ok": False}
     mx = await _mx_ok(dom)
