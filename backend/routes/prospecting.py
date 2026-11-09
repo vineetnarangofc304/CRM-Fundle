@@ -22,13 +22,27 @@ def _spawn(coro):
     t.add_done_callback(_TASKS.discard)
 
 
-@router.post("/cron/prospecting")
-async def cron_prospecting(request: Request):
-    # Cron endpoints must ack 2xx immediately; enqueue/background the actual work.
+def _cron_auth(request: Request):
     secret = os.environ.get("WEBHOOK_CRON_SECRET", "")
     auth = request.headers.get("authorization", "")
     if not secret or not auth.startswith("Bearer ") or not hmac.compare_digest(auth[7:], secret):
         raise HTTPException(status_code=401, detail="Unauthorized")
+
+
+@router.post("/cron/prospecting-watchdog")
+async def cron_watchdog(request: Request):
+    # Cron endpoints must ack 2xx immediately; enqueue/background the actual work.
+    _cron_auth(request)
+    res = await pe.watchdog()
+    if res["restart"] and (await pe.get_settings())["enabled"]:
+        _spawn(pe.run_worker(840, "watchdog"))
+    return {"ok": True, **res}
+
+
+@router.post("/cron/prospecting")
+async def cron_prospecting(request: Request):
+    # Cron endpoints must ack 2xx immediately; enqueue/background the actual work.
+    _cron_auth(request)
     run_id = request.headers.get("x-webhook-id")
     if run_id and await db.cron_runs.find_one({"run_id": run_id}):
         return {"ok": True, "duplicate": True}
@@ -68,7 +82,7 @@ async def overview(user: dict = Depends(require_roles("admin", "manager"))):
                          "runs": st.get("runs", 0), "saturated": st.get("saturated", False), "last_run": st.get("last_run")})
     totals = {k: sum(r[k] for r in rows) for k in ("brands", "enriched", "offline", "d2c", "with_ceo")}
     recent = await db.prospect_runs.find({}, {"_id": 0}).sort("at", -1).limit(25).to_list(25)
-    return {"settings": settings, "running": running, "lock": {k: lock.get(k) for k in ("started", "trigger", "last_finished", "last_stats", "ai_blocked_at")},
+    return {"settings": settings, "running": running, "lock": {k: lock.get(k) for k in ("started", "trigger", "last_finished", "last_stats", "ai_blocked_at", "watchdog_at", "watchdog_action")},
             "totals": totals, "categories": rows, "recent_runs": recent,
             "all_countries": pe.COUNTRIES, "all_categories": pe.CATEGORIES, "segments": pe.SEGMENTS,
             "pending_enrich": await db.prospects.count_documents({"status": "discovered"})}

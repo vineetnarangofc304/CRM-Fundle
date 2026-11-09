@@ -52,6 +52,10 @@ ANGLES = [
     "regional and city-level brands that are not nationally famous",
     "franchise opportunity listings",
     "'top brands' rankings and market reports",
+    "LinkedIn posts by founders, retail leaders and pages like D2C Insider, Inc42, YourStory, Entrackr and ET Retail",
+    "news of new store / outlet / flagship openings and city launches in the last 12 months",
+    "startup funding and acquisition news for consumer brands (Inc42, YourStory, Entrackr, VCCircle, Economic Times)",
+    "D2C newsletters, brand lists and award shortlists (D2C Insider, Brand Stack, Shark Tank featured brands)",
 ]
 SEGMENTS = ["Offline Retail", "D2C / E-commerce", "Omnichannel"]
 
@@ -125,7 +129,11 @@ async def get_settings() -> dict:
     doc = await db.settings.find_one({"key": "prospecting"}, {"_id": 0}) or {}
     return {"enabled": doc.get("enabled", True), "countries": doc.get("countries") or ["India"],
             "phase": doc.get("phase", "auto"), "concurrency": int(doc.get("concurrency") or 3),
-            "create_leads": doc.get("create_leads", True), "daily_cap": int(doc.get("daily_cap") or 500)}
+            "create_leads": doc.get("create_leads", True), "daily_cap": int(doc.get("daily_cap") or 0)}
+
+
+async def under_cap(settings) -> bool:
+    return not settings["daily_cap"] or await added_today() < settings["daily_cap"]
 
 
 async def added_today() -> int:
@@ -336,7 +344,7 @@ async def _step(settings, stats) -> bool:
         return False
     disc = None
     if settings["phase"] in ("auto", "discovery") and (settings["phase"] == "discovery" or random.random() < 0.7):
-        if await added_today() < settings["daily_cap"]:
+        if await under_cap(settings):
             disc = await _next_discovery(settings)
     if disc:
         _busy_cats.add(disc)
@@ -356,7 +364,7 @@ async def _step(settings, stats) -> bool:
             return True
     p = await _next_enrich()
     if not p:
-        return (settings["phase"] == "auto" and await added_today() < settings["daily_cap"]
+        return (settings["phase"] == "auto" and await under_cap(settings)
                 and bool(await _next_discovery(settings)))
     stats["enriched"] += 1 if (await enrich(p))["ok"] else 0
     return True
@@ -376,6 +384,21 @@ async def requeue_failed():
     cdue = {"$or": [{"contacts_failed_at": None}, {"contacts_failed_at": {"$lt": cool}}]}
     await db.prospects.update_many({"contacts_status": "failed", "contacts_retry_rounds": {"$not": {"$gte": MAX_RETRY_ROUNDS}}, **cdue},
                                    {"$unset": {"contacts_status": 1}, "$inc": {"contacts_retry_rounds": 1}})
+
+
+async def watchdog():
+    """Hourly health check: free a stuck lock and start a batch if none finished in the last 30 min."""
+    lock = await db.settings.find_one({"key": "prospect_lock"}) or {}
+    now = datetime.now(timezone.utc)
+    started = lock.get("started") or ""
+    stuck = bool(lock.get("until")) and started < (now - timedelta(minutes=20)).strftime("%Y-%m-%d %H:%M:%S")
+    if stuck:
+        await db.settings.update_one({"key": "prospect_lock"}, {"$set": {"until": ""}})
+    idle = (lock.get("last_finished") or "") < (now - timedelta(minutes=30)).strftime("%Y-%m-%d %H:%M:%S")
+    running = bool(lock.get("until")) and lock["until"] > now.isoformat() and not stuck
+    await db.settings.update_one({"key": "prospect_lock"}, {"$set": {"watchdog_at": now_utc_str(),
+                                 "watchdog_action": "restarted" if (idle and not running) else "ok"}})
+    return {"stuck": stuck, "restart": idle and not running}
 
 
 async def run_worker(max_seconds: int = 840, trigger: str = "cron"):
@@ -401,6 +424,9 @@ async def run_worker(max_seconds: int = 840, trigger: str = "cron"):
         await db.prospects.update_many({"contacts_status": "running", "contacts_started_at": {"$lt": stale}},
                                        {"$unset": {"contacts_status": 1}})
         await requeue_failed()
+        if not await db.settings.find_one({"key": "prospect_angles_v2"}):
+            await db.prospect_cats.update_many({}, {"$set": {"saturated": False, "empty_streak": 0}})
+            await db.settings.insert_one({"key": "prospect_angles_v2", "done": True})
         await ensure_catalog("source_lead", SOURCE)
         deadline = time.time() + max_seconds
         await asyncio.gather(*[_lane(deadline, settings, stats) for _ in range(max(1, min(settings["concurrency"], 6)))],
