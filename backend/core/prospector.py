@@ -102,17 +102,32 @@ class AiCreditsOut(Exception):
     pass
 
 
-_QUOTA_MARKERS = ("spend limit", "budget", "insufficient balance", "insufficient_quota")
+_QUOTA_MARKERS = ("spend limit", "budget", "insufficient balance", "insufficient_quota", "exceeded your current quota",
+                  "ratelimit", "rate limit", "resource_exhausted", "429", "no deployments available", "overloaded")
+QUOTA_REGEX = "|".join(_QUOTA_MARKERS)
 _blocked = {"on": None}
 
 
-async def _ask(model: str, system: str, prompt: str) -> str:
+async def _call(model: str, system: str, prompt: str):
     chat = (LlmChat(api_key=os.environ["EMERGENT_LLM_KEY"], session_id=f"prospect-{time.time_ns()}",
                     system_message=system).with_model("gemini", model).with_tools([{"googleSearch": {}}]))
+    return await asyncio.wait_for(chat.send_message_with_tools(UserMessage(text=prompt)), timeout=240)
+
+
+def _is_quota(e) -> bool:
+    return any(m in str(e).lower() for m in _QUOTA_MARKERS)
+
+
+async def _ask(model: str, system: str, prompt: str) -> str:
     try:
-        r = await asyncio.wait_for(chat.send_message_with_tools(UserMessage(text=prompt)), timeout=240)
+        try:
+            r = await _call(model, system, prompt)
+        except Exception as e:
+            if model == FLASH or not _is_quota(e):
+                raise
+            r = await _call(FLASH, system, prompt)
     except Exception as e:
-        if any(m in str(e).lower() for m in _QUOTA_MARKERS):
+        if _is_quota(e):
             _blocked["on"] = True
             await db.settings.update_one({"key": "prospect_lock", "ai_blocked_at": {"$exists": False}},
                                          {"$set": {"ai_blocked_at": now_utc_str()}})
@@ -372,7 +387,7 @@ async def _step(settings, stats) -> bool:
 
 async def requeue_failed():
     """Put failed brands/contact lookups back in the queue: credit errors at once, others after a 6h cooldown (max 5 rounds)."""
-    quota = {"$regex": "spend limit|budget|insufficient balance|insufficient_quota", "$options": "i"}
+    quota = {"$regex": QUOTA_REGEX, "$options": "i"}
     cool = (datetime.now(timezone.utc) - timedelta(hours=RETRY_COOLDOWN_H)).strftime("%Y-%m-%d %H:%M:%S")
     due = {"$or": [{"failed_at": None}, {"failed_at": {"$lt": cool}}]}
     await db.prospects.update_many({"status": "failed", "last_error": quota},
@@ -386,7 +401,7 @@ async def requeue_failed():
                                    {"$unset": {"contacts_status": 1}, "$inc": {"contacts_retry_rounds": 1}})
 
 
-async def watchdog():
+async def watchdog(enabled: bool = True):
     """Hourly health check: free a stuck lock and start a batch if none finished in the last 30 min."""
     lock = await db.settings.find_one({"key": "prospect_lock"}) or {}
     now = datetime.now(timezone.utc)
@@ -397,7 +412,7 @@ async def watchdog():
     idle = (lock.get("last_finished") or "") < (now - timedelta(minutes=30)).strftime("%Y-%m-%d %H:%M:%S")
     running = bool(lock.get("until")) and lock["until"] > now.isoformat() and not stuck
     await db.settings.update_one({"key": "prospect_lock"}, {"$set": {"watchdog_at": now_utc_str(),
-                                 "watchdog_action": "restarted" if (idle and not running) else "ok"}})
+                                 "watchdog_action": "restarted" if (idle and not running and enabled) else "ok"}})
     return {"stuck": stuck, "restart": idle and not running}
 
 

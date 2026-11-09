@@ -33,8 +33,9 @@ def _cron_auth(request: Request):
 async def cron_watchdog(request: Request):
     # Cron endpoints must ack 2xx immediately; enqueue/background the actual work.
     _cron_auth(request)
-    res = await pe.watchdog()
-    if res["restart"] and (await pe.get_settings())["enabled"]:
+    enabled = (await pe.get_settings())["enabled"]
+    res = await pe.watchdog(enabled)
+    if res["restart"] and enabled:
         _spawn(pe.run_worker(840, "watchdog"))
     return {"ok": True, **res}
 
