@@ -1,0 +1,20 @@
+{
+  "summary": "Backend-only test of requeue_failed() called at each run_worker start. I inserted 13 TEST_ prospects (ids 990001-990013) directly in Mongo, ran POST /api/prospecting/run as admin and checked every rule in the request. Also ran a method-level test of enrich() and find_contacts() with _ask patched to raise a non-quota error. 12/12 new tests pass and the 6/6 iteration_7 regression tests (test_prospecting_ai_credits.py) still pass. The worker exited in about 2.1s because credits are blocked (stats all 0). Overview returns 200 with ai_blocked_at set and settings.enabled=true. Frontend was not tested, as requested (backend only).",
+  "backend_issues": {"critical": [], "minor": [
+    {"endpoint": "requeue_failed()", "issue": "A failed prospect whose failed_at or contacts_failed_at is explicitly null is never requeued, because the filter is $exists:false OR $lt cool and null matches neither. Current code never writes null, so this only affects legacy or hand-edited docs."}
+  ]},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": ["/app/backend/tests/test_prospecting_requeue.py", "/app/backend/tests/test_prospecting_ai_credits.py", "/app/test_reports/pytest/pytest_requeue.xml"],
+  "action_items": ["Optional: in the due/cdue filters, also match failed_at None (e.g. {'failed_at': None} matches both missing and null)."],
+  "critical_code_review_comments": [
+    "Quota-failed brands are reset with enrich_attempts 0 and last_error unset, and retry_rounds is NOT incremented. That is correct, since credit errors should not use up retry rounds.",
+    "Non-quota requeue keeps last_error and contacts_error on requeued docs. That is fine for diagnosis, but the UI may still show a stale error on a 'discovered' brand.",
+    "The retry_rounds filter uses $not $gte 5, so docs without the field are included. Correct."
+  ],
+  "updated_files": ["/app/backend/tests/test_prospecting_requeue.py"],
+  "success_rate": {"backend": "100% (18/18)", "frontend": "not tested (backend-only request)"},
+  "seed_data_creation": "TEST_rq_9900xx prospects (ids 990001-990013) were inserted and deleted by id in the fixture teardown; 0 remain. Prospecting settings enabled=true at the end. Real failed count was 0 before and after. The real 'discovered' count went from 2079 to 2081, most likely stale 'enriching' docs that run_worker reset to discovered (existing behaviour, not caused by test data).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Run with -n 0 (the module fixture is shared by 2 classes). The LLM key still returns 'Daily spend limit reached', so the worker exits about 2s after the requeue step. The timestamp format is 'YYYY-MM-DD HH:MM:SS' UTC."
+}

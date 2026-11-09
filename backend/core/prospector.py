@@ -366,14 +366,14 @@ async def requeue_failed():
     """Put failed brands/contact lookups back in the queue: credit errors at once, others after a 6h cooldown (max 5 rounds)."""
     quota = {"$regex": "spend limit|budget|insufficient balance|insufficient_quota", "$options": "i"}
     cool = (datetime.now(timezone.utc) - timedelta(hours=RETRY_COOLDOWN_H)).strftime("%Y-%m-%d %H:%M:%S")
-    due = {"$or": [{"failed_at": {"$exists": False}}, {"failed_at": {"$lt": cool}}]}
+    due = {"$or": [{"failed_at": None}, {"failed_at": {"$lt": cool}}]}
     await db.prospects.update_many({"status": "failed", "last_error": quota},
                                    {"$set": {"status": "discovered", "enrich_attempts": 0}, "$unset": {"last_error": 1}})
     await db.prospects.update_many({"status": "failed", "retry_rounds": {"$not": {"$gte": MAX_RETRY_ROUNDS}}, **due},
                                    {"$set": {"status": "discovered", "enrich_attempts": 0}, "$inc": {"retry_rounds": 1}})
     await db.prospects.update_many({"contacts_status": "failed", "contacts_error": quota},
                                    {"$unset": {"contacts_status": 1, "contacts_error": 1}})
-    cdue = {"$or": [{"contacts_failed_at": {"$exists": False}}, {"contacts_failed_at": {"$lt": cool}}]}
+    cdue = {"$or": [{"contacts_failed_at": None}, {"contacts_failed_at": {"$lt": cool}}]}
     await db.prospects.update_many({"contacts_status": "failed", "contacts_retry_rounds": {"$not": {"$gte": MAX_RETRY_ROUNDS}}, **cdue},
                                    {"$unset": {"contacts_status": 1}, "$inc": {"contacts_retry_rounds": 1}})
 
