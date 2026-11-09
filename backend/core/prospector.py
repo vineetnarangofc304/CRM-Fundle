@@ -241,6 +241,8 @@ async def enrich(p: dict) -> dict:
     }.items() if v not in (None, "", [])}
     upd["sources"] = list(dict.fromkeys((p.get("sources") or []) + [u for u in (d.get("sources") or []) if isinstance(u, str)]))[:15]
     upd.update({"status": "enriched", "enriched_at": now_utc_str()})
+    from core.contacts import fit_score
+    upd["fit_score"] = fit_score({**p, **upd})
     await db.prospects.update_one({"id": p["id"]}, {"$set": upd, "$unset": {"last_error": 1}})
     if (await get_settings()).get("create_leads", True):
         await upsert_lead({**p, **upd})
@@ -302,6 +304,12 @@ async def _step(settings, stats) -> bool:
         return True
     if settings["phase"] == "discovery":
         return False
+    if random.random() < 0.5:
+        from core import contacts as ct
+        cj = await ct.next_contacts_job()
+        if cj:
+            stats["contacts"] = stats.get("contacts", 0) + (1 if (await ct.find_contacts(cj))["ok"] else 0)
+            return True
     p = await _next_enrich()
     if not p:
         return settings["phase"] == "auto" and bool(await _next_discovery(settings))
@@ -329,6 +337,8 @@ async def run_worker(max_seconds: int = 840, trigger: str = "cron"):
         await db.prospects.update_many({"status": "enriching", "$or": [
             {"enrich_started_at": {"$lt": stale}}, {"enrich_started_at": {"$exists": False}}]},
             {"$set": {"status": "discovered"}})
+        await db.prospects.update_many({"contacts_status": "running", "contacts_started_at": {"$lt": stale}},
+                                       {"$unset": {"contacts_status": 1}})
         await ensure_catalog("source_lead", SOURCE)
         deadline = time.time() + max_seconds
         await asyncio.gather(*[_lane(deadline, settings, stats) for _ in range(max(1, min(settings["concurrency"], 6)))],

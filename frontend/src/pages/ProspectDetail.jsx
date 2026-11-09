@@ -15,6 +15,45 @@ const Row = ({ label, children, testid }) => (
 
 const ext = (url, label) => url ? <a href={url} target="_blank" rel="noreferrer" className="font-semibold text-[#1557B0] hover:underline">{label || url}</a> : null;
 
+const EMAIL_BADGE = {
+  published: ["FOUND PUBLISHED", "bg-emerald-50 text-emerald-700"],
+  pattern: ["GUESSED FROM PATTERN", "bg-amber-50 text-amber-700"],
+};
+
+function ContactsCard({ p, reload }) {
+  const find = async () => { try { await API.post(`/prospecting/prospects/${p.id}/contacts`); toast.success("Email finder started — about a minute"); setTimeout(reload, 45000); } catch (e) { toast.error(apiErr(e)); } };
+  const draft = async (i) => { try { await API.post(`/prospecting/prospects/${p.id}/draft`, { contact_index: i }); toast.success("Outreach drafted — review it in Outreach"); reload(); } catch (e) { toast.error(apiErr(e)); } };
+  const cs = p.contacts || [];
+  return (
+    <div className="crm-card p-4" data-testid="prospect-contacts">
+      <div className="mb-2 flex flex-wrap items-center gap-2">
+        <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Decision makers</span>
+        {p.fit_score != null && <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-700" data-testid="prospect-fit-score">Loyalty fit {p.fit_score}/100</span>}
+        {p.email_pattern && <span className="text-[11px] text-slate-500">Email format: <b>{p.email_pattern}</b></span>}
+        {p.mx_ok === false && <span className="text-[11px] text-rose-600">Domain has no mail server</span>}
+        <div className="ml-auto flex gap-2">
+          {p.outreach_seq && <Link to="/outreach" className="text-xs font-bold text-[#1557B0]" data-testid="prospect-outreach-link">Outreach: {p.outreach_status?.replace("_", " ")} →</Link>}
+          <button data-testid="prospect-find-emails" onClick={find} disabled={p.contacts_status === "running"} className="crm-btn-secondary !py-1 text-xs">{p.contacts_status === "running" ? "Searching…" : cs.length ? "Search again" : "Find emails"}</button>
+        </div>
+      </div>
+      {cs.length === 0 ? <p className="text-xs text-slate-400">{p.contacts_status === "failed" ? `Search failed: ${p.contacts_error || ""}` : "Not searched yet. It runs automatically after deep research, or click Find emails."}</p> : (
+        <table className="w-full text-sm">
+          <tbody>
+            {cs.map((c, i) => (
+              <tr key={i} className="border-t border-slate-50" data-testid={`prospect-contact-${i}`}>
+                <td className="py-2 font-bold text-slate-800">{c.name}<div className="text-[11px] font-normal text-slate-500">{c.role}</div></td>
+                <td className="text-xs">{c.email ? <>{c.email} {EMAIL_BADGE[c.email_status] && <span className={`ml-1 rounded px-1 text-[9px] font-bold ${EMAIL_BADGE[c.email_status][1]}`}>{EMAIL_BADGE[c.email_status][0]}</span>}</> : <span className="text-slate-300">no email found</span>}</td>
+                <td>{c.linkedin && <a href={c.linkedin} target="_blank" rel="noreferrer" className="text-[#0A66C2]"><LinkedinLogo size={16} weight="fill" /></a>}</td>
+                <td className="text-right">{c.email && <button data-testid={`prospect-draft-${i}`} onClick={() => draft(i)} className="text-xs font-bold text-[#1557B0] hover:underline">Draft outreach</button>}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+}
+
 export default function ProspectDetail() {
   const { id } = useParams();
   const { user } = useAuth();
@@ -76,6 +115,7 @@ export default function ProspectDetail() {
           <Row label="Researched">{p.enriched_at ? `${p.enriched_at} UTC` : p.last_error ? `Last try failed: ${p.last_error}` : "Not yet"}</Row>
         </div>
       </div>
+      <ContactsCard p={p} reload={load} />
       {p.sources?.length > 0 && (
         <div className="crm-card p-4" data-testid="prospect-sources">
           <div className="mb-2 text-[11px] font-bold uppercase tracking-wider text-slate-400">Sources</div>

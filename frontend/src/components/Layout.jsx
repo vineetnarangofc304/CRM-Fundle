@@ -4,6 +4,7 @@ import {
   SquaresFour, UsersThree, ClockCountdown, WhatsappLogo, ChartBar,
   EnvelopeSimple, GearSix, SignOut, MagnifyingGlass, Sparkle, PhoneCall, Megaphone, Gauge,
   Binoculars,
+  PaperPlaneTilt,
 } from "@phosphor-icons/react";
 import { useAuth } from "../context/AuthContext";
 import { BRAND } from "../lib/brand";
@@ -17,6 +18,7 @@ const NAV = [
   { to: "/dashboard", label: "Dashboard", icon: SquaresFour, testid: "nav-dashboard", perm: "dashboard" },
   { to: "/leads", label: "Leads", icon: UsersThree, testid: "nav-leads", perm: "leads" },
   { to: "/prospecting", label: "AI Prospecting", icon: Binoculars, testid: "nav-prospecting", perm: "leads", roles: ["admin", "manager"] },
+  { to: "/outreach", label: "Outreach", icon: PaperPlaneTilt, testid: "nav-outreach", perm: "leads", roles: ["admin", "manager"] },
   { to: "/followups", label: "Follow-ups", icon: ClockCountdown, testid: "nav-followups", perm: "followups" },
   { to: "/call-center", label: "Call Center", icon: PhoneCall, testid: "nav-call-center", perm: "call_center" },
   { to: "/whatsapp", label: "WhatsApp", icon: WhatsappLogo, testid: "nav-whatsapp", perm: "whatsapp" },

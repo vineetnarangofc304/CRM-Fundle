@@ -112,21 +112,25 @@ function ProspectTable({ filters, setFilters, ov }) {
         </select>
         <input data-testid="prospect-filter-min-stores" type="number" min="0" className="crm-input !w-28" placeholder="Min stores" value={filters.min_stores || ""} onChange={(e) => set("min_stores", e.target.value)} />
         <label className="flex items-center gap-1 text-xs text-slate-600"><input data-testid="prospect-filter-has-ceo" type="checkbox" checked={!!filters.has_ceo} onChange={(e) => set("has_ceo", e.target.checked || "")} /> Has CEO</label>
+        <select data-testid="prospect-sort" className="crm-select !w-36" value={filters.sort || "store_count"} onChange={(e) => set("sort", e.target.value)}>
+          <option value="store_count">Most stores</option><option value="score">Best fit</option><option value="recent">Newest</option><option value="brand">A–Z</option>
+        </select>
         <span className="ml-auto text-xs text-slate-500" data-testid="prospect-total">{data.total.toLocaleString("en-IN")} brands</span>
       </div>
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead className="text-left text-[10px] uppercase tracking-wider text-slate-400">
-            <tr><th className="py-2">Brand</th><th>Category</th><th>Segment</th><th className="text-right">Stores</th><th>CEO</th><th>Status</th></tr>
+            <tr><th className="py-2">Brand</th><th>Category</th><th>Segment</th><th className="text-right">Stores</th><th className="text-right">Fit</th><th>CEO</th><th>Status</th></tr>
           </thead>
           <tbody>
-            {data.items.length === 0 && <tr><td colSpan={6} className="py-10 text-center text-xs text-slate-400" data-testid="prospect-empty">No brands yet — the engine fills this list automatically. Click "Run now" to start.</td></tr>}
+            {data.items.length === 0 && <tr><td colSpan={7} className="py-10 text-center text-xs text-slate-400" data-testid="prospect-empty">No brands yet — the engine fills this list automatically. Click "Run now" to start.</td></tr>}
             {data.items.map((p) => (
               <tr key={p.id} onClick={() => navigate(`/prospecting/${p.id}`)} className="cursor-pointer border-t border-slate-100 hover:bg-slate-50" data-testid={`prospect-row-${p.id}`}>
                 <td className="py-2"><div className="font-bold text-slate-800">{p.brand_name}</div><div className="text-[11px] text-slate-400">{p.hq_city || p.country}{p.parent_company ? ` · ${p.parent_company}` : ""}</div></td>
                 <td className="text-xs text-slate-600">{p.category}</td>
                 <td>{p.segment && <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${SEGMENT_STYLE[p.segment]}`}>{p.segment}</span>}</td>
                 <td className="text-right tabular-nums font-semibold">{p.store_count != null ? p.store_count.toLocaleString("en-IN") : "—"}</td>
+                <td className="text-right tabular-nums text-xs font-bold text-emerald-700">{p.fit_score ?? "—"}</td>
                 <td className="text-xs">{p.ceo_name ? <span className="flex items-center gap-1">{p.ceo_name}{p.ceo_linkedin && <a href={p.ceo_linkedin} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()} className="text-[#0A66C2]"><LinkedinLogo size={14} weight="fill" /></a>}</span> : <span className="text-slate-300">—</span>}</td>
                 <td className="text-[10px] font-bold uppercase text-slate-400">{p.status === "enriched" ? <span className="text-emerald-600">Researched</span> : p.status}</td>
               </tr>

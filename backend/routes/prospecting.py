@@ -113,7 +113,7 @@ async def list_prospects(country: Optional[str] = None, category: Optional[str] 
     if q:
         f["brand_name"] = {"$regex": re.escape(q), "$options": "i"}
     srt = {"store_count": [("store_count", -1), ("id", 1)], "brand": [("brand_name", 1)],
-           "recent": [("id", -1)]}.get(sort, [("store_count", -1)])
+           "score": [("fit_score", -1), ("store_count", -1)], "recent": [("id", -1)]}.get(sort, [("store_count", -1)])
     limit = max(1, min(limit, 200))
     items = await db.prospects.find(f, {"_id": 0, "sources": 0}).sort(srt).skip((max(page, 1) - 1) * limit).limit(limit).to_list(limit)
     return {"items": items, "total": await db.prospects.count_documents(f), "page": page, "limit": limit}
