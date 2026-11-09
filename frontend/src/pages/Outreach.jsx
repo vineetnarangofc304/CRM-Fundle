@@ -89,14 +89,15 @@ export default function Outreach() {
   const { user } = useAuth();
   const [s, setS] = useState(null);
   const [stats, setStats] = useState({});
-  const [tab, setTab] = useState("pending_approval");
+  const [tab, setTab] = useState(null);
   const [channel, setChannel] = useState("");
   const [data, setData] = useState({ items: [], total: 0 });
   const [sel, setSel] = useState([]);
   const load = useCallback(() => {
     if (!["admin", "manager"].includes(user?.role)) return;
-    API.get("/outreach/settings").then(({ data: d }) => setS(d)).catch((e) => toast.error(apiErr(e)));
+    API.get("/outreach/settings").then(({ data: d }) => { setS(d); setTab((t) => t || (d.auto_send ? "approved" : "pending_approval")); }).catch((e) => toast.error(apiErr(e)));
     API.get("/outreach/stats").then(({ data: d }) => setStats(d)).catch(() => {});
+    if (!tab) return;
     API.get("/outreach/messages", { params: { status: tab, channel: channel || undefined, limit: 100 } }).then(({ data: d }) => setData(d)).catch((e) => toast.error(apiErr(e)));
   }, [tab, channel]);
   useEffect(() => { load(); }, [load]);

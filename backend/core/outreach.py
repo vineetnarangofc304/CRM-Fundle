@@ -96,7 +96,11 @@ async def _send_one(m: dict, st: dict) -> bool:
     from core import mailer
     res = await mailer.send_email(m["to"], m["subject"], _with_signature(m["body"], st), html=True, cc=st.get("cc") or None)
     if not res.get("ok"):
-        await db.outreach.update_one({"id": m["id"]}, {"$set": {"status": "failed", "error": res.get("error")}})
+        tries = m.get("send_attempts", 0) + 1
+        retry = (datetime.now(timezone.utc) + timedelta(hours=1)).strftime("%Y-%m-%d %H:%M:%S")
+        await db.outreach.update_one({"id": m["id"]}, {"$set": {
+            "error": res.get("error"), "send_attempts": tries,
+            **({"status": "failed"} if tries >= 3 else {"status": "approved", "scheduled_at": retry})}})
         return False
     now = _now()
     await db.outreach.update_one({"id": m["id"]}, {"$set": {"status": "sent", "sent_at": now}, "$unset": {"error": 1}})
@@ -142,14 +146,29 @@ async def _migrate_v2():
 
 
 async def run_outreach(trigger="cron") -> dict:
-    from core import mailer
     await _migrate_v2()
     st = await get_settings()
     stats = {"drafted": 0, "sent": 0, "failed": 0}
     if not st["enabled"]:
         return {"skipped": "disabled"}
+    now = datetime.now(timezone.utc)
+    my_until = (now + timedelta(minutes=30)).isoformat()
+    await db.settings.update_one({"key": "outreach_lock"}, {"$setOnInsert": {"until": ""}}, upsert=True)
+    got = await db.settings.find_one_and_update(
+        {"key": "outreach_lock", "until": {"$lt": now.isoformat()}}, {"$set": {"until": my_until}})
+    if got is None:
+        return {"skipped": "already running"}
+    try:
+        return await _run_outreach(st, stats, trigger)
+    finally:
+        await db.settings.update_one({"key": "outreach_lock", "until": my_until}, {"$set": {"until": ""}})
+
+
+async def _run_outreach(st, stats, trigger) -> dict:
+    from core import mailer
+    await db.outreach.update_many({"status": "sending"}, {"$set": {"status": "approved"}})
     await _stop_engaged()
-    f = {"outreach_seq": {"$exists": False}, "contacts.email": {"$nin": [None, ""]}}
+    f = {"outreach_seq": {"$exists": False}, "contacts": {"$elemMatch": {"email": {"$nin": [None, ""]}}}}
     if st["min_score"] > 0:
         f["fit_score"] = {"$gte": st["min_score"]}
     cands = await db.prospects.find(f, {"_id": 0}
@@ -167,9 +186,12 @@ async def run_outreach(trigger="cron") -> dict:
     if await mailer.is_connected():
         day = _now()[:10]
         sent_today = await db.outreach.count_documents({"status": "sent", "channel": "email", "sent_at": {"$gte": day}})
-        due = await db.outreach.find({"status": "approved", "channel": "email", "scheduled_at": {"$ne": None, "$lte": _now()}},
-                                     {"_id": 0}).sort("scheduled_at", 1).limit(max(0, st["daily_cap"] - sent_today)).to_list(500)
-        for m in due:
+        for _ in range(max(0, st["daily_cap"] - sent_today)):
+            m = await db.outreach.find_one_and_update(
+                {"status": "approved", "channel": "email", "scheduled_at": {"$ne": None, "$lte": _now()}},
+                {"$set": {"status": "sending"}}, sort=[("scheduled_at", 1)], projection={"_id": 0})
+            if not m:
+                break
             stats["sent" if await _send_one(m, st) else "failed"] += 1
     await db.settings.update_one({"key": "outreach_last"}, {"$set": {"at": now_utc_str(), "stats": stats, "trigger": trigger}}, upsert=True)
     return stats

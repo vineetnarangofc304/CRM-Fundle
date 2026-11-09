@@ -1,0 +1,42 @@
+{
+  "summary": "Tested night-only prospecting window + outreach auto-send/CC. New suite /app/backend/tests/test_night_window_autosend.py (27 tests: unit with monkeypatched datetime/providers + an isolated throw-away Mongo DB for outreach logic + live API). 25/27 pass. Confirmed working: night_seconds_left (09:00-21:59 -> 0, 22:00 -> 11h, 01:00 -> 8h, 08:59 -> 60s), run_worker cron/watchdog skip 'daytime' (incl. <60s left), max_seconds capped to time left, manual trigger not restricted; watchdog endpoint spawns only when enabled AND in window (401 without secret); overview.night_window bool; crons.yml schedules correct; _migrate_v2 one-time (doesn't overwrite later edits); auto_approve (step1 approved+scheduled_at now, steps 2/3 approved w/o scheduled_at, LinkedIn stays pending, prospect -> approved); min_score 0 includes prospects without fit_score; PUT settings accepts auto_send/cc (trims), rejects bad cc 400; CC plumbing in mailer, Graph ccRecipients, SMTP Cc header, Gmail cc header; _send_one passes st['cc'] and schedules next step. UI: outreach-cc, outreach-auto-send, outreach-mode-text ('Emails send automatically (max 100/day, CC vineet.narang@fundle.ai)'), invalid-CC error toast, Prospecting pill shows 'Sleeping — runs nightly 10 PM–9 AM IST' (verified by intercepting overview with night_window=false), 'Paused' with real disabled state. 2 real bugs found (daily cap bypass = CRITICAL, mixed-contacts candidate filter).",
+  "backend_issues": {
+    "critical": [
+      {"endpoint": "core/outreach.py run_outreach (cron /api/cron/outreach every 15 min)", "issue": "Daily cap bypass: .limit(max(0, daily_cap - sent_today)) -> when the cap is reached the limit is 0, and Mongo limit(0) means NO LIMIT, so every run sends ALL due emails (up to to_list(500)). Reproduced: cap=2, 2 already sent today, 3 due -> 3 more sent. With auto-send + 455 pending drafts this would blast hundreds/day once a mailbox is connected. Fix: n = daily_cap - sent_today; if n <= 0 skip sending; else .limit(n).", "priority": "CRITICAL"},
+      {"endpoint": "core/outreach.py run_outreach", "issue": "No run lock / atomic claim: cron every 15 min + 'Run now' can overlap (a run drafting 30 sequences via LLM can exceed 15 min). Both runs read the same approved/due docs and send them twice, and the same prospect can be drafted twice (outreach_seq set only after drafting). Fix: lock like prospect_lock, or claim each message with find_one_and_update status approved->sending before sending.", "priority": "HIGH"}
+    ],
+    "minor": [
+      {"endpoint": "core/outreach.py run_outreach candidate filter", "issue": "{'contacts.email': {'$nin': [None, '']}} excludes a prospect if ANY contact lacks an email (array semantics). Live DB: 125 match vs 126 with $elemMatch. Use {'contacts': {'$elemMatch': {'email': {'$nin': [None, '']}}}}."},
+      {"endpoint": "core/outreach.py _send_one", "issue": "If step 1 send fails it becomes 'failed' and is never retried automatically; its approved steps 2/3 stay approved forever with no scheduled_at."},
+      {"endpoint": "core/gmail_send.py", "issue": "creds.refresh() and service...execute() are sync blocking calls inside async code (blocks event loop during sends). Pre-existing."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Outreach", "issues": ["With auto-send on, the default tab is still 'Needs approval · 455' — confusing; consider defaulting to Approved/scheduled or renaming when auto_send is true"]}
+    ]
+  },
+  "test_report_links": ["/app/backend/tests/test_night_window_autosend.py", "/app/test_reports/pytest/pytest_night_autosend.xml"],
+  "action_items": [
+    "CRITICAL: fix daily cap bypass in run_outreach (limit(0) = unlimited) — skip sending when daily_cap - sent_today <= 0",
+    "Add a run lock / per-message atomic claim to run_outreach to prevent double sends and double drafts on overlapping runs",
+    "Change candidate filter to $elemMatch on contacts.email",
+    "Update stale /app/backend/tests/test_outreach.py: its RESTORE dict (min_score 60, daily_cap 40, drafts_per_run 10) reverts the new v2 settings and its assertions assume drafts stay pending_approval",
+    "Optional: retry failed step-1 emails or surface them; default Outreach tab when auto-send on"
+  ],
+  "critical_code_review_comments": [
+    "Code under test is otherwise correct: night window math, cron gating, watchdog gating and CC plumbing all verified",
+    "auto_approve flips ALL pending_approval prospects to approved globally (not just those whose email drafts were approved) — acceptable but imprecise",
+    "On first post-deploy cron, all ~455 existing pending drafts (some old) get auto-approved and queued; with the cap bug they would all go out at once once a mailbox connects",
+    "Prospecting cron hours 16-23,0-3 UTC = 21:30-09:29 IST, code enforces exact 22:00-09:00 window — fine"
+  ],
+  "updated_files": ["/app/backend/tests/test_night_window_autosend.py"],
+  "success_rate": {"backend": "93% (25/27)", "frontend": "100%"},
+  "seed_data_creation": "None in the real DB. Outreach logic tests used throw-away DBs <DB_NAME>_t1_<uuid> (all dropped). Real outreach settings were PUT to the v2 values (enabled true, min_score 0, daily_cap 100, drafts_per_run 30, auto_send true, cc vineet.narang@fundle.ai, original pitch/signature) — identical to what _migrate_v2 writes; outreach_v2 marker NOT inserted (migration will still run on next cron). Prospecting enabled remains false. Mailbox not connected in preview (mail_connected=false) so no real emails possible.",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Run: cd /app/backend && REACT_APP_BACKEND_URL=... python -m pytest tests/test_night_window_autosend.py -n 0. Tests test_daily_cap_reached_sends_nothing and test_candidates_mixed_contacts fail until fixed. Do NOT run old tests/test_outreach.py as-is (restores old settings). Preview time was ~01:00 IST (inside window).",
+  "rca of the issue": "Daily cap: PyMongo/Motor treat cursor.limit(0) as 'no limit'; max(0, cap - sent) yields 0 exactly when the cap is reached. Repro: isolated DB, daily_cap=2, 2 docs sent today, 3 approved step-1 docs due, mailer.is_connected patched True -> run_outreach sends 3. Mitigation: guard n<=0 before querying."
+}

@@ -1,0 +1,341 @@
+# Night-only prospecting window (night_seconds_left, run_worker gating, watchdog spawn rules, overview night_window)
+# + Outreach auto-send (v2 migration, auto_approve, min_score 0 candidates, CC plumbing in mailer/outlook/gmail,
+# daily cap, PUT /outreach/settings cc validation).
+# SAFETY: DB-mutating unit tests run against a throw-away database (<DB_NAME>_t1_<uuid>) dropped at the end;
+# mail providers are monkeypatched — no real email, no LLM calls, no real prospecting runs.
+import asyncio
+import base64
+import os
+import sys
+import uuid
+from datetime import datetime, timedelta, timezone
+
+import pytest
+import requests
+
+sys.path.insert(0, "/app/backend")
+from dotenv import load_dotenv  # noqa: E402
+
+load_dotenv("/app/backend/.env")
+from motor.motor_asyncio import AsyncIOMotorClient  # noqa: E402
+
+from core import prospector as pe, outreach as oc, mailer, outlook_send, gmail_send  # noqa: E402
+
+BASE_URL = os.environ.get("REACT_APP_BACKEND_URL").rstrip("/")
+ADMIN = {"email": "vineetnarangofc@gmail.com", "password": "Fundle@cf928c"}
+LOOP = asyncio.new_event_loop()
+asyncio.set_event_loop(LOOP)
+run = LOOP.run_until_complete
+IST = timedelta(hours=5, minutes=30)
+
+
+def _fake_dt(ist_h, ist_m=0):
+    utc = datetime(2026, 1, 15, ist_h, ist_m, tzinfo=timezone.utc) - IST
+
+    class FakeDT(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return utc
+    return FakeDT
+
+
+# ---------------- night window ----------------
+class TestNightWindow:
+    @pytest.mark.parametrize("h,m,expected", [
+        (9, 0, 0), (12, 0, 0), (21, 59, 0), (8, 59, 60), (22, 0, 11 * 3600), (23, 30, 9.5 * 3600),
+        (0, 0, 9 * 3600), (1, 0, 8 * 3600), (5, 15, 3.75 * 3600)])
+    def test_night_seconds_left(self, monkeypatch, h, m, expected):
+        monkeypatch.setattr(pe, "datetime", _fake_dt(h, m))
+        assert pe.night_seconds_left() == int(expected)
+
+    def test_run_worker_daytime_skip(self, monkeypatch):
+        monkeypatch.setattr(pe, "night_seconds_left", lambda: 0)
+        assert run(pe.run_worker(840, "cron")) == {"skipped": "daytime"}
+        assert run(pe.run_worker(840, "watchdog")) == {"skipped": "daytime"}
+        monkeypatch.setattr(pe, "night_seconds_left", lambda: 59)
+        assert run(pe.run_worker(840, "cron")) == {"skipped": "daytime"}
+
+    def _fake_db(self, captured):
+        class Col:
+            async def find_one_and_update(self, f, u, **k):
+                captured["until"] = u["$set"]["until"]
+                return {"key": "prospect_lock"}
+
+            async def update_one(self, *a, **k):
+                return None
+
+            async def find_one(self, *a, **k):
+                return None
+
+        class DB:
+            settings = Col()
+        return DB()
+
+    def test_run_worker_caps_and_manual_unrestricted(self, monkeypatch):
+        cap = {}
+        monkeypatch.setattr(pe, "db", self._fake_db(cap))
+
+        async def disabled():
+            return {"enabled": False, "countries": ["India"], "phase": "auto", "concurrency": 1,
+                    "create_leads": False, "daily_cap": 0}
+        monkeypatch.setattr(pe, "get_settings", disabled)
+        monkeypatch.setattr(pe, "night_seconds_left", lambda: 300)
+        t0 = datetime.now(timezone.utc)
+        assert run(pe.run_worker(840, "cron")) == {"skipped": "disabled"}
+        secs = (datetime.fromisoformat(cap["until"]) - t0).total_seconds()
+        assert 415 <= secs <= 425, f"max_seconds not capped to time left: until-now={secs}"
+        # manual trigger in daytime is not window-restricted
+        monkeypatch.setattr(pe, "night_seconds_left", lambda: 0)
+        cap.clear()
+        assert run(pe.run_worker(840, "manual:Tester")) == {"skipped": "disabled"}
+        secs = (datetime.fromisoformat(cap["until"]) - t0).total_seconds()
+        assert 955 <= secs <= 965
+
+    @pytest.mark.parametrize("enabled,left,spawn", [(True, 3600, True), (True, 0, False), (False, 3600, False)])
+    def test_watchdog_spawn_rules(self, monkeypatch, enabled, left, spawn):
+        from routes import prospecting as rp
+        spawned = []
+
+        async def gs():
+            return {"enabled": enabled}
+
+        async def wd(en=True):
+            return {"stuck": False, "restart": True}
+        monkeypatch.setattr(rp.pe, "get_settings", gs)
+        monkeypatch.setattr(rp.pe, "watchdog", wd)
+        monkeypatch.setattr(rp.pe, "night_seconds_left", lambda: left)
+        monkeypatch.setattr(rp, "_spawn", lambda c: (spawned.append(c), c.close()))
+        monkeypatch.setattr(rp, "_cron_auth", lambda r: None)
+        res = run(rp.cron_watchdog(None))
+        assert res["ok"] is True
+        assert bool(spawned) == spawn
+
+
+# ---------------- outreach auto-send (isolated DB) ----------------
+class TestOutreachAutoSend:
+    @pytest.fixture(autouse=True)
+    def tdb(self, monkeypatch):
+        async def mk():
+            return AsyncIOMotorClient(os.environ["MONGO_URL"])
+        cli = run(mk())
+        name = f"{os.environ['DB_NAME']}_t1_{uuid.uuid4().hex[:8]}"
+        d = cli[name]
+        monkeypatch.setattr(oc, "db", d)
+        self.db = d
+        yield d
+        run(cli.drop_database(name))
+
+    def _seq(self, seq, pid):
+        base = {"seq_id": seq, "prospect_id": pid, "brand": "TEST_Brand", "category": "x", "contact_name": "T",
+                "to": "t1@example.com", "status": "pending_approval", "created_at": "2026-01-01 00:00:00"}
+        docs = [{**base, "id": seq * 10 + i, "channel": "email", "step": i, "subject": f"S{i}", "body": "<p>b</p>",
+                 "scheduled_at": None} for i in (1, 2, 3)]
+        docs += [{**base, "id": seq * 10 + 5, "channel": "linkedin", "step": 1, "subject": "Connection note", "body": "x"}]
+        return docs
+
+    def test_migration_v2_one_time(self):
+        run(self.db.settings.insert_one({"key": "outreach", "min_score": 60, "daily_cap": 40, "drafts_per_run": 10}))
+        run(oc._migrate_v2())
+        st = run(oc.get_settings())
+        assert (st["auto_send"], st["min_score"], st["daily_cap"], st["drafts_per_run"], st["cc"]) == \
+            (True, 0, 100, 30, "vineet.narang@fundle.ai")
+        assert run(self.db.settings.find_one({"key": "outreach_v2"}))
+        run(self.db.settings.update_one({"key": "outreach"}, {"$set": {"daily_cap": 55, "cc": ""}}))
+        run(oc._migrate_v2())
+        st = run(oc.get_settings())
+        assert st["daily_cap"] == 55 and st["cc"] == "", "migration must only run once"
+
+    def test_auto_approve(self):
+        run(self.db.outreach.insert_many(self._seq(1, 1)))
+        run(self.db.prospects.insert_one({"id": 1, "brand_name": "TEST_Brand", "outreach_seq": 1,
+                                          "outreach_status": "pending_approval"}))
+        assert run(oc.auto_approve()) == 1
+        m = {d["id"]: d for d in run(self.db.outreach.find({}, {"_id": 0}).to_list(10))}
+        assert m[11]["status"] == "approved" and m[11]["scheduled_at"]
+        assert m[12]["status"] == "approved" and m[12]["scheduled_at"] is None
+        assert m[13]["status"] == "approved" and m[13]["scheduled_at"] is None
+        assert m[15]["status"] == "pending_approval"
+        assert run(self.db.prospects.find_one({"id": 1}))["outreach_status"] == "approved"
+
+    def _run(self, monkeypatch, connected=False, sends=None):
+        drafted = []
+
+        async def fake_draft(p, c, user=None):
+            drafted.append(p["id"])
+            await self.db.prospects.update_one({"id": p["id"]}, {"$set": {"outreach_seq": p["id"]}})
+            return p["id"]
+
+        async def is_conn():
+            return connected
+
+        async def send(to, subject, body, html=False, cc=None):
+            sends.append({"to": to, "cc": cc})
+            return {"ok": True}
+        monkeypatch.setattr(oc, "draft_sequence", fake_draft)
+        monkeypatch.setattr(mailer, "is_connected", is_conn)
+        monkeypatch.setattr(mailer, "send_email", send)
+        monkeypatch.setattr(oc, "_stop_engaged", lambda: asyncio.sleep(0))
+        monkeypatch.setattr(oc, "log_message", lambda *a, **k: asyncio.sleep(0))
+        return run(oc.run_outreach("test")), drafted
+
+    def test_candidates_min_score_zero(self, monkeypatch):
+        run(self.db.prospects.insert_many([
+            {"id": 1, "brand_name": "TEST_noscore", "category": "x", "country": "India",
+             "contacts": [{"name": "A", "email": "a@example.com"}]},
+            {"id": 2, "brand_name": "TEST_noemail", "category": "x", "country": "India", "fit_score": 90,
+             "contacts": [{"name": "B", "email": None}]},
+            {"id": 3, "brand_name": "TEST_scored", "category": "x", "country": "India", "fit_score": 10,
+             "contacts": [{"name": "C", "email": "c@example.com"}]}]))
+        stats, drafted = self._run(monkeypatch)
+        assert sorted(drafted) == [1, 3]
+
+    def test_candidates_mixed_contacts(self, monkeypatch):
+        # A prospect whose first contact has no email but second does should still be a candidate
+        run(self.db.prospects.insert_one({"id": 4, "brand_name": "TEST_mixed", "category": "x", "country": "India",
+                                          "contacts": [{"name": "N", "email": None}, {"name": "Y", "email": "y@example.com"}]}))
+        stats, drafted = self._run(monkeypatch)
+        assert drafted == [4], "prospect with a mix of email/no-email contacts excluded by contacts.email $nin filter"
+
+    def test_send_with_cc(self, monkeypatch):
+        run(self.db.outreach.insert_many(self._seq(2, 2)))
+        sends = []
+        stats, _ = self._run(monkeypatch, connected=True, sends=sends)
+        assert stats["auto_approved"] == 1 and stats["sent"] == 1
+        assert sends == [{"to": "t1@example.com", "cc": "vineet.narang@fundle.ai"}]
+        s2 = run(self.db.outreach.find_one({"id": 22}))
+        assert s2["scheduled_at"] and s2["status"] == "approved"
+
+    def test_daily_cap_reached_sends_nothing(self, monkeypatch):
+        run(oc._migrate_v2())
+        run(self.db.settings.update_one({"key": "outreach"}, {"$set": {"daily_cap": 2}}))
+        now = oc._now()
+        run(self.db.outreach.insert_many([{"id": 900 + i, "seq_id": 900 + i, "status": "sent", "channel": "email",
+                                           "step": 1, "sent_at": now} for i in range(2)]))
+        for s in (3, 4, 5):
+            run(self.db.outreach.insert_many(self._seq(s, s)))
+        sends = []
+        stats, _ = self._run(monkeypatch, connected=True, sends=sends)
+        assert len(sends) == 0, f"daily cap already reached but {len(sends)} emails sent (limit(0) = no limit)"
+
+
+# ---------------- CC plumbing in providers ----------------
+class TestMailerCC:
+    def test_mailer_passes_cc(self, monkeypatch):
+        got = {}
+
+        async def ap():
+            return "outlook"
+
+        async def se(to, subject, body, html=False, cc=None):
+            got.update(to=to, cc=cc)
+            return {"ok": True}
+        monkeypatch.setattr(mailer, "active_provider", ap)
+        monkeypatch.setattr(outlook_send, "send_email", se)
+        run(mailer.send_email("a@example.com", "s", "b", html=True, cc="c@example.com"))
+        assert got == {"to": "a@example.com", "cc": "c@example.com"}
+
+    def test_graph_payload_cc(self, monkeypatch):
+        sent = {}
+
+        async def tok(cfg, **d):
+            return {"access_token": "x"}
+
+        class Resp:
+            status_code = 202
+
+        class Client:
+            def __init__(self, *a, **k):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *a):
+                return False
+
+            async def post(self, url, json=None, headers=None):
+                sent.update(json)
+                return Resp()
+        monkeypatch.setattr(outlook_send, "_token", tok)
+        monkeypatch.setattr(outlook_send.httpx, "AsyncClient", Client)
+        assert run(outlook_send._graph_send({}, "a@example.com", "s", "b", True, "c@example.com")) == {"ok": True}
+        assert sent["message"]["ccRecipients"] == [{"emailAddress": {"address": "c@example.com"}}]
+        sent.clear()
+        run(outlook_send._graph_send({}, "a@example.com", "s", "b", True))
+        assert "ccRecipients" not in sent["message"]
+
+    def test_smtp_cc_header(self, monkeypatch):
+        msgs = []
+
+        async def fake_send(msg, **k):
+            msgs.append(msg)
+        monkeypatch.setattr(outlook_send.aiosmtplib, "send", fake_send)
+        run(outlook_send._smtp_send({"smtp_user": "u@example.com"}, "a@example.com", "s", "b", True, "c@example.com"))
+        assert msgs[0]["Cc"] == "c@example.com" and msgs[0]["To"] == "a@example.com"
+
+    def test_gmail_cc_header(self, monkeypatch):
+        raw = {}
+
+        async def creds():
+            return None
+
+        async def cfg():
+            return {"email": "me@example.com"}
+
+        class Svc:
+            def users(self): return self
+            def messages(self): return self
+            def send(self, userId, body):
+                raw.update(body)
+                return self
+            def execute(self): return {"id": "1"}
+        monkeypatch.setattr(gmail_send, "_creds", creds)
+        monkeypatch.setattr(gmail_send, "get_config", cfg)
+        monkeypatch.setattr(gmail_send, "build", lambda *a, **k: Svc())
+        assert run(gmail_send.send_email("a@example.com", "s", "b", html=True, cc="c@example.com"))["ok"]
+        assert "cc: c@example.com" in base64.urlsafe_b64decode(raw["raw"]).decode().lower()
+
+
+# ---------------- API ----------------
+FINAL = {"enabled": True, "min_score": 0, "daily_cap": 100, "drafts_per_run": 30, "auto_send": True,
+         "cc": "vineet.narang@fundle.ai", "gaps": [3, 7]}
+
+
+class TestApi:
+    @pytest.fixture(scope="class")
+    def admin(self):
+        s = requests.Session()
+        r = s.post(f"{BASE_URL}/api/auth/login", json=ADMIN)
+        if r.status_code != 200:
+            pytest.skip("login failed")
+        s.headers["Authorization"] = f"Bearer {r.json()['access_token']}"
+        return s
+
+    def test_overview_night_window(self, admin):
+        d = admin.get(f"{BASE_URL}/api/prospecting/overview").json()
+        assert isinstance(d["night_window"], bool)
+        assert d["night_window"] == (pe.night_seconds_left() > 0)
+
+    def test_settings_auto_send_cc(self, admin):
+        cur = admin.get(f"{BASE_URL}/api/outreach/settings").json()
+        assert "auto_send" in cur and "cc" in cur and cur["mail_connected"] is False
+        body = {**FINAL, "pitch": cur["pitch"], "signature": cur["signature"]}
+        r = admin.put(f"{BASE_URL}/api/outreach/settings", json={**body, "cc": "  TEST_cc@example.com ", "auto_send": False})
+        assert r.status_code == 200 and r.json()["cc"] == "TEST_cc@example.com" and r.json()["auto_send"] is False
+        got = admin.get(f"{BASE_URL}/api/outreach/settings").json()
+        assert got["cc"] == "TEST_cc@example.com" and got["auto_send"] is False
+        r = admin.put(f"{BASE_URL}/api/outreach/settings", json={**body, "cc": "not-an-email"})
+        assert r.status_code == 400 and "CC" in r.json()["detail"]
+        r = admin.put(f"{BASE_URL}/api/outreach/settings", json=body)  # restore migration values
+        assert r.status_code == 200 and r.json()["cc"] == "vineet.narang@fundle.ai" and r.json()["auto_send"] is True
+
+    def test_watchdog_disabled_no_spawn(self, admin):
+        assert admin.get(f"{BASE_URL}/api/prospecting/overview").json()["settings"]["enabled"] is False
+        r = requests.post(f"{BASE_URL}/api/cron/prospecting-watchdog")
+        assert r.status_code == 401
+        r = requests.post(f"{BASE_URL}/api/cron/prospecting-watchdog",
+                          headers={"Authorization": f"Bearer {os.environ['WEBHOOK_CRON_SECRET']}"})
+        assert r.status_code == 200 and r.json()["ok"] is True
+        lock = admin.get(f"{BASE_URL}/api/prospecting/overview").json()["lock"]
+        assert lock["watchdog_action"] == "ok"
+        assert lock["trigger"] != "watchdog" or admin.get(f"{BASE_URL}/api/prospecting/overview").json()["running"] is False
