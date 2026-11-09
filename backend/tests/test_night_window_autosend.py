@@ -217,6 +217,123 @@ class TestOutreachAutoSend:
         stats, _ = self._run(monkeypatch, connected=True, sends=sends)
         assert len(sends) == 0, f"daily cap already reached but {len(sends)} emails sent (limit(0) = no limit)"
 
+    # --- iteration_12 retest: partial cap, lock, atomic claim, stale 'sending', failed-send retry ---
+    def _due(self, n, start=100):
+        now = oc._now()
+        docs = []
+        for i in range(n):
+            docs += [{"id": start + i, "seq_id": start + i, "prospect_id": start + i, "brand": "TEST_B", "contact_name": "T",
+                      "to": f"t{i}@example.com", "status": "approved", "channel": "email", "step": 3,
+                      "subject": "S", "body": "<p>b</p>", "scheduled_at": now}]
+        run(self.db.outreach.insert_many(docs))
+
+    def test_daily_cap_partial_sends_exactly_remaining(self, monkeypatch):
+        run(oc._migrate_v2())
+        run(self.db.settings.update_one({"key": "outreach"}, {"$set": {"daily_cap": 3}}))
+        run(self.db.outreach.insert_one({"id": 999, "seq_id": 999, "status": "sent", "channel": "email", "step": 1,
+                                         "sent_at": oc._now()}))
+        self._due(5)
+        sends = []
+        stats, _ = self._run(monkeypatch, connected=True, sends=sends)
+        assert len(sends) == 2 and stats["sent"] == 2
+        assert run(self.db.outreach.count_documents({"status": "approved", "channel": "email"})) == 3
+        # cap now fully reached -> another run sends nothing
+        sends2 = []
+        self._run(monkeypatch, connected=True, sends=sends2)
+        assert sends2 == []
+
+    def _slow_patch(self, monkeypatch, sends, delay=0.2, ok=True):
+        async def fake_draft(p, c, user=None):
+            return p["id"]
+
+        async def is_conn():
+            return True
+
+        async def send(to, subject, body, html=False, cc=None):
+            sends.append(to)
+            await asyncio.sleep(delay)
+            return {"ok": ok, **({} if ok else {"error": "TEST_boom"})}
+        monkeypatch.setattr(oc, "draft_sequence", fake_draft)
+        monkeypatch.setattr(mailer, "is_connected", is_conn)
+        monkeypatch.setattr(mailer, "send_email", send)
+        monkeypatch.setattr(oc, "_stop_engaged", lambda: asyncio.sleep(0))
+        monkeypatch.setattr(oc, "log_message", lambda *a, **k: asyncio.sleep(0))
+
+    def test_concurrent_runs_lock_no_double_send(self, monkeypatch):
+        run(oc._migrate_v2())
+        self._due(4)
+        sends = []
+        self._slow_patch(monkeypatch, sends)
+
+        async def both():
+            return await asyncio.gather(oc.run_outreach("a"), oc.run_outreach("b"))
+        r = run(both())
+        assert sum(1 for x in r if x == {"skipped": "already running"}) == 1, r
+        assert sorted(sends) == sorted(set(sends)) and len(sends) == 4
+        assert run(self.db.outreach.count_documents({"status": "sent"})) == 4
+        locks = run(self.db.settings.find({"key": "outreach_lock"}, {"_id": 0}).to_list(5))
+        assert locks == [{"key": "outreach_lock", "until": ""}], locks
+
+    def test_concurrent_runs_fresh_db_lock_doc_race(self, monkeypatch):
+        # no pre-existing lock doc and no v2 marker: both runs race the $setOnInsert upsert
+        self._due(3)
+        sends = []
+        self._slow_patch(monkeypatch, sends)
+
+        async def both():
+            return await asyncio.gather(oc.run_outreach("a"), oc.run_outreach("b"))
+        r = run(both())
+        n_locks = run(self.db.settings.count_documents({"key": "outreach_lock"}))
+        print("results", r, "lock docs", n_locks, "sends", sends)
+        assert len(sends) == len(set(sends)) == 3
+        assert n_locks == 1, f"{n_locks} outreach_lock docs created (no unique index on settings.key)"
+
+    def test_lock_held_skips_and_expired_lock_taken(self, monkeypatch):
+        run(oc._migrate_v2())
+        fut = (datetime.now(timezone.utc) + timedelta(minutes=10)).isoformat()
+        run(self.db.settings.insert_one({"key": "outreach_lock", "until": fut}))
+        self._due(1)
+        sends = []
+        self._slow_patch(monkeypatch, sends, delay=0)
+        assert run(oc.run_outreach("t")) == {"skipped": "already running"} and sends == []
+        assert run(self.db.settings.find_one({"key": "outreach_lock"}))["until"] == fut
+        past = (datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat()
+        run(self.db.settings.update_one({"key": "outreach_lock"}, {"$set": {"until": past}}))
+        res = run(oc.run_outreach("t"))
+        assert res["sent"] == 1 and len(sends) == 1
+        assert run(self.db.settings.find_one({"key": "outreach_lock"}))["until"] == ""
+
+    def test_stale_sending_reset_and_sent(self, monkeypatch):
+        run(oc._migrate_v2())
+        self._due(2)
+        run(self.db.outreach.update_one({"id": 100}, {"$set": {"status": "sending"}}))
+        sends = []
+        self._slow_patch(monkeypatch, sends, delay=0)
+        res = run(oc.run_outreach("t"))
+        assert res["sent"] == 2 and run(self.db.outreach.count_documents({"status": "sending"})) == 0
+
+    def test_failed_send_retry_then_failed(self, monkeypatch):
+        run(oc._migrate_v2())
+        self._due(1)
+        sends = []
+        self._slow_patch(monkeypatch, sends, delay=0, ok=False)
+        t0 = datetime.now(timezone.utc)
+        res = run(oc.run_outreach("t"))
+        assert res["failed"] == 1
+        m = run(self.db.outreach.find_one({"id": 100}))
+        assert m["status"] == "approved" and m["send_attempts"] == 1 and m["error"] == "TEST_boom"
+        sched = datetime.strptime(m["scheduled_at"], "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+        assert 3500 <= (sched - t0).total_seconds() <= 3700
+        # not due again within the hour
+        run(oc.run_outreach("t"))
+        assert len(sends) == 1
+        for expected_attempts, expected_status in ((2, "approved"), (3, "failed")):
+            run(self.db.outreach.update_one({"id": 100}, {"$set": {"scheduled_at": oc._now()}}))
+            run(oc.run_outreach("t"))
+            m = run(self.db.outreach.find_one({"id": 100}))
+            assert (m["send_attempts"], m["status"]) == (expected_attempts, expected_status)
+        run(oc.run_outreach("t"))
+        assert len(sends) == 3, "failed message must not be retried after 3 attempts"
 
 # ---------------- CC plumbing in providers ----------------
 class TestMailerCC:

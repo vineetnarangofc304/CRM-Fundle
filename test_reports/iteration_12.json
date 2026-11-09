@@ -1,0 +1,35 @@
+{
+  "summary": "RETEST of iteration_11 outreach bugs. All 5 fixes verified. test_night_window_autosend.py extended with 6 new tests (33/33 pass) that use an isolated throw-away Mongo DB and a monkeypatched mailer, so no real emails were sent. Results: (1) Daily cap: nothing is sent once sent_today >= cap. With cap=3 and 1 already sent, exactly 2 of 5 due emails go out, and the next run sends 0. (2) Lock and atomic claim: two concurrent run_outreach calls give one result plus {'skipped':'already running'}, with no duplicate sends. A stress run (30 iterations x 6 concurrent runs on a fresh DB with no lock doc) produced 0 duplicate lock docs and 0 double sends. A held lock (until in the future) is skipped and left untouched; an expired lock is taken. The lock is reset to until='' afterwards. A stale 'sending' message is reset to approved and then sent. (3) The $elemMatch candidate filter now includes prospects whose contacts are a mix of with and without email. (4) Failed send: attempt 1 leaves the message approved, with an error and scheduled_at about +1h, and it is not re-sent within that hour. Attempt 2 stays approved; attempt 3 marks it failed, and it is never retried after that. (5) UI: with auto_send on, the Outreach page opens on 'Approved / scheduled' and the only messages request is status=approved. With auto_send=false (settings response intercepted, no DB change) it opens on 'Needs approval' and the text reads 'Nothing is sent until you approve it'. Tabs can be clicked. Also updated the outdated test_outreach.py (30/30 pass).",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "core/outreach.py _send_one", "issue": "Carried over from iteration_11: when step 1 ends as 'failed' (3 attempts), its steps 2/3 stay 'approved' with scheduled_at=None forever. They are never sent, but they show up in the Approved / scheduled tab as 'sends after previous step'. Consider stopping them when step 1 fails."},
+      {"endpoint": "db.settings", "issue": "There is no unique index on settings.key. The lock upsert ($setOnInsert) could in theory create two outreach_lock docs if two runs race on a brand-new DB. The stress test showed 0 duplicates, and the doc now exists in preview. A unique index on key would make this certain. _migrate_v2 has the same race when inserting the outreach_v2 marker (harmless)."},
+      {"endpoint": "core/gmail_send.py", "issue": "Pre-existing: blocking sync Google API calls inside async code."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Outreach", "issues": ["With auto-send on, the default tab 'Approved / scheduled · 0' is empty while 'Needs approval · 455' is next to it, until the first run auto-approves. Expected, but consider a hint such as 'drafts are auto-approved on the next run'."]}
+    ]
+  },
+  "test_report_links": ["/app/backend/tests/test_night_window_autosend.py", "/app/backend/tests/test_outreach.py", "/app/test_reports/pytest/pytest_iter12.xml", "/app/test_reports/pytest/pytest_outreach_iter12.xml"],
+  "action_items": [
+    "Optional: when step 1 is marked failed, stop (or flag) its steps 2/3 in the sequence",
+    "Optional: add a unique index on settings.key"
+  ],
+  "critical_code_review_comments": [
+    "run_outreach lock, atomic approved->sending claim, the cap loop range(max(0, cap - sent_today)) and the retry logic are correct",
+    "drafts_per_run=0 is safe: Motor to_list(0) returns [] even though limit(0) means unlimited (verified)",
+    "If mailer.send_email raises (rather than returning ok:false), the message stays 'sending' until the next run resets it. Acceptable, but the attempt is not counted, so a message that keeps raising is retried forever with no limit",
+    "When a mailbox is first connected, the first run auto-approves all ~455 existing drafts and sends 100 per day (expected given the user's auto-send choice)"
+  ],
+  "updated_files": ["/app/backend/tests/test_night_window_autosend.py", "/app/backend/tests/test_outreach.py"],
+  "success_rate": {"backend": "100% (33/33 + 30/30)", "frontend": "100%"},
+  "seed_data_creation": "None in the live DB. Unit tests used throw-away DBs (<DB_NAME>_t1_*), which were dropped. test_outreach.py's TEST_ seq, lead and caller were cleaned up (verified 0 left).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Run with: export REACT_APP_BACKEND_URL from /app/frontend/.env and WEBHOOK_CRON_SECRET from /app/backend/.env; pytest -n 0. test_outreach.py RESTORE now uses the v2 values (auto_send True, cc vineet.narang@fundle.ai, min_score 0, cap 100, drafts 30). While it triggers live runs it sets auto_send False and drafts_per_run 0, and it skips run-triggering tests if the outreach_v2 marker is missing. Final preview state: prospecting enabled=false, outreach_lock until='', outreach_v2 marker present, 455 pending_approval drafts untouched, mail not connected."
+}

@@ -12,7 +12,9 @@ import requests
 
 BASE_URL = os.environ.get("REACT_APP_BACKEND_URL").rstrip("/")
 ADMIN = {"email": "vineetnarangofc@gmail.com", "password": "Fundle@cf928c"}
-RESTORE = {"enabled": True, "min_score": 60, "daily_cap": 40, "drafts_per_run": 10, "gaps": [3, 7]}
+# v2 (auto-send) production values — restored after the module
+RESTORE = {"enabled": True, "min_score": 0, "daily_cap": 100, "drafts_per_run": 30, "gaps": [3, 7],
+           "auto_send": True, "cc": "vineet.narang@fundle.ai"}
 
 
 def _env(key, path="/app/backend/.env"):
@@ -22,6 +24,10 @@ def _env(key, path="/app/backend/.env"):
 
 
 DB = pymongo.MongoClient(_env("MONGO_URL"))[_env("DB_NAME")]
+# Triggering a live run before the one-time v2 migration has happened would re-apply v2 settings mid-test
+# (auto_send=True, drafts_per_run=30) -> real LLM drafts + auto-approval of the user's pending drafts. Skip then.
+needs_migrated = pytest.mark.skipif(not DB.settings.find_one({"key": "outreach_v2"}),
+                                    reason="outreach_v2 migration not yet run in this DB; live run would draft/auto-approve real data")
 SEQ = 990000 + int(uuid.uuid4().int % 9000)
 MID = SEQ * 10
 
@@ -96,11 +102,12 @@ def test_settings_bad_gaps(admin, settings_guard, gaps):
 
 
 def test_settings_save_persist(admin, settings_guard):
-    body = {**RESTORE, "pitch": settings_guard["pitch"], "signature": settings_guard["signature"], "drafts_per_run": 0, "daily_cap": 39}
+    body = {**RESTORE, "pitch": settings_guard["pitch"], "signature": settings_guard["signature"], "drafts_per_run": 0, "daily_cap": 39,
+            "auto_send": False}
     r = admin.put(f"{BASE_URL}/api/outreach/settings", json=body)
     assert r.status_code == 200 and r.json()["drafts_per_run"] == 0
     g = admin.get(f"{BASE_URL}/api/outreach/settings").json()
-    assert g["daily_cap"] == 39 and g["drafts_per_run"] == 0
+    assert g["daily_cap"] == 39 and g["drafts_per_run"] == 0 and g["auto_send"] is False
 
 
 # ---- approval logic ----
@@ -113,6 +120,7 @@ def test_approve_sequence_scheduling(admin, settings_guard, test_seq):
     assert e3["status"] == "approved" and e3["scheduled_at"] is None
 
 
+@needs_migrated
 def test_run_without_mailbox_sends_nothing(admin, settings_guard, test_seq):
     r = admin.post(f"{BASE_URL}/api/outreach/run")
     assert r.status_code == 200
@@ -151,6 +159,7 @@ def test_reject_message(admin, test_seq):
     assert _msg(MID + 5)["status"] == "rejected"
 
 
+@needs_migrated
 def test_auto_stop_on_lead_engaged(admin, settings_guard, test_seq):
     r = admin.patch(f"{BASE_URL}/api/leads/{test_seq['lead_id']}", json={"updates": {"lead_stage": "Contacted"}})
     assert r.status_code == 200, r.text
@@ -176,6 +185,8 @@ def test_stop_sequence_endpoint(admin, test_seq):
 def test_cron_auth(settings_guard):
     assert requests.post(f"{BASE_URL}/api/cron/outreach").status_code == 401
     assert requests.post(f"{BASE_URL}/api/cron/outreach", headers={"Authorization": "Bearer wrong"}).status_code == 401
+    if not DB.settings.find_one({"key": "outreach_v2"}):
+        pytest.skip("valid-secret cron would trigger a real run before v2 migration")
     r = requests.post(f"{BASE_URL}/api/cron/outreach", headers={"Authorization": f"Bearer {_env('WEBHOOK_CRON_SECRET')}"})
     assert r.status_code == 200 and r.json().get("queued") is True
 

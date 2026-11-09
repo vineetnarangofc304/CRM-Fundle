@@ -73,3 +73,4 @@ Gmail OAuth (GOOGLE_CLIENT_ID/SECRET, GMAIL_REDIRECT_URI), Meta CAPI (dataset id
 - Fix: credit-limit errors stop the batch, keep brands pending (no attempts used), auto-reset previously failed brands each run, red alert + "Blocked — no AI credits" pill on Prospecting page. Needs publish to reach production.
 - 2026-11-09: Auto-retry — each run requeues failed brands/contact lookups (credit errors at once, others after 6h, max 5 rounds)
 - 2026-11-09: Nonstop engine — no daily cap, 4 news/LinkedIn discovery angles, hourly watchdog cron, 429/No-deployments treated as transient (no failed marking, Pro→Flash fallback, overloaded backoff)
+- 2026-11-10: Prospecting scheduled nightly 10PM-9AM IST only (crons + code window); outreach auto-send (no approval), all brands with email, 100/day, CC vineet.narang@fundle.ai, run lock + atomic send claim + retry x3; replication prompt at /app/memory/AI_PROSPECTING_REPLICATION_PROMPT.md

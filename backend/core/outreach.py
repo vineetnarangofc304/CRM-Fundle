@@ -101,6 +101,10 @@ async def _send_one(m: dict, st: dict) -> bool:
         await db.outreach.update_one({"id": m["id"]}, {"$set": {
             "error": res.get("error"), "send_attempts": tries,
             **({"status": "failed"} if tries >= 3 else {"status": "approved", "scheduled_at": retry})}})
+        if tries >= 3:
+            await db.outreach.update_many({"seq_id": m["seq_id"], "channel": "email", "step": {"$gt": m["step"]},
+                                           "status": {"$in": ["approved", "pending_approval"]}},
+                                          {"$set": {"status": "stopped", "stop_reason": f"Email {m['step']} failed to send"}})
         return False
     now = _now()
     await db.outreach.update_one({"id": m["id"]}, {"$set": {"status": "sent", "sent_at": now}, "$unset": {"error": 1}})
