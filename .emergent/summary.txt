@@ -1,0 +1,117 @@
+<analysis>**original_problem_statement**: 
+The user wants to rebuild a production fertility CRM (HomeIVF) into a B2B SaaS / AI-products CRM for a new client named Fundle.ai.
+PRODUCT REQUIREMENTS: 
+1. Rebrand to Fundle.ai, change default country/currency to India/INR, and remove all medical/fertility data.
+2. Make KPI metrics and Funnel stages configurable from the frontend via the Admin panel.
+3. Implement Deal Value tracking and Company custom fields.
+4. Implement a highly performant Bulk Lead Upload capable of processing 50,000 rows in under a minute.
+5. Create a Webhook API for third-party website lead ingestion.
+6. Integrate Microsoft Outlook / Microsoft 365 for email outreach.
+7. Build an automated AI Prospecting Engine to scrape the web for brands, gathering info using Gemini.
+8. Add an Auto Outreach Sequence and Email Finder Agent to automatically locate verified emails and draft outreach messages.
+
+**User's preferred language**: English
+(INSTRUCT NEXT AGENT: Please respond in English only)
+
+**what currently exists?** 
+A fully functional B2B SaaS CRM (Fundle.ai) running on React + FastAPI + MongoDB. It features customizable sales funnels, high-speed chunked bulk uploads, webhooks for lead ingestion, Outlook email integration, and an AI-driven Prospecting Engine (powered by Gemini) running via scheduled background cron jobs. It also includes an Email Finder that validates contact info and Auto Outreach functionality. 
+
+**Last working item**: 
+    - Last item agent was working: The agent implemented a daily limit of 500 new brands in the AI Prospecting Engine discovery logic () as requested. The agent then answered the user's question regarding whether the data population (fill) is happening in the preview or production environment, explaining the database separation.
+    - Status: USER VERIFICATION PENDING
+    - Agent Testing Done: Y (Verified database counts and cron states via bash)
+    - Which testing method agent to use: NA
+    - User Testing Done: N
+
+**All Pending/In progress Issue list**: 
+None. 
+
+**In progress Task List**: 
+None.
+
+**Upcoming and Future Tasks**
+    Upcoming Tasks:
+    - Task 1: Check live version DB or Publish the latest code — Awaiting user response to the latest message regarding whether they want to publish the preview changes to production or check the production DB stats. (P0)
+    - Task 2: Connect Integrations (WhatsApp, Facebook Lead Ads, Ozonetel calling) — User explicitly deferred this until they have the account details (P1)
+    - Task 3: Evaluate direct LinkedIn message dispatch — Drafts are generated, but if the user wants true automated LinkedIn dispatch, a dedicated integration or extension is required. (P2)
+
+**Completed work in this session**
+- Added a daily cap of 500 new brands to the AI Prospecting Engine () (DONE)
+- Clarified the status of cron jobs, admin credentials, and environment differences for the user (DONE)
+
+**Earlier issues found/mentioned but not fixed**
+None.
+
+**Known issue recurrence from previous fork**
+- Recurrence count: 0
+- Status: NOT STARTED
+
+**Code Architecture**
+-  - Business logic including: , , , .
+-  - FastAPI routers for prospecting, webhooks, imports, and outreach.
+-  - React views: , , , .
+-  - Contains scheduler config for AI Prospecting and Outreach background tasks.
+
+**Key Technical Concepts**
+- Full-stack: React SPA (Tailwind + Shadcn) & FastAPI backend.
+- Database: MongoDB via Motor (async).
+- AI & Integrations:  used for Gemini Flash/Pro calls in Prospecting.
+- Scheduled Jobs: Managed via Emergent platform crons ().
+
+**key DB schema**
+- : {id, contact_name, company_name, deal_value, lead_stage, tags, follow_up_date}
+- : {id, brand, category, country, store_count, ceo_name, status, emails}
+- : {id, name, template, triggers}
+
+**changes in tech stack**
+- None in this session.
+
+**All files of reference** 
+-  (Updated to enforce the 500 brand limit)
+-  (Cron schedules)
+-  (Contains admin credentials)
+
+**Areas that need refactoring**: 
+None identified.
+
+**key api endpoints**
+-  (Cron trigger for discovering new brands)
+-  (Auth)
+-  (Fetch prospects for UI)
+
+**Critical Info for New Agent**
+- **Cron Jobs**: The background tasks for prospecting and outreach run via . They must respond with  immediately and process work asynchronously.
+- **Preview vs Production**: The agent just clarified to the user that preview and production have separate databases. Wait for the user's response on whether they want to publish the recent changes (the 500/day limit) to production.
+- **Credentials**: Admin credentials the user asked for are:  / .
+
+**documents and test reports created in this job**
+- 
+- 
+
+**Last 10 User Messages and any pending HUMAN messages** 
+1.  - Are we constantly populating? (Answered: Yes, cron runs every 15 mins)
+2.  - Please use ask_human tool and confirm your plan now. (Done)
+3.  - [ask_human response] Keep it as it is. No live status card. Up to 500 a day limit. Creds for admin? (Implemented limit and answered query)
+4.  - Where is the fill running preview or production? (Answered: Preview. Pending user's next directive on whether to check live or publish).
+
+**Project Health Check:**
+- Broken: None. 
+- Mocked: None.
+
+**3rd Party Integrations**
+- OpenAI/Gemini LLMs (Prospecting & Outreach) — uses Emergent LLM Key
+- Google Gmail (Emails) — requires User API Key / OAuth
+- Microsoft Outlook 365 (Emails) — requires User API Key / OAuth
+- WhatsApp Cloud API, Facebook Lead Ads, Ozonetel (Pre-existing/Stubs) — requires User API Keys (Pending Setup)
+
+**Testing status**
+- Testing agent used after significant changes: NO (Minor backend limit logic addition; verified via internal bash scripts)
+- Troubleshoot agent used after agent stuck in loop: NO
+- Test files created: None
+- Known regressions: None
+
+**Credentials to test flow:**
+- Main Admin:  / 
+
+**What agent forgot to execute**
+- Nothing missed. The agent successfully addressed the user's specific request for a daily cap on brand ingestion. The conversation is currently pausing for the user's instructions on deployment/verification of the production environment.</analysis>

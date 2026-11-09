@@ -64,3 +64,6 @@ Gmail OAuth (GOOGLE_CLIENT_ID/SECRET, GMAIL_REDIRECT_URI), Meta CAPI (dataset id
 
 ## 2026-11-09
 - Added daily cap on AI brand discovery (default 500 new brands/day, reset at midnight IST; setting key `daily_cap` in settings.prospecting). Enrichment/email-finding continue after the cap is hit. Verified via direct function call (cap=500, today=2211 → discovery paused).
+
+## 2026-11-09
+- Published to production: https://fundlecrm.fundle.ai (includes 500/day brand discovery cap)
