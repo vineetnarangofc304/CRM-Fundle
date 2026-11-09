@@ -101,7 +101,16 @@ async def get_settings() -> dict:
     doc = await db.settings.find_one({"key": "prospecting"}, {"_id": 0}) or {}
     return {"enabled": doc.get("enabled", True), "countries": doc.get("countries") or ["India"],
             "phase": doc.get("phase", "auto"), "concurrency": int(doc.get("concurrency") or 3),
-            "create_leads": doc.get("create_leads", True)}
+            "create_leads": doc.get("create_leads", True), "daily_cap": int(doc.get("daily_cap") or 500)}
+
+
+async def added_today() -> int:
+    ist = timedelta(hours=5, minutes=30)
+    start = ((datetime.now(timezone.utc) + ist).replace(hour=0, minute=0, second=0, microsecond=0) - ist)
+    rows = await db.prospect_runs.aggregate([
+        {"$match": {"kind": "discover", "at": {"$gte": start.strftime("%Y-%m-%d %H:%M:%S")}}},
+        {"$group": {"_id": None, "n": {"$sum": "$added"}}}]).to_list(1)
+    return rows[0]["n"] if rows else 0
 
 
 async def _log_run(kind, model, ok, detail, secs, **extra):
@@ -293,7 +302,8 @@ async def _step(settings, stats) -> bool:
         return False
     disc = None
     if settings["phase"] in ("auto", "discovery") and (settings["phase"] == "discovery" or random.random() < 0.7):
-        disc = await _next_discovery(settings)
+        if await added_today() < settings["daily_cap"]:
+            disc = await _next_discovery(settings)
     if disc:
         _busy_cats.add(disc)
         try:
@@ -312,7 +322,8 @@ async def _step(settings, stats) -> bool:
             return True
     p = await _next_enrich()
     if not p:
-        return settings["phase"] == "auto" and bool(await _next_discovery(settings))
+        return (settings["phase"] == "auto" and await added_today() < settings["daily_cap"]
+                and bool(await _next_discovery(settings)))
     stats["enriched"] += 1 if (await enrich(p))["ok"] else 0
     return True
 

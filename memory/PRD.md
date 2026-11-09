@@ -60,3 +60,7 @@ Gmail OAuth (GOOGLE_CLIENT_ID/SECRET, GMAIL_REDIRECT_URI), Meta CAPI (dataset id
 ## Jun 2026 (iteration 10) — Email finder + Outreach
 - core/contacts.py: Gemini Pro + Google Search finds up to 4 decision makers (CEO/MD/Founder, CMO/Head of Marketing/CRM/Loyalty/CX/Digital) with work emails marked published vs pattern-guessed, company email format, domain MX check (dnspython). Runs automatically in prospect worker lanes after enrichment (50% of non-discovery slots) or via "Find emails". Loyalty fit score 0-100 (stores, segment, no existing loyalty, reachable contacts) on prospects + leads.
 - core/outreach.py + routes/outreach.py: for fit >= min_score with an email, Gemini Flash drafts 3-step email sequence + LinkedIn connect note + follow-up; everything pending approval. Approved emails sent via active mailer (Outlook/Gmail) with signature, daily cap, follow-ups after configurable gaps, auto-stop when lead moves to Contacted/Converted/Closed; chatter log. LinkedIn = copy/open + mark sent (no API auto-send). Cron ai-outreach */15 -> /api/cron/outreach. UI /outreach approval queue + settings; prospect page Decision makers card.
+
+
+## 2026-11-09
+- Added daily cap on AI brand discovery (default 500 new brands/day, reset at midnight IST; setting key `daily_cap` in settings.prospecting). Enrichment/email-finding continue after the cap is hit. Verified via direct function call (cap=500, today=2211 → discovery paused).
