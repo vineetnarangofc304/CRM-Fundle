@@ -1,6 +1,7 @@
 """Outreach sequences: AI-drafted Outlook emails + LinkedIn drafts for top-fit prospects, sent only after approval."""
 import logging
 import os
+import re
 import time
 from datetime import datetime, timedelta, timezone
 
@@ -66,7 +67,7 @@ async def draft_sequence(p: dict, contact: dict, user=None) -> int:
         e = d.get(f"email{i}") or {}
         if e.get("subject") and e.get("body"):
             docs.append({**base, "id": await next_id("outreach"), "channel": "email", "step": i,
-                         "subject": e["subject"][:200], "body": e["body"][:6000], "scheduled_at": None})
+                         "subject": e["subject"][:200], "body": clean_html(e["body"])[:6000], "scheduled_at": None})
     for i, k in ((1, "linkedin_connect"), (2, "linkedin_message")):
         if d.get(k):
             docs.append({**base, "id": await next_id("outreach"), "channel": "linkedin", "step": i,
@@ -75,6 +76,14 @@ async def draft_sequence(p: dict, contact: dict, user=None) -> int:
     await db.prospects.update_one({"id": p["id"]}, {"$set": {"outreach_seq": seq, "outreach_status": "pending_approval"}})
     await pe._log_run("draft", pe.FLASH, True, f"{len(docs)} drafts for {contact['name']}", time.time() - t, brand=p["brand_name"])
     return seq
+
+
+def clean_html(html: str) -> str:
+    """Strip scripts, frames, event handlers and javascript: URLs from AI/user email HTML."""
+    html = re.sub(r"(?is)<(script|style|iframe|object|embed|form)[^>]*>.*?</\1\s*>", "", html or "")
+    html = re.sub(r"(?is)<(script|iframe|object|embed|link|meta)[^>]*/?>", "", html)
+    html = re.sub(r"(?i)\son\w+\s*=\s*(\"[^\"]*\"|'[^']*'|[^\s>]+)", "", html)
+    return re.sub(r"(?i)(href|src)\s*=\s*([\"']?)\s*javascript:[^\"'>\s]*\2", r"\1=\2#\2", html)
 
 
 def _with_signature(body: str, st: dict) -> str:

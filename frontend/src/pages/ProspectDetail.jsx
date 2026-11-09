@@ -21,8 +21,13 @@ const EMAIL_BADGE = {
 };
 
 function ContactsCard({ p, reload }) {
+  const [drafting, setDrafting] = useState(false);
   const find = async () => { try { await API.post(`/prospecting/prospects/${p.id}/contacts`); toast.success("Email finder started — about a minute"); setTimeout(reload, 45000); } catch (e) { toast.error(apiErr(e)); } };
-  const draft = async (i) => { try { await API.post(`/prospecting/prospects/${p.id}/draft`, { contact_index: i }); toast.success("Outreach drafted — review it in Outreach"); reload(); } catch (e) { toast.error(apiErr(e)); } };
+  const draft = async (i) => {
+    setDrafting(true);
+    try { await API.post(`/prospecting/prospects/${p.id}/draft`, { contact_index: i }); toast.success("Outreach drafted — review it in Outreach"); reload(); }
+    catch (e) { toast.error(apiErr(e)); } finally { setDrafting(false); }
+  };
   const cs = p.contacts || [];
   return (
     <div className="crm-card p-4" data-testid="prospect-contacts">
@@ -44,7 +49,7 @@ function ContactsCard({ p, reload }) {
                 <td className="py-2 font-bold text-slate-800">{c.name}<div className="text-[11px] font-normal text-slate-500">{c.role}</div></td>
                 <td className="text-xs">{c.email ? <>{c.email} {EMAIL_BADGE[c.email_status] && <span className={`ml-1 rounded px-1 text-[9px] font-bold ${EMAIL_BADGE[c.email_status][1]}`}>{EMAIL_BADGE[c.email_status][0]}</span>}</> : <span className="text-slate-300">no email found</span>}</td>
                 <td>{c.linkedin && <a href={c.linkedin} target="_blank" rel="noreferrer" className="text-[#0A66C2]"><LinkedinLogo size={16} weight="fill" /></a>}</td>
-                <td className="text-right">{c.email && <button data-testid={`prospect-draft-${i}`} onClick={() => draft(i)} className="text-xs font-bold text-[#1557B0] hover:underline">Draft outreach</button>}</td>
+                <td className="text-right">{c.email && <button data-testid={`prospect-draft-${i}`} disabled={drafting} onClick={() => draft(i)} className="text-xs font-bold text-[#1557B0] hover:underline disabled:opacity-50">{drafting ? "Drafting…" : "Draft outreach"}</button>}</td>
               </tr>
             ))}
           </tbody>

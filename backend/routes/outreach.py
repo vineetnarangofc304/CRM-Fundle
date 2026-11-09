@@ -1,6 +1,7 @@
 """Outreach approval queue, settings, manual triggers, cron + prospect contact/draft actions."""
 import hmac
 import os
+import re
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -39,7 +40,7 @@ class OutreachSettings(BaseModel):
 @router.get("/outreach/settings")
 async def get_settings(user: dict = Depends(STAFF)):
     from core import mailer
-    last = await db.settings.find_one({"key": "outreach_last"}, {"_id": 0}) or {}
+    last = await db.settings.find_one({"key": "outreach_last"}, {"_id": 0, "key": 0}) or {}
     return {**await oc.get_settings(), "mail_connected": await mailer.is_connected(),
             "mail_provider": await mailer.active_provider(), "last_run": last}
 
@@ -83,6 +84,10 @@ class Edit(BaseModel):
 @router.patch("/outreach/messages/{mid}")
 async def edit(mid: int, body: Edit, user: dict = Depends(STAFF)):
     upd = {k: v for k, v in body.model_dump().items() if v is not None}
+    if "to" in upd and not re.fullmatch(r"[^@\s]+@[^@\s]+\.[a-zA-Z]{2,}", upd["to"].strip()):
+        raise HTTPException(status_code=400, detail="Enter a valid email address")
+    if "body" in upd:
+        upd["body"] = oc.clean_html(upd["body"])
     r = await db.outreach.update_one({"id": mid, "status": {"$in": ["pending_approval", "approved", "failed"]}},
                                      {"$set": {**upd, "edited_by": user["name"]}})
     if not r.matched_count:
@@ -127,7 +132,10 @@ async def bulk_approve(body: Ids, user: dict = Depends(STAFF)):
 
 @router.post("/outreach/messages/{mid}/reject")
 async def reject(mid: int, user: dict = Depends(STAFF)):
-    await db.outreach.update_one({"id": mid, "status": {"$ne": "sent"}}, {"$set": {"status": "rejected", "rejected_by": user["name"]}})
+    r = await db.outreach.update_one({"id": mid, "status": {"$in": ["pending_approval", "approved", "failed"]}},
+                                     {"$set": {"status": "rejected", "rejected_by": user["name"]}})
+    if not r.matched_count:
+        raise HTTPException(status_code=404, detail="Message not found or already sent/stopped")
     return {"ok": True}
 
 
@@ -141,9 +149,9 @@ async def stop_seq(seq: int, user: dict = Depends(STAFF)):
 
 @router.post("/outreach/messages/{mid}/mark-sent")
 async def mark_sent(mid: int, user: dict = Depends(STAFF)):
-    m = await db.outreach.find_one({"id": mid, "channel": "linkedin"}, {"_id": 0})
+    m = await db.outreach.find_one({"id": mid, "channel": "linkedin", "status": {"$in": ["pending_approval", "approved", "failed"]}}, {"_id": 0})
     if not m:
-        raise HTTPException(status_code=404, detail="LinkedIn draft not found")
+        raise HTTPException(status_code=404, detail="LinkedIn draft not found or already closed")
     await db.outreach.update_one({"id": mid}, {"$set": {"status": "sent", "sent_at": oc._now(), "sent_by": user["name"]}})
     if m.get("lead_id"):
         await oc.log_message(m["lead_id"], f"LinkedIn {m['subject'].lower()} sent to {m['contact_name']} by {user['name']}", author=user)
@@ -178,12 +186,14 @@ async def draft_now(pid: int, body: DraftReq, user: dict = Depends(STAFF)):
         raise HTTPException(status_code=404, detail="Prospect not found")
     cs = p.get("contacts") or []
     c = cs[body.contact_index] if body.contact_index is not None and 0 <= body.contact_index < len(cs) else oc.pick_contact(p)
-    if not c:
-        raise HTTPException(status_code=400, detail="No contact with an email yet — run 'Find emails' first")
-    if p.get("outreach_seq"):
-        await db.outreach.update_many({"seq_id": p["outreach_seq"], "status": {"$in": ["pending_approval", "approved", "failed"]}},
-                                      {"$set": {"status": "stopped", "stop_reason": "Replaced by new draft"}})
+    if not c or not c.get("email"):
+        raise HTTPException(status_code=400, detail="This contact has no email yet — run 'Find emails' first")
+    old = p.get("outreach_seq")
     try:
-        return {"seq_id": await oc.draft_sequence(p, c, user)}
+        seq = await oc.draft_sequence(p, c, user)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    if old:
+        await db.outreach.update_many({"seq_id": old, "status": {"$in": ["pending_approval", "approved", "failed"]}},
+                                      {"$set": {"status": "stopped", "stop_reason": "Replaced by new draft"}})
+    return {"seq_id": seq}

@@ -1,0 +1,44 @@
+{
+  "summary": "Tested Auto Outreach Sequences + Email Finder (backend + frontend). Backend: 30/30 pytest passed (settings get/save/gap validation 400, sequence approve scheduling, run with no mailbox sends nothing, messages list filters, edit/409 after stop, LinkedIn mark-sent + 404 for email, reject, auto-stop on lead_stage=Contacted, stop sequence, cron 401/401/200 queued, sort=score ordering, RBAC 403 for caller on 12 endpoints, unauth). I used exactly 2 LLM calls: (1) Find emails on #617 TVS Motor gave 200, a second immediate call gave 409, and it finished with 4 contacts, pattern {first}.{last}@tvsmotor.com and fit 84. (2) Draft on #616 contact_index 0 returned seq 2 in 11s; all 5 docs of seq 1 were stopped with 'Replaced by new draft' and the prospect now has outreach_seq=2 pending_approval. Frontend, all working: the Outreach page (mail warning, tab counts, settings panel with the 400 toast for a bad gap and save + restore, Edit/Save, Approve sequence, bulk approve, Mark sent, Reject, channel filter, Stop sequence, 'sends <ts> UTC' and 'sends after previous step' labels), the ProspectDetail Decision makers card (fit badge, email format, 4 rows with GUESSED FROM PATTERN badges, Draft outreach buttons, Search again, Outreach link, LinkedIn icons on #617) and the Prospecting 'Best fit' sort (95, 93, 86, 84...). Nav-outreach is hidden for callers. SAFETY: all approve/stop/reject/mark-sent tests ran on TEST outreach docs I inserted directly (seq_ids 99xxxx/995001/995002, @example.com addresses), and I deleted them afterwards. I never approved a real sequence. Final state: seq 1 stopped (5), seq 2 pending_approval (5), 0 approved. No mailbox was connected. Settings were restored to enabled=true, min_score=60, daily_cap=40, drafts_per_run=10, gaps=[3,7].",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/prospecting/prospects/{id}/draft", "issue": "If contact_index points to a contact with no email, the email steps are still created with to=None. Approving them later would make the send fail. Return 400 when the chosen contact has no email."},
+      {"endpoint": "POST /api/prospecting/prospects/{id}/draft", "issue": "The prior sequence is stopped BEFORE the LLM call. If drafting fails (400), the old sequence stays stopped while prospect.outreach_seq still points to it. Stop the old sequence only after the new draft succeeds."},
+      {"endpoint": "PATCH /api/outreach/messages/{id}", "issue": "The 'to' field is not validated as an email (any string is accepted)."},
+      {"endpoint": "POST /api/outreach/messages/{id}/reject", "issue": "Returns 200 ok for a non-existent id; it should return 404."},
+      {"endpoint": "POST /api/outreach/messages/{id}/mark-sent", "issue": "No status check: rejected or stopped LinkedIn drafts can be marked sent."},
+      {"endpoint": "GET /api/outreach/settings", "issue": "last_run leaks the internal 'key':'outreach_last' field (cosmetic)."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "Outreach route guard", "issue": "A caller who opens /outreach directly gets stuck on 'Loading outreach…' with 4 'Insufficient permissions' toasts. The route Guard uses perm='leads', which callers have. Add a role guard / denied state like ProspectDetail.", "selector": "[data-testid='outreach-page']", "priority": "LOW"},
+      {"component": "ContactsCard Draft outreach", "issue": "No loading or disabled state during the LLM draft (11-90s). Repeated clicks create several sequences, each replacing the last.", "selector": "[data-testid^='prospect-draft-']", "priority": "MEDIUM"},
+      {"component": "Outreach tabs", "issue": "There is no 'Rejected' tab, so rejected messages disappear from the UI entirely.", "selector": "[data-testid^='outreach-tab-']", "priority": "LOW"},
+      {"component": "Outreach Run now", "issue": "runNow has no try/catch, so a failed request gives no error toast.", "selector": "[data-testid='outreach-run-now']", "priority": "LOW"}
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": ["/app/backend/tests/test_outreach.py", "/app/test_reports/pytest/pytest_outreach.xml"],
+  "action_items": [
+    "Draft endpoint: validate that the chosen contact has an email, and stop the old sequence only after the new draft succeeds",
+    "Add a loading/disabled state to the Draft outreach button",
+    "Add a role guard or denied state to /outreach for callers",
+    "Optional: Rejected tab, validate the 'to' email on PATCH, 404 on reject for an unknown id, status check on mark-sent, try/catch on runNow",
+    "Security: Outreach.jsx renders the AI email body with dangerouslySetInnerHTML. The LLM output is grounded on web search, so consider sanitising it (DOMPurify)"
+  ],
+  "critical_code_review_comments": [
+    "fit_score gives a brand with an existing loyalty programme (e.g. Hero GoodLife) only 9 fewer points than one without, so brands that already run loyalty programmes still score 84 and get auto-drafted. Consider a bigger penalty if competitor displacement is not the goal.",
+    "run_outreach drafts up to drafts_per_run (10) LLM sequences on every manual run or cron. #617 TVS now has fit 84 + emails, so the next run will auto-draft for it (pending_approval only).",
+    "Sending is safely gated by mailer.is_connected(). Verified: with no mailbox, approved email 1 stays approved and nothing is sent."
+  ],
+  "updated_files": ["/app/backend/tests/test_outreach.py"],
+  "success_rate": {"backend": "100%", "frontend": "95%"},
+  "test_credentials": "Admin vineetnarangofc@gmail.com / Fundle@cf928c (from /app/memory/test_credentials.md). Temporary TEST caller users were created and then deleted.",
+  "seed_data_creation": "Only temporary TEST outreach docs (seq_id >= 990000) and a TEST_outreach_lead, inserted and deleted by the tests. 2 engine-side LLM effects remain on purpose: #617 contacts populated, and #616 seq 2 drafted (seq 1 stopped as 'Replaced by new draft').",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "test_outreach.py inserts its own TEST sequence via pymongo and sets drafts_per_run=0 while triggering /api/outreach/run so that no LLM drafts happen, then restores the defaults. Run it with: cd /app/backend && pytest tests/test_outreach.py. Real seqs: 1 is stopped, 2 is pending_approval (Hero MotoCorp, to harshavardhan.chitale@heromotocorp.com). Never approve real seqs; no mailbox is connected."
+}

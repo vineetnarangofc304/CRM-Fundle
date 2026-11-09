@@ -5,7 +5,7 @@ import { PaperPlaneTilt, CheckCircle, XCircle, LinkedinLogo, Copy, StopCircle, P
 import { API, apiErr } from "../lib/api";
 import { useAuth } from "../context/AuthContext";
 
-const TABS = [["pending_approval", "Needs approval"], ["approved", "Approved / scheduled"], ["sent", "Sent"], ["failed", "Failed"], ["stopped", "Stopped"]];
+const TABS = [["pending_approval", "Needs approval"], ["approved", "Approved / scheduled"], ["sent", "Sent"], ["failed", "Failed"], ["stopped", "Stopped"], ["rejected", "Rejected"]];
 
 function SettingsPanel({ s, isAdmin, reload }) {
   const [f, setF] = useState(s);
@@ -92,6 +92,7 @@ export default function Outreach() {
   const [data, setData] = useState({ items: [], total: 0 });
   const [sel, setSel] = useState([]);
   const load = useCallback(() => {
+    if (!["admin", "manager"].includes(user?.role)) return;
     API.get("/outreach/settings").then(({ data: d }) => setS(d)).catch((e) => toast.error(apiErr(e)));
     API.get("/outreach/stats").then(({ data: d }) => setStats(d)).catch(() => {});
     API.get("/outreach/messages", { params: { status: tab, channel: channel || undefined, limit: 100 } }).then(({ data: d }) => setData(d)).catch((e) => toast.error(apiErr(e)));
@@ -99,7 +100,11 @@ export default function Outreach() {
   useEffect(() => { load(); }, [load]);
   const count = (st) => (stats.email?.[st] || 0) + (stats.linkedin?.[st] || 0);
   const bulk = async () => { try { const { data: d } = await API.post("/outreach/bulk-approve", { seq_ids: sel }); toast.success(`${d.approved} messages approved`); setSel([]); load(); } catch (e) { toast.error(apiErr(e)); } };
-  const runNow = async () => { await API.post("/outreach/run"); toast.success("Outreach run started — drafts appear in a minute"); setTimeout(load, 30000); };
+  const runNow = async () => {
+    try { await API.post("/outreach/run"); toast.success("Outreach run started — drafts appear in a minute"); setTimeout(load, 30000); }
+    catch (e) { toast.error(apiErr(e)); }
+  };
+  if (!["admin", "manager"].includes(user?.role)) return <div className="p-8 text-sm text-slate-500" data-testid="outreach-denied">Outreach is available to admins and managers only.</div>;
   if (!s) return <div className="p-8 text-sm text-slate-400">Loading outreach…</div>;
   return (
     <div className="space-y-4 p-6" data-testid="outreach-page">
