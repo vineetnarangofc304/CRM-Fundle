@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional, Union
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pymongo.errors import PyMongoError, OperationFailure
+from pymongo.errors import PyMongoError
 
 IST = timezone(timedelta(hours=5, minutes=30))
 from pydantic import BaseModel
@@ -29,6 +29,7 @@ LIST_PROJECTION = {
     "ozonetel_lead": 1, "in_pipeline": 1, "conversion_page": 1,
     "utm_source": 1, "utm_medium": 1, "utm_campaign": 1, "total_follow_ups": 1,
     "company_name": 1, "deal_value": 1, "won_date_ist": 1,
+    "prospect_category": 1, "prospect_segment": 1, "store_count": 1, "ceo_name": 1, "ceo_linkedin": 1,
 }
 
 EDITABLE_FIELDS = {
@@ -40,6 +41,7 @@ EDITABLE_FIELDS = {
     "source_id", "medium_id", "campaign_id",
     "utm_source", "utm_medium", "utm_campaign",
     "company_name", "designation", "team_size", "deal_value",
+    "prospect_category", "prospect_segment", "store_count", "ceo_name", "ceo_linkedin", "company_website",
 }
 
 TRACKED = ["stage_id", "lead_stage", "user_id", "tags", "follow_up_date", "follow_up_tag", "lost_reason_id",
@@ -63,7 +65,7 @@ def build_query(
     active="true", date_from=None, date_to=None, follow_up=None, priority=None,
     follow_up_tag=None, lost_reason_id=None, bucket=None, duplicate=None, scope=None,
     utm_source=None, utm_medium=None, utm_campaign=None, min_followups=None,
-    current_user=None, min_deal_value=None,
+    current_user=None, min_deal_value=None, prospect_category=None, prospect_segment=None, min_stores=None,
 ):
     q = {}
     # When SEARCHING (Case 1 — find ANY customer by number/name), do NOT restrict to a single
@@ -141,6 +143,15 @@ def build_query(
                 q["total_follow_ups"] = {"$gte": _n}
         except (ValueError, TypeError):
             pass
+    if prospect_category:
+        q["prospect_category"] = prospect_category
+    if prospect_segment:
+        q["prospect_segment"] = prospect_segment
+    if min_stores:
+        try:
+            q["store_count"] = {"$gte": int(min_stores)}
+        except ValueError:
+            pass
     if min_deal_value:
         try:
             q["deal_value"] = {"$gte": float(str(min_deal_value).replace(",", ""))}
@@ -208,6 +219,8 @@ def query_params_dep(
     utm_source: Optional[str] = None, utm_medium: Optional[str] = None,
     utm_campaign: Optional[str] = None, min_followups: Optional[str] = None,
     min_deal_value: Optional[str] = None,
+    prospect_category: Optional[str] = None, prospect_segment: Optional[str] = None,
+    min_stores: Optional[str] = None,
 ):
     return dict(
         search=search, stage_id=stage_id, lead_stage=lead_stage, tags=tags, user_id=user_id,
@@ -217,12 +230,13 @@ def query_params_dep(
         bucket=bucket, duplicate=duplicate, scope=scope,
         utm_source=utm_source, utm_medium=utm_medium, utm_campaign=utm_campaign,
         min_followups=min_followups, min_deal_value=min_deal_value,
+        prospect_category=prospect_category, prospect_segment=prospect_segment, min_stores=min_stores,
     )
 
 
 ALLOWED_SORT = {"create_date", "create_date_ist", "contact_name", "name", "phone", "city",
                 "user_id", "lead_stage", "follow_up_date", "source_lead", "id", "write_date",
-                "company_name", "deal_value"}
+                "company_name", "deal_value", "store_count", "prospect_category"}
 
 # Cap every list query so a slow scan on a big filtered set aborts and RELEASES its pooled
 # connection (fast error) instead of hanging until the ingress gateway 503s. Support DB

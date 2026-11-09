@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { CaretLeft, CaretRight, FunnelSimple, Kanban, ListBullets, Plus, FloppyDisk, X, PhoneCall, Columns, DownloadSimple, UploadSimple } from "@phosphor-icons/react";
 import { ImportLeadsModal } from "../components/ImportLeadsModal";
 import { inr } from "../lib/money";
+import { PROSPECT_CATEGORIES } from "../lib/prospecting";
 import { API, apiErr, fmtDay, fmtDate } from "../lib/api";
 import { useAuth, useCatalogMaps } from "../context/AuthContext";
 import { TagChip, StageBadge, Spinner, EmptyState } from "../components/Bits";
@@ -17,6 +18,9 @@ const FILTER_DEFS = [
   { key: "follow_up_tag", label: "FU Tag" },
   { key: "min_followups", label: "Min Follow-ups" },
   { key: "min_deal_value", label: "Min Deal ₹" },
+  { key: "prospect_category", label: "Category" },
+  { key: "prospect_segment", label: "Segment" },
+  { key: "min_stores", label: "Min Stores" },
   { key: "active", label: "Status" },
   { key: "date_from", label: "From" },
   { key: "date_to", label: "To" },
@@ -44,6 +48,8 @@ const ALL_COLUMNS = [
   { key: "phone", label: "Phone", sort: "phone" },
   { key: "company_name", label: "Company", sort: "company_name" },
   { key: "deal_value", label: "Deal Value", sort: "deal_value" },
+  { key: "prospect_category", label: "Category", sort: "prospect_category" },
+  { key: "store_count", label: "Stores", sort: "store_count" },
   { key: "location", label: "Location" },
   { key: "user_id", label: "Caller", sort: "user_id" },
   { key: "lead_stage", label: "Lead Stage", sort: "lead_stage" },
@@ -90,6 +96,8 @@ function LeadCell({ colKey, l, tagById, userById }) {
     </span>
   ) : "—";
   if (colKey === "create_date") return <span className="text-slate-500">{fmtDate(l.create_date)}</span>;
+  if (colKey === "store_count") return l.store_count != null ? <span className="tabular-nums">{l.store_count.toLocaleString("en-IN")}</span> : <span className="text-slate-300">—</span>;
+  if (colKey === "prospect_category") return l.prospect_category ? <span className="text-xs">{l.prospect_category}</span> : <span className="text-slate-300">—</span>;
   if (colKey === "deal_value") return l.deal_value ? <span className="font-semibold tabular-nums text-slate-800" data-testid={`lead-deal-${l.id}`}>{inr(l.deal_value)}</span> : <span className="text-slate-300">—</span>;
   if (colKey === "total_follow_ups") return <span className="font-semibold text-slate-700">{l.total_follow_ups || 0}</span>;
   return <span className="text-slate-500">{l[colKey] || "—"}</span>;
@@ -128,7 +136,7 @@ export default function Leads() {
   const filterParams = useMemo(() => {
     const obj = {};
     ["search", "lead_stage", "tags", "user_id", "source_lead", "follow_up", "active", "date_from", "date_to",
-      "stage_id", "follow_up_tag", "campaign_name", "ads_platform", "utm_source", "utm_medium", "utm_campaign", "state_name", "city", "lost_reason_id", "duplicate", "scope", "min_followups", "min_deal_value"].forEach((k) => {
+      "stage_id", "follow_up_tag", "campaign_name", "ads_platform", "utm_source", "utm_medium", "utm_campaign", "state_name", "city", "lost_reason_id", "duplicate", "scope", "min_followups", "min_deal_value", "prospect_category", "prospect_segment", "min_stores"].forEach((k) => {
       const v = params.get(k);
       if (v) obj[k] = v;
     });
@@ -367,6 +375,16 @@ export default function Leads() {
           <input data-testid="filter-min-followups" type="number" min="0" placeholder="Min Follow-ups"
             className="crm-select !w-36" value={params.get("min_followups") || ""}
             onChange={(e) => setParam("min_followups", e.target.value)} title="Show leads with at least this many follow-ups" />
+          <select data-testid="filter-prospect-category" className="crm-select !w-44" value={params.get("prospect_category") || ""} onChange={(e) => setParam("prospect_category", e.target.value)}>
+            <option value="">All categories</option>
+            {PROSPECT_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
+          </select>
+          <select data-testid="filter-prospect-segment" className="crm-select !w-40" value={params.get("prospect_segment") || ""} onChange={(e) => setParam("prospect_segment", e.target.value)}>
+            <option value="">All segments</option>
+            {["Offline Retail", "Omnichannel", "D2C / E-commerce"].map((c) => <option key={c} value={c}>{c}</option>)}
+          </select>
+          <input data-testid="filter-min-stores" type="number" min="0" placeholder="Min stores" className="crm-select !w-28"
+            value={params.get("min_stores") || ""} onChange={(e) => setParam("min_stores", e.target.value)} />
           <input data-testid="filter-min-deal-value" type="number" min="0" step="1000" placeholder="Min Deal ₹"
             className="crm-select !w-36" value={params.get("min_deal_value") || ""}
             onChange={(e) => setParam("min_deal_value", e.target.value)} title="Show leads with a deal value of at least this amount" />

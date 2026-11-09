@@ -322,6 +322,23 @@ export default function LeadDetail() {
           {/* Meta / Google Q&A — Case 3 */}
           <QACard lead={lead} onSave={update} catalogs={catalogs} labelOf={labelOf} canEdit={canEdit} onDenied={deny} />
 
+          {lead.prospect_id && (
+            <div className="crm-card p-4" data-testid="lead-prospect-card">
+              <div className="mb-2 flex items-center justify-between">
+                <h3 className="font-display text-sm font-extrabold text-slate-800">AI Prospect Research</h3>
+                <Link to={`/prospecting/${lead.prospect_id}`} className="text-xs font-bold text-[#1557B0] hover:underline" data-testid="lead-prospect-link">Full profile →</Link>
+              </div>
+              {[["Category", lead.prospect_category], ["Segment", lead.prospect_segment],
+                ["Stores", lead.store_count != null ? lead.store_count.toLocaleString("en-IN") : null], ["CEO", lead.ceo_name]].map(([l, v]) => (
+                <div key={l} className="flex justify-between py-1 text-sm"><span className="text-slate-400">{l}</span><span className="font-semibold text-slate-800">{v || "—"}</span></div>
+              ))}
+              <div className="mt-1 flex gap-3 text-xs font-bold">
+                {lead.ceo_linkedin && <a href={lead.ceo_linkedin} target="_blank" rel="noreferrer" className="text-[#0A66C2]" data-testid="lead-ceo-linkedin">CEO LinkedIn</a>}
+                {lead.company_website && <a href={lead.company_website} target="_blank" rel="noreferrer" className="text-[#1557B0]">Website</a>}
+              </div>
+            </div>
+          )}
+
           <FieldCard title="Company & Deal" lead={lead} onSave={update} canEdit={canEdit} onDenied={deny} fields={[
             ["company_name", "Company"], ["designation", "Designation"],
             ["team_size", "Team Size", "select"], ["deal_value", "Deal Value (₹)"],

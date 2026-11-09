@@ -3,6 +3,7 @@ import { NavLink, useNavigate } from "react-router-dom";
 import {
   SquaresFour, UsersThree, ClockCountdown, WhatsappLogo, ChartBar,
   EnvelopeSimple, GearSix, SignOut, MagnifyingGlass, Sparkle, PhoneCall, Megaphone, Gauge,
+  Binoculars,
 } from "@phosphor-icons/react";
 import { useAuth } from "../context/AuthContext";
 import { BRAND } from "../lib/brand";
@@ -15,6 +16,7 @@ import AgentStatusSwitcher from "./AgentStatusSwitcher";
 const NAV = [
   { to: "/dashboard", label: "Dashboard", icon: SquaresFour, testid: "nav-dashboard", perm: "dashboard" },
   { to: "/leads", label: "Leads", icon: UsersThree, testid: "nav-leads", perm: "leads" },
+  { to: "/prospecting", label: "AI Prospecting", icon: Binoculars, testid: "nav-prospecting", perm: "leads", roles: ["admin", "manager"] },
   { to: "/followups", label: "Follow-ups", icon: ClockCountdown, testid: "nav-followups", perm: "followups" },
   { to: "/call-center", label: "Call Center", icon: PhoneCall, testid: "nav-call-center", perm: "call_center" },
   { to: "/whatsapp", label: "WhatsApp", icon: WhatsappLogo, testid: "nav-whatsapp", perm: "whatsapp" },
@@ -48,7 +50,7 @@ export default function Layout({ children }) {
           <p className="mt-1 text-[10px] font-semibold uppercase tracking-[0.25em] text-[#0B1F3A]">CRM</p>
         </div>
         <nav className="flex-1 space-y-1 px-3">
-          {NAV.filter(({ perm }) => can(perm)).map(({ to, label, icon: Icon, testid }) => (
+          {NAV.filter(({ perm, roles }) => can(perm) && (!roles || roles.includes(user?.role))).map(({ to, label, icon: Icon, testid }) => (
             <NavLink
               key={to}
               to={to}

@@ -34,6 +34,7 @@ from routes import marketing as marketing_routes
 from routes import ai as ai_routes
 from routes import gmail as gmail_routes
 from routes import outlook as outlook_routes
+from routes import prospecting as prospecting_routes
 from routes import chatter as chatter_routes
 from routes import filters as filter_routes
 from routes import leads as lead_routes
@@ -206,6 +207,7 @@ api.include_router(marketing_routes.router)
 api.include_router(ai_routes.router)
 api.include_router(gmail_routes.router)
 api.include_router(outlook_routes.router)
+api.include_router(prospecting_routes.router)
 api.include_router(wa_tracking_routes.router)
 api.include_router(meta_capi_routes.router)
 
@@ -288,6 +290,14 @@ INDEX_SPECS = [
     ("leads", [("lead_stage", 1), ("deal_value", 1)], {"partialFilterExpression": {"active": True, "deal_value": {"$gt": 0}}}),
     ("leads", [("deal_value", -1), ("id", -1)], {}),
     ("leads", [("company_name", 1), ("id", -1)], {}),
+    ("leads", [("prospect_category", 1), ("store_count", -1)], {"partialFilterExpression": {"active": True}}),
+    ("leads", [("store_count", -1), ("id", -1)], {}),
+    ("prospects", [("country", 1), ("brand_key", 1)], {"unique": True}),
+    ("prospects", [("id", 1)], {"unique": True}),
+    ("prospects", [("country", 1), ("category", 1), ("store_count", -1)], {}),
+    ("prospects", [("status", 1), ("store_count", -1)], {}),
+    ("prospect_cats", [("country", 1), ("category", 1)], {"unique": True}),
+    ("prospect_runs", [("at", -1)], {}),
     # "Ozonetel Lead" tab — a POSITIVE, selective match (only ~200 docs carry pipeline=False),
     # which is Support's recommended replacement for the old non-selective pipeline!=False filter.
     ("leads", [("pipeline", 1), ("create_dt", -1)], {}),
@@ -678,14 +688,14 @@ async def _seed_defaults():
     admin_email = os.environ["ADMIN_EMAIL"].lower()
     admin_password = os.environ["ADMIN_PASSWORD"]
     existing = await db.users.find_one({"email": admin_email})
-    if existing is None:
+    if existing is None and "@" in admin_email and not await db.users.find_one({"id": 1}):
         await db.users.insert_one({
             "id": 1, "email": admin_email, "name": "Fundle.ai Admin", "role": "admin",
             "active": True, "password_hash": hash_password(admin_password),
             "created_at": now_utc_str(),
         })
         logger.info("Seeded admin user")
-    elif not verify_password(admin_password, existing.get("password_hash", "")):
+    elif existing and not verify_password(admin_password, existing.get("password_hash", "")):
         await db.users.update_one({"email": admin_email}, {"$set": {"password_hash": hash_password(admin_password)}})
 
     # Counter floor for new user ids / lead ids (above imported id ranges)
