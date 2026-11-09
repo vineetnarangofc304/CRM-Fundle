@@ -64,6 +64,10 @@ async def find_contacts(p: dict) -> dict:
     t = time.time()
     try:
         d = pe._json(await pe._ask(pe.PRO, CONTACT_SYS, prompt), "obj") or {}
+    except pe.AiCreditsOut as e:
+        await db.prospects.update_one({"id": p["id"]}, {"$unset": {"contacts_status": 1}})
+        await pe._log_run("contacts", pe.PRO, False, e, time.time() - t, brand=p["brand_name"])
+        raise
     except Exception as e:
         await db.prospects.update_one({"id": p["id"]}, {"$set": {"contacts_status": "failed", "contacts_error": str(e)[:200]}})
         await pe._log_run("contacts", pe.PRO, False, e, time.time() - t, brand=p["brand_name"])

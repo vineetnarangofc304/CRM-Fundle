@@ -90,10 +90,29 @@ def _url(v):
     return v if v.startswith("http") else (f"https://{v}" if v and "." in v and " " not in v else None)
 
 
+class AiCreditsOut(Exception):
+    pass
+
+
+_QUOTA_MARKERS = ("spend limit", "budget", "insufficient balance", "insufficient_quota")
+_blocked = {"on": False}
+
+
 async def _ask(model: str, system: str, prompt: str) -> str:
     chat = (LlmChat(api_key=os.environ["EMERGENT_LLM_KEY"], session_id=f"prospect-{time.time_ns()}",
                     system_message=system).with_model("gemini", model).with_tools([{"googleSearch": {}}]))
-    r = await asyncio.wait_for(chat.send_message_with_tools(UserMessage(text=prompt)), timeout=240)
+    try:
+        r = await asyncio.wait_for(chat.send_message_with_tools(UserMessage(text=prompt)), timeout=240)
+    except Exception as e:
+        if any(m in str(e).lower() for m in _QUOTA_MARKERS):
+            _blocked["on"] = True
+            await db.settings.update_one({"key": "prospect_lock"}, {"$set": {
+                "ai_blocked_at": now_utc_str(), "ai_blocked_reason": str(e)[:200]}})
+            raise AiCreditsOut(str(e)) from e
+        raise
+    if _blocked["on"]:
+        _blocked["on"] = False
+        await db.settings.update_one({"key": "prospect_lock"}, {"$unset": {"ai_blocked_at": 1, "ai_blocked_reason": 1}})
     return str(getattr(r, "content", r) or "")
 
 
@@ -176,6 +195,9 @@ async def discover(country: str, category: str, settings: dict) -> dict:
     t = time.time()
     try:
         items = _json(await _ask(FLASH, DISCOVER_SYS, prompt), "list") or []
+    except AiCreditsOut as e:
+        await _log_run("discover", FLASH, False, e, time.time() - t, country=country, category=category)
+        raise
     except Exception as e:
         await _log_run("discover", FLASH, False, e, time.time() - t, country=country, category=category)
         await db.prospect_cats.update_one({"country": country, "category": category},
@@ -230,6 +252,10 @@ async def enrich(p: dict) -> dict:
         d = _json(await _ask(PRO, ENRICH_SYS, prompt), "obj")
         if not d:
             raise ValueError("No JSON in model reply")
+    except AiCreditsOut as e:
+        await db.prospects.update_one({"id": p["id"]}, {"$set": {"status": "discovered"}, "$inc": {"enrich_attempts": -1}})
+        await _log_run("enrich", PRO, False, e, time.time() - t, brand=p["brand_name"])
+        raise
     except Exception as e:
         status = "failed" if p.get("enrich_attempts", 0) + 1 >= 3 else "discovered"
         await db.prospects.update_one({"id": p["id"]}, {"$set": {"status": status, "last_error": str(e)[:200]}})
@@ -291,6 +317,8 @@ async def _lane(deadline, settings, stats):
         try:
             if not await _step(settings, stats):
                 return
+        except AiCreditsOut:
+            return
         except Exception:
             logger.exception("prospecting lane step failed")
             await asyncio.sleep(5)
@@ -350,6 +378,11 @@ async def run_worker(max_seconds: int = 840, trigger: str = "cron"):
             {"$set": {"status": "discovered"}})
         await db.prospects.update_many({"contacts_status": "running", "contacts_started_at": {"$lt": stale}},
                                        {"$unset": {"contacts_status": 1}})
+        quota = {"$regex": "spend limit|budget|insufficient", "$options": "i"}
+        await db.prospects.update_many({"status": "failed", "last_error": quota},
+                                       {"$set": {"status": "discovered", "enrich_attempts": 0}, "$unset": {"last_error": 1}})
+        await db.prospects.update_many({"contacts_status": "failed", "contacts_error": quota},
+                                       {"$unset": {"contacts_status": 1, "contacts_error": 1}})
         await ensure_catalog("source_lead", SOURCE)
         deadline = time.time() + max_seconds
         await asyncio.gather(*[_lane(deadline, settings, stats) for _ in range(max(1, min(settings["concurrency"], 6)))],

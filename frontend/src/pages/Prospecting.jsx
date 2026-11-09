@@ -23,6 +23,12 @@ function EnginePanel({ ov, isAdmin, reload }) {
   const toggleCountry = (c) => save({ countries: s.countries.includes(c) ? s.countries.filter((x) => x !== c) : [...s.countries, c] });
   return (
     <div className="crm-card space-y-3 p-4" data-testid="prospect-engine-panel">
+      {ov.lock.ai_blocked_at && (
+        <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700" data-testid="prospect-ai-credits-alert">
+          <b>AI credit limit reached</b> (since {ov.lock.ai_blocked_at} UTC) — the engine can't find or research brands until balance is added.
+          Go to Profile → Manage plan → Universal Key → Add Balance (or turn on auto top-up). It resumes automatically within 15 min.
+        </div>
+      )}
       <div className="flex flex-wrap items-center gap-3">
         <span className={`flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-bold ${ov.running ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-500"}`} data-testid="prospect-engine-status">
           <span className={`h-2 w-2 rounded-full ${ov.running ? "animate-pulse bg-emerald-500" : "bg-slate-400"}`} />
