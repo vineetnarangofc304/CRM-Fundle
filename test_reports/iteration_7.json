@@ -1,0 +1,35 @@
+{
+  "summary": "Tested the AI credit-limit handling in AI Prospecting, backend and frontend. Everything requested works. Backend: 6/6 pytest passed in /app/backend/tests/test_prospecting_ai_credits.py. (1) The cron endpoint returns 401 with no secret and with a wrong secret. (2) POST /api/prospecting/run with the real exhausted key: the worker finished in about 2s (until='' and last_finished updated), with ai_blocked_at and ai_blocked_reason ('Daily spend limit reached') set on the prospect_lock doc. (3) GET /overview returns lock.ai_blocked_at, settings.enabled=true and pending_enrich of about 2080. (4) The run_worker reset works: an inserted TEST prospect (status failed, last_error spend limit, attempts 3) went to discovered with attempts 0 and last_error removed, and a TEST prospect with contacts_status failed plus a quota error had both fields unset. (5) No new failed prospects, no prospects stuck in enriching, and enrich_attempts did not change on any of the 2078 discovered prospects. DB state: discovered 2080, enriched 130, failed 1 (id 109, a 502 BadGateway error, not quota), 0 failed with a quota error. Frontend: /prospecting shows the red prospect-ai-credits-alert ('AI credit limit reached (since ... UTC)' plus the Profile → Manage plan → Universal Key → Add Balance steps). Stats, the 29-category grid, the table, the status filter (failed shows 1 brand), search (BIBA shows 2), Run now, and Pause/Resume all work. The engine was toggled back to enabled; final settings: enabled=true, phase auto, concurrency 3, India.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "core/prospector._ask", "issue": "The flag that clears the alert lives only in process memory (_blocked = {'on': False}). The backend restarts often (hot reload, deploys). If it restarts while blocked and credits are added later, the first successful call does not unset ai_blocked_at, so the red alert stays on even though the engine works. Fix: on success, unset whenever the DB doc has ai_blocked_at (or simply always run the $unset), not only when the in-memory flag is set."},
+      {"endpoint": "core/prospector._ask", "issue": "ai_blocked_at is overwritten on every blocked call or run, so the alert's 'since' time shows the latest failure instead of when the block started. Only set it when it is missing (filter {'ai_blocked_at': {'$exists': False}} for that field), and keep updating ai_blocked_reason."},
+      {"endpoint": "run_worker quota reset regex", "issue": "'spend limit|budget|insufficient' is broad: any non-quota error containing 'insufficient' (e.g. 'insufficient data') would be reset to discovered with attempts 0 on every run. Consider matching the same markers as _QUOTA_MARKERS, e.g. 'spend limit|insufficient balance|insufficient_quota|budget'."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Prospecting engine panel", "issues": ["While blocked, the status pill still reads 'Idle — next batch within 15 min' next to the red alert. A 'Blocked — no AI credits' pill state would be clearer. When Run now is clicked while blocked, the run finishes in about 2s with no visible feedback apart from the timestamp in the alert changing."]}
+    ]
+  },
+  "test_report_links": ["/app/backend/tests/test_prospecting_ai_credits.py", "/app/test_reports/pytest/pytest_ai_credits.xml"],
+  "action_items": [
+    "Make clearing ai_blocked_at survive restarts: on a successful _ask, $unset ai_blocked_at whenever it exists in the DB, without relying on the in-memory _blocked flag",
+    "Optional: keep the first ai_blocked_at timestamp instead of overwriting it, tighten the quota reset regex, and show a 'Blocked' status pill"
+  ],
+  "critical_code_review_comments": [
+    "The _lane returns on AiCreditsOut, and the other lanes stop on their own next call, so the batch ends in seconds (verified: about 2s with concurrency 3).",
+    "The enrich AiCreditsOut branch correctly resets status to discovered and runs $inc enrich_attempts -1. The discover branch re-raises and _busy_cats is cleaned up in finally. find_contacts unsets contacts_status. All correct.",
+    "In the run endpoints, _spawn tasks are not awaited, which is fine. The cron job also fires every 15 min while blocked; each run costs only about 3 failed LLM calls."
+  ],
+  "updated_files": ["/app/backend/tests/test_prospecting_ai_credits.py"],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "Admin vineetnarangofc@gmail.com / Fundle@cf928c (from /app/memory/test_credentials.md)",
+  "seed_data_creation": "The test inserts 2 temporary TEST prospects (ids 9990001 and 9990002, country TEST_Land) and deletes them afterwards (verified count 0). The test unsets ai_blocked_at before triggering a run; the run sets it again naturally.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "The LLM key is out of credit in preview. Run: cd /app/backend && pytest tests/test_prospecting_ai_credits.py -n 0 -s. It triggers one manual run, which takes about 2s. The engine must stay enabled. The single failed prospect (id 109) has a 502 error, not a quota error."
+}

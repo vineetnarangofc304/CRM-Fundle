@@ -67,3 +67,7 @@ Gmail OAuth (GOOGLE_CLIENT_ID/SECRET, GMAIL_REDIRECT_URI), Meta CAPI (dataset id
 
 ## 2026-11-09
 - Published to production: https://fundlecrm.fundle.ai (includes 500/day brand discovery cap)
+
+## 2026-11-09 — Prospecting stalled (AI credits)
+- Root cause: Emergent LLM key daily spend limit reached; enrich calls failed, brands wrongly marked failed (prod: 2,082)
+- Fix: credit-limit errors stop the batch, keep brands pending (no attempts used), auto-reset previously failed brands each run, red alert + "Blocked — no AI credits" pill on Prospecting page. Needs publish to reach production.

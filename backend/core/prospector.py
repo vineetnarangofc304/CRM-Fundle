@@ -95,7 +95,7 @@ class AiCreditsOut(Exception):
 
 
 _QUOTA_MARKERS = ("spend limit", "budget", "insufficient balance", "insufficient_quota")
-_blocked = {"on": False}
+_blocked = {"on": None}
 
 
 async def _ask(model: str, system: str, prompt: str) -> str:
@@ -106,11 +106,12 @@ async def _ask(model: str, system: str, prompt: str) -> str:
     except Exception as e:
         if any(m in str(e).lower() for m in _QUOTA_MARKERS):
             _blocked["on"] = True
-            await db.settings.update_one({"key": "prospect_lock"}, {"$set": {
-                "ai_blocked_at": now_utc_str(), "ai_blocked_reason": str(e)[:200]}})
+            await db.settings.update_one({"key": "prospect_lock", "ai_blocked_at": {"$exists": False}},
+                                         {"$set": {"ai_blocked_at": now_utc_str()}})
+            await db.settings.update_one({"key": "prospect_lock"}, {"$set": {"ai_blocked_reason": str(e)[:200]}})
             raise AiCreditsOut(str(e)) from e
         raise
-    if _blocked["on"]:
+    if _blocked["on"] is not False:
         _blocked["on"] = False
         await db.settings.update_one({"key": "prospect_lock"}, {"$unset": {"ai_blocked_at": 1, "ai_blocked_reason": 1}})
     return str(getattr(r, "content", r) or "")
@@ -378,7 +379,7 @@ async def run_worker(max_seconds: int = 840, trigger: str = "cron"):
             {"$set": {"status": "discovered"}})
         await db.prospects.update_many({"contacts_status": "running", "contacts_started_at": {"$lt": stale}},
                                        {"$unset": {"contacts_status": 1}})
-        quota = {"$regex": "spend limit|budget|insufficient", "$options": "i"}
+        quota = {"$regex": "spend limit|budget|insufficient balance|insufficient_quota", "$options": "i"}
         await db.prospects.update_many({"status": "failed", "last_error": quota},
                                        {"$set": {"status": "discovered", "enrich_attempts": 0}, "$unset": {"last_error": 1}})
         await db.prospects.update_many({"contacts_status": "failed", "contacts_error": quota},

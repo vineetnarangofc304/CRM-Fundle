@@ -19,7 +19,7 @@ function EnginePanel({ ov, isAdmin, reload }) {
     try { await API.put("/prospecting/settings", { ...s, ...patch }); toast.success("Engine settings saved"); reload(); }
     catch (e) { toast.error(apiErr(e)); }
   };
-  const runNow = async () => { try { await API.post("/prospecting/run"); toast.success("Research batch started"); setTimeout(reload, 2500); } catch (e) { toast.error(apiErr(e)); } };
+  const runNow = async () => { try { await API.post("/prospecting/run"); if (ov.lock.ai_blocked_at) toast.warning("AI credits are used up. The batch will stop until balance is added"); else toast.success("Research batch started"); setTimeout(reload, 2500); } catch (e) { toast.error(apiErr(e)); } };
   const toggleCountry = (c) => save({ countries: s.countries.includes(c) ? s.countries.filter((x) => x !== c) : [...s.countries, c] });
   return (
     <div className="crm-card space-y-3 p-4" data-testid="prospect-engine-panel">
@@ -32,7 +32,7 @@ function EnginePanel({ ov, isAdmin, reload }) {
       <div className="flex flex-wrap items-center gap-3">
         <span className={`flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-bold ${ov.running ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-500"}`} data-testid="prospect-engine-status">
           <span className={`h-2 w-2 rounded-full ${ov.running ? "animate-pulse bg-emerald-500" : "bg-slate-400"}`} />
-          {ov.running ? `Researching… (started ${ov.lock.started} UTC)` : s.enabled ? "Idle — next batch within 15 min" : "Paused"}
+          {ov.running ? `Researching… (started ${ov.lock.started} UTC)` : !s.enabled ? "Paused" : ov.lock.ai_blocked_at ? "Blocked — no AI credits" : "Idle — next batch within 15 min"}
         </span>
         {ov.lock.last_stats && <span className="text-xs text-slate-500">Last batch: +{ov.lock.last_stats.added} brands · {ov.lock.last_stats.enriched} researched</span>}
         <span className="text-xs text-slate-500">{ov.pending_enrich.toLocaleString("en-IN")} brands waiting for deep research</span>
