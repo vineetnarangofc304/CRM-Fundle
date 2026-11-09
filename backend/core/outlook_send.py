@@ -76,7 +76,7 @@ async def exchange_code(cfg: dict, code: str, redirect: str) -> dict:
             "email": me.get("mail") or me.get("userPrincipalName"), "display_name": me.get("displayName")}
 
 
-async def _graph_send(cfg, to, subject, body, html):
+async def _graph_send(cfg, to, subject, body, html, cc=None):
     try:
         tok = await _token(cfg, grant_type="refresh_token", refresh_token=dec(cfg.get("refresh_token_enc")))
     except RuntimeError as e:
@@ -88,7 +88,8 @@ async def _graph_send(cfg, to, subject, body, html):
                                                           "$unset": {"auth_error": 1}})
     payload = {"message": {"subject": subject or "(no subject)",
                            "body": {"contentType": "HTML" if html else "Text", "content": body or ""},
-                           "toRecipients": [{"emailAddress": {"address": to}}]}, "saveToSentItems": True}
+                           "toRecipients": [{"emailAddress": {"address": to}}],
+                           **({"ccRecipients": [{"emailAddress": {"address": cc}}]} if cc else {})}, "saveToSentItems": True}
     async with httpx.AsyncClient(timeout=30) as c:
         r = await c.post(f"{GRAPH}/me/sendMail", json=payload,
                          headers={"Authorization": f"Bearer {tok['access_token']}"})
@@ -101,11 +102,13 @@ async def _graph_send(cfg, to, subject, body, html):
     return {"ok": True}
 
 
-async def _smtp_send(cfg, to, subject, body, html):
+async def _smtp_send(cfg, to, subject, body, html, cc=None):
     sender = cfg.get("from_email") or cfg["smtp_user"]
     msg = EmailMessage()
     msg["From"] = formataddr((cfg.get("sender_name") or "Fundle.ai", sender))
     msg["To"] = to
+    if cc:
+        msg["Cc"] = cc
     msg["Subject"] = subject or "(no subject)"
     if html:
         msg.set_content("This email contains HTML content.")
@@ -123,12 +126,12 @@ async def _smtp_send(cfg, to, subject, body, html):
     return {"ok": True}
 
 
-async def send_email(to: str, subject: str, body: str, html: bool = False) -> dict:
+async def send_email(to: str, subject: str, body: str, html: bool = False, cc: str | None = None) -> dict:
     cfg = await get_config()
     try:
         if cfg.get("method") == "smtp":
-            return await _smtp_send(cfg, to, subject, body, html)
-        return await _graph_send(cfg, to, subject, body, html)
+            return await _smtp_send(cfg, to, subject, body, html, cc)
+        return await _graph_send(cfg, to, subject, body, html, cc)
     except Exception as e:
         msg = str(e)
         if "SmtpClientAuthentication is disabled" in msg:

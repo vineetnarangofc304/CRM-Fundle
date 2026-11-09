@@ -32,7 +32,7 @@ function EnginePanel({ ov, isAdmin, reload }) {
       <div className="flex flex-wrap items-center gap-3">
         <span className={`flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-bold ${ov.running ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-500"}`} data-testid="prospect-engine-status">
           <span className={`h-2 w-2 rounded-full ${ov.running ? "animate-pulse bg-emerald-500" : "bg-slate-400"}`} />
-          {ov.running ? `Researching… (started ${ov.lock.started} UTC)` : !s.enabled ? "Paused" : ov.lock.ai_blocked_at ? "Waiting — AI limit, retrying" : "Idle — next batch within 15 min"}
+          {ov.running ? `Researching… (started ${ov.lock.started} UTC)` : !s.enabled ? "Paused" : ov.lock.ai_blocked_at ? "Waiting — AI limit, retrying" : ov.night_window ? "Idle — next batch within 15 min" : "Sleeping — runs nightly 10 PM–9 AM IST"}
         </span>
         {ov.lock.last_stats && <span className="text-xs text-slate-500">Last batch: +{ov.lock.last_stats.added} brands · {ov.lock.last_stats.enriched} researched</span>}
         <span className="text-xs text-slate-500">{ov.pending_enrich.toLocaleString("en-IN")} brands waiting for deep research</span>

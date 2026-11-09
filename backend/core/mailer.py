@@ -16,5 +16,5 @@ async def is_connected() -> bool:
     return await PROVIDERS[await active_provider()].is_connected()
 
 
-async def send_email(to: str, subject: str, body: str, html: bool = False) -> dict:
-    return await PROVIDERS[await active_provider()].send_email(to, subject, body, html=html)
+async def send_email(to: str, subject: str, body: str, html: bool = False, cc: str | None = None) -> dict:
+    return await PROVIDERS[await active_provider()].send_email(to, subject, body, html=html, cc=cc)

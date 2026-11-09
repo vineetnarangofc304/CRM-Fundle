@@ -16,7 +16,8 @@ DEFAULT_PITCH = ("Fundle.ai builds an AI-powered customer loyalty platform for r
                  "omnichannel points & rewards across stores and online, WhatsApp-first member engagement, "
                  "AI-driven personalised offers, and analytics that lift repeat purchase and customer lifetime value. "
                  "Quick to launch across all stores, integrates with POS and e-commerce.")
-DEFAULTS = {"enabled": True, "min_score": 60, "daily_cap": 40, "drafts_per_run": 10, "gaps": [3, 7],
+DEFAULTS = {"enabled": True, "min_score": 0, "daily_cap": 100, "drafts_per_run": 30, "gaps": [3, 7],
+            "auto_send": True, "cc": "",
             "pitch": DEFAULT_PITCH, "signature": "Team Fundle.ai\nhttps://fundle.ai", "sender_name": "Fundle.ai"}
 DRAFT_SYS = ("You write short, specific, human B2B outreach for an Indian/GCC/UK audience. No hype, no emojis, "
              "no fake claims or invented stats. Reference the brand's real context. Reply with JSON only.")
@@ -93,7 +94,7 @@ def _with_signature(body: str, st: dict) -> str:
 
 async def _send_one(m: dict, st: dict) -> bool:
     from core import mailer
-    res = await mailer.send_email(m["to"], m["subject"], _with_signature(m["body"], st), html=True)
+    res = await mailer.send_email(m["to"], m["subject"], _with_signature(m["body"], st), html=True, cc=st.get("cc") or None)
     if not res.get("ok"):
         await db.outreach.update_one({"id": m["id"]}, {"$set": {"status": "failed", "error": res.get("error")}})
         return False
@@ -120,15 +121,38 @@ async def _stop_engaged():
                                       {"$set": {"status": "stopped", "stop_reason": "Lead engaged by team"}})
 
 
+async def auto_approve() -> int:
+    """Auto-send mode: approve pending email drafts; step 1 goes out now, later steps follow the gaps."""
+    now = _now()
+    r1 = await db.outreach.update_many({"status": "pending_approval", "channel": "email", "step": 1},
+                                       {"$set": {"status": "approved", "approved_by": "Auto-send", "approved_at": now, "scheduled_at": now}})
+    r2 = await db.outreach.update_many({"status": "pending_approval", "channel": "email", "step": {"$gt": 1}},
+                                       {"$set": {"status": "approved", "approved_by": "Auto-send", "approved_at": now}})
+    if r1.modified_count or r2.modified_count:
+        await db.prospects.update_many({"outreach_status": "pending_approval"}, {"$set": {"outreach_status": "approved"}})
+    return r1.modified_count
+
+
+async def _migrate_v2():
+    if await db.settings.find_one({"key": "outreach_v2"}):
+        return
+    await db.settings.update_one({"key": "outreach"}, {"$set": {
+        "auto_send": True, "min_score": 0, "daily_cap": 100, "drafts_per_run": 30, "cc": "vineet.narang@fundle.ai"}}, upsert=True)
+    await db.settings.insert_one({"key": "outreach_v2", "done": True})
+
+
 async def run_outreach(trigger="cron") -> dict:
     from core import mailer
+    await _migrate_v2()
     st = await get_settings()
     stats = {"drafted": 0, "sent": 0, "failed": 0}
     if not st["enabled"]:
         return {"skipped": "disabled"}
     await _stop_engaged()
-    cands = await db.prospects.find({"fit_score": {"$gte": st["min_score"]}, "outreach_seq": {"$exists": False},
-                                     "contacts.email": {"$nin": [None, ""]}}, {"_id": 0}
+    f = {"outreach_seq": {"$exists": False}, "contacts.email": {"$nin": [None, ""]}}
+    if st["min_score"] > 0:
+        f["fit_score"] = {"$gte": st["min_score"]}
+    cands = await db.prospects.find(f, {"_id": 0}
                                     ).sort("fit_score", -1).limit(st["drafts_per_run"]).to_list(st["drafts_per_run"])
     for p in cands:
         c = pick_contact(p)
@@ -138,6 +162,8 @@ async def run_outreach(trigger="cron") -> dict:
                 stats["drafted"] += 1
             except Exception as e:
                 logger.warning(f"draft failed {p['brand_name']}: {e}")
+    if st["auto_send"]:
+        stats["auto_approved"] = await auto_approve()
     if await mailer.is_connected():
         day = _now()[:10]
         sent_today = await db.outreach.count_documents({"status": "sent", "channel": "email", "sent_at": {"$gte": day}})

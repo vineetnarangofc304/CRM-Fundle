@@ -77,13 +77,15 @@ async def _creds() -> Credentials:
     return creds
 
 
-async def send_email(to: str, subject: str, body: str, html: bool = False) -> dict:
+async def send_email(to: str, subject: str, body: str, html: bool = False, cc: str | None = None) -> dict:
     try:
         creds = await _creds()
         cfg = await get_config()
         service = build("gmail", "v1", credentials=creds, cache_discovery=False)
         msg = MIMEText(body or "", "html" if html else "plain", "utf-8")
         msg["to"] = to
+        if cc:
+            msg["cc"] = cc
         sender_email = cfg.get("email")
         sender_name = cfg.get("sender_name") or "Fundle.ai"
         msg["from"] = formataddr((str(Header(sender_name, "utf-8")), sender_email)) if sender_email else sender_name

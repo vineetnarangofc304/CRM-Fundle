@@ -35,7 +35,7 @@ async def cron_watchdog(request: Request):
     _cron_auth(request)
     enabled = (await pe.get_settings())["enabled"]
     res = await pe.watchdog(enabled)
-    if res["restart"] and enabled:
+    if res["restart"] and enabled and pe.night_seconds_left() >= 60:
         _spawn(pe.run_worker(840, "watchdog"))
     return {"ok": True, **res}
 
@@ -86,7 +86,8 @@ async def overview(user: dict = Depends(require_roles("admin", "manager"))):
     return {"settings": settings, "running": running, "lock": {k: lock.get(k) for k in ("started", "trigger", "last_finished", "last_stats", "ai_blocked_at", "watchdog_at", "watchdog_action")},
             "totals": totals, "categories": rows, "recent_runs": recent,
             "all_countries": pe.COUNTRIES, "all_categories": pe.CATEGORIES, "segments": pe.SEGMENTS,
-            "pending_enrich": await db.prospects.count_documents({"status": "discovered"})}
+            "pending_enrich": await db.prospects.count_documents({"status": "discovered"}),
+            "night_window": pe.night_seconds_left() > 0}
 
 
 @router.put("/prospecting/settings")

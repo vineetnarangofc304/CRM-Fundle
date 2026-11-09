@@ -29,9 +29,11 @@ async def cron_outreach(request: Request):
 
 class OutreachSettings(BaseModel):
     enabled: bool = True
-    min_score: int = 60
-    daily_cap: int = 40
-    drafts_per_run: int = 10
+    min_score: int = 0
+    daily_cap: int = 100
+    drafts_per_run: int = 30
+    auto_send: bool = True
+    cc: str = ""
     gaps: List[int] = [3, 7]
     pitch: str = oc.DEFAULT_PITCH
     signature: str = "Team Fundle.ai"
@@ -50,6 +52,9 @@ async def save_settings(body: OutreachSettings, user: dict = Depends(require_rol
     if len(body.gaps) != 2 or any(g < 1 or g > 30 for g in body.gaps):
         raise HTTPException(status_code=400, detail="Follow-up gaps must be 1-30 days")
     data = body.model_dump()
+    data["cc"] = body.cc.strip()
+    if data["cc"] and not re.fullmatch(r"[^@\s]+@[^@\s]+\.[a-zA-Z]{2,}", data["cc"]):
+        raise HTTPException(status_code=400, detail="Enter a valid CC email address")
     data.update(min_score=max(0, min(body.min_score, 100)), daily_cap=max(1, min(body.daily_cap, 300)),
                 drafts_per_run=max(0, min(body.drafts_per_run, 50)))
     await db.settings.update_one({"key": "outreach"}, {"$set": data}, upsert=True)

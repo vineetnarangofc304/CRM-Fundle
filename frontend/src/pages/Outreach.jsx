@@ -26,6 +26,8 @@ function SettingsPanel({ s, isAdmin, reload }) {
         </label>
         <label className="font-semibold text-slate-500 sm:col-span-2 lg:col-span-3">What we sell (AI uses this to write)<textarea data-testid="outreach-pitch" rows={3} className="crm-input mt-1 w-full" value={f.pitch} onChange={(e) => setF({ ...f, pitch: e.target.value })} /></label>
         <label className="font-semibold text-slate-500">Email signature<textarea data-testid="outreach-signature" rows={3} className="crm-input mt-1 w-full" value={f.signature} onChange={(e) => setF({ ...f, signature: e.target.value })} /></label>
+        <label className="font-semibold text-slate-500">CC every outreach email to<input data-testid="outreach-cc" type="email" className="crm-input mt-1 w-full" value={f.cc || ""} onChange={(e) => setF({ ...f, cc: e.target.value })} /></label>
+        <label className="flex items-center gap-2 font-semibold text-slate-600"><input data-testid="outreach-auto-send" type="checkbox" checked={!!f.auto_send} onChange={(e) => setF({ ...f, auto_send: e.target.checked })} /> Send automatically (no approval)</label>
         <label className="flex items-center gap-2 font-semibold text-slate-600"><input data-testid="outreach-enabled" type="checkbox" checked={f.enabled} onChange={(e) => setF({ ...f, enabled: e.target.checked })} /> Outreach agent on</label>
       </div>
       {isAdmin && <button data-testid="outreach-settings-save" onClick={save} className="crm-btn-primary mt-3 !py-1.5 text-xs">Save settings</button>}
@@ -111,7 +113,7 @@ export default function Outreach() {
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="flex items-center gap-2 font-display text-3xl font-extrabold text-slate-900"><PaperPlaneTilt size={28} className="text-[#1A73E8]" /> Outreach</h1>
-          <p className="text-sm text-slate-500">AI drafts a 3-email sequence + LinkedIn notes for every top-fit brand. Nothing is sent until you approve it.</p>
+          <p className="text-sm text-slate-500" data-testid="outreach-mode-text">AI drafts a 3-email sequence + LinkedIn notes for every brand with an email. {s.auto_send ? `Emails send automatically (max ${s.daily_cap}/day${s.cc ? `, CC ${s.cc}` : ""}).` : "Nothing is sent until you approve it."}</p>
         </div>
         <button data-testid="outreach-run-now" onClick={runNow} className="crm-btn-primary !py-1.5 text-xs"><Play size={14} /> Run now</button>
       </div>

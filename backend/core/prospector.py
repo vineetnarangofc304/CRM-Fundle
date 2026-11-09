@@ -95,6 +95,19 @@ def _url(v):
 
 
 RETRY_COOLDOWN_H = 6
+NIGHT_START_H, NIGHT_END_H = 22, 9  # IST: scheduled runs only 10 PM - 9 AM
+IST = timedelta(hours=5, minutes=30)
+
+
+def night_seconds_left() -> int:
+    """Seconds until 9 AM IST if inside the 10 PM - 9 AM IST window, else 0."""
+    now = datetime.now(timezone.utc) + IST
+    if NIGHT_END_H <= now.hour < NIGHT_START_H:
+        return 0
+    end = now.replace(hour=NIGHT_END_H, minute=0, second=0, microsecond=0)
+    if now.hour >= NIGHT_START_H:
+        end += timedelta(days=1)
+    return int((end - now).total_seconds())
 MAX_RETRY_ROUNDS = 5
 
 
@@ -424,6 +437,11 @@ async def watchdog(enabled: bool = True):
 
 
 async def run_worker(max_seconds: int = 840, trigger: str = "cron"):
+    if trigger in ("cron", "watchdog"):
+        left = night_seconds_left()
+        if left < 60:
+            return {"skipped": "daytime"}
+        max_seconds = min(max_seconds, left)
     now = datetime.now(timezone.utc)
     my_until = (now + timedelta(seconds=max_seconds + 120)).isoformat()
     lock = await db.settings.find_one_and_update(
