@@ -326,7 +326,7 @@ export default function LeadDetail() {
             <div className="crm-card p-4" data-testid="lead-prospect-card">
               <div className="mb-2 flex items-center justify-between">
                 <h3 className="font-display text-sm font-extrabold text-slate-800">AI Prospect Research</h3>
-                <Link to={`/prospecting/${lead.prospect_id}`} className="text-xs font-bold text-[#1557B0] hover:underline" data-testid="lead-prospect-link">Full profile →</Link>
+                {["admin", "manager"].includes(user?.role) && <Link to={`/prospecting/${lead.prospect_id}`} className="text-xs font-bold text-[#1557B0] hover:underline" data-testid="lead-prospect-link">Full profile →</Link>}
               </div>
               {[["Category", lead.prospect_category], ["Segment", lead.prospect_segment],
                 ["Stores", lead.store_count != null ? lead.store_count.toLocaleString("en-IN") : null], ["CEO", lead.ceo_name]].map(([l, v]) => (

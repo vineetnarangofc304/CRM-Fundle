@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import { Binoculars, Play, Pause, Storefront, UserCircle, LinkedinLogo, MagnifyingGlass, ArrowsClockwise } from "@phosphor-icons/react";
@@ -85,9 +85,15 @@ function CategoryGrid({ rows, active, onPick }) {
 function ProspectTable({ filters, setFilters, ov }) {
   const [data, setData] = useState({ items: [], total: 0 });
   const navigate = useNavigate();
+  const seq = useRef(0);
   useEffect(() => {
     const params = Object.fromEntries(Object.entries(filters).filter(([, v]) => v !== "" && v != null));
-    API.get("/prospecting/prospects", { params }).then(({ data: d }) => setData(d)).catch((e) => toast.error(apiErr(e)));
+    const my = ++seq.current;
+    const t = setTimeout(() => {
+      API.get("/prospecting/prospects", { params }).then(({ data: d }) => { if (my === seq.current) setData(d); })
+        .catch((e) => { if (my === seq.current) toast.error(apiErr(e)); });
+    }, 300);
+    return () => clearTimeout(t);
   }, [filters]);
   const set = (k, v) => setFilters({ ...filters, [k]: v, page: 1 });
   return (
@@ -142,10 +148,18 @@ function ProspectTable({ filters, setFilters, ov }) {
 export default function Prospecting() {
   const { user } = useAuth();
   const [ov, setOv] = useState(null);
+  const [denied, setDenied] = useState(false);
   const [sp] = useSearchParams();
   const [filters, setFilters] = useState({ category: sp.get("category") || "", page: 1 });
-  const load = useCallback(() => API.get("/prospecting/overview").then(({ data }) => setOv(data)).catch((e) => toast.error(apiErr(e))), []);
-  useEffect(() => { load(); const t = setInterval(load, 20000); return () => clearInterval(t); }, [load]);
+  const load = useCallback(() => API.get("/prospecting/overview").then(({ data }) => setOv(data)).catch((e) => {
+    if (e?.response?.status === 403) setDenied(true); else toast.error(apiErr(e));
+  }), []);
+  const allowed = ["admin", "manager"].includes(user?.role);
+  useEffect(() => {
+    if (!allowed || denied) return undefined;
+    load(); const t = setInterval(load, 20000); return () => clearInterval(t);
+  }, [load, allowed, denied]);
+  if (!allowed || denied) return <div className="p-8 text-sm text-slate-500" data-testid="prospecting-denied">AI Prospecting is available to admins and managers only.</div>;
   if (!ov) return <div className="p-8 text-sm text-slate-400">Loading prospecting…</div>;
   const rows = ov.categories.filter((r) => ov.settings.countries.includes(r.country) || r.brands > 0);
   return (

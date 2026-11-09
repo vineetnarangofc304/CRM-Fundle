@@ -270,33 +270,43 @@ async def _next_discovery(settings):
 
 async def _next_enrich():
     return await db.prospects.find_one_and_update(
-        {"status": "discovered", "enrich_attempts": {"$lt": 3}}, {"$set": {"status": "enriching"}},
+        {"status": "discovered", "enrich_attempts": {"$lt": 3}},
+        {"$set": {"status": "enriching", "enrich_started_at": now_utc_str()}},
         sort=[("store_count", -1), ("id", 1)], projection={"_id": 0})
 
 
 async def _lane(deadline, settings, stats):
     while time.time() < deadline:
-        if not (await get_settings())["enabled"]:
-            return
-        disc = None
-        if settings["phase"] in ("auto", "discovery") and (settings["phase"] == "discovery" or random.random() < 0.7):
-            disc = await _next_discovery(settings)
-        if disc:
-            _busy_cats.add(disc)
-            try:
-                stats["added"] += (await discover(disc[0], disc[1], settings))["added"]
-                stats["discover_runs"] += 1
-            finally:
-                _busy_cats.discard(disc)
-            continue
-        if settings["phase"] == "discovery":
-            return
-        p = await _next_enrich()
-        if not p:
-            if settings["phase"] == "auto" and await _next_discovery(settings):
-                continue
-            return
-        stats["enriched"] += 1 if (await enrich(p))["ok"] else 0
+        try:
+            if not await _step(settings, stats):
+                return
+        except Exception:
+            logger.exception("prospecting lane step failed")
+            await asyncio.sleep(5)
+
+
+async def _step(settings, stats) -> bool:
+    """One unit of work; returns False when the lane should stop."""
+    if not (await get_settings())["enabled"]:
+        return False
+    disc = None
+    if settings["phase"] in ("auto", "discovery") and (settings["phase"] == "discovery" or random.random() < 0.7):
+        disc = await _next_discovery(settings)
+    if disc:
+        _busy_cats.add(disc)
+        try:
+            stats["added"] += (await discover(disc[0], disc[1], settings))["added"]
+            stats["discover_runs"] += 1
+        finally:
+            _busy_cats.discard(disc)
+        return True
+    if settings["phase"] == "discovery":
+        return False
+    p = await _next_enrich()
+    if not p:
+        return settings["phase"] == "auto" and bool(await _next_discovery(settings))
+    stats["enriched"] += 1 if (await enrich(p))["ok"] else 0
+    return True
 
 
 async def run_worker(max_seconds: int = 840, trigger: str = "cron"):
@@ -315,10 +325,14 @@ async def run_worker(max_seconds: int = 840, trigger: str = "cron"):
     try:
         if not settings["enabled"]:
             return {"skipped": "disabled"}
-        await db.prospects.update_many({"status": "enriching"}, {"$set": {"status": "discovered"}})
+        stale = (datetime.now(timezone.utc) - timedelta(minutes=10)).strftime("%Y-%m-%d %H:%M:%S")
+        await db.prospects.update_many({"status": "enriching", "$or": [
+            {"enrich_started_at": {"$lt": stale}}, {"enrich_started_at": {"$exists": False}}]},
+            {"$set": {"status": "discovered"}})
         await ensure_catalog("source_lead", SOURCE)
         deadline = time.time() + max_seconds
-        await asyncio.gather(*[_lane(deadline, settings, stats) for _ in range(max(1, min(settings["concurrency"], 6)))])
+        await asyncio.gather(*[_lane(deadline, settings, stats) for _ in range(max(1, min(settings["concurrency"], 6)))],
+                             return_exceptions=True)
     except Exception:
         logger.exception("prospecting worker failed")
     finally:

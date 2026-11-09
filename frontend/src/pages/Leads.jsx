@@ -68,7 +68,7 @@ const ALL_COLUMNS = [
   { key: "state_name", label: "State" },
   { key: "priority", label: "Priority" },
 ];
-const DEFAULT_COLS = ["contact_name", "phone", "company_name", "deal_value", "location", "user_id", "lead_stage", "tags", "follow_up_date", "source_lead", "create_date"];
+const DEFAULT_COLS = ["contact_name", "phone", "company_name", "prospect_category", "store_count", "deal_value", "location", "user_id", "lead_stage", "tags", "follow_up_date", "source_lead", "create_date"];
 
 function LeadCell({ colKey, l, tagById, userById }) {
   if (colKey === "contact_name") return (
@@ -120,7 +120,7 @@ export default function Leads() {
   const [showCols, setShowCols] = useState(false);
   const [visibleCols, setVisibleCols] = useState(() => {
     try { const s = JSON.parse(localStorage.getItem("leadsColumns")); if (Array.isArray(s) && s.length) {
-      if (!localStorage.getItem("leadsColumnsV2")) { localStorage.setItem("leadsColumnsV2", "1"); return [...new Set([...s, "company_name", "deal_value"])]; }
+      if (!localStorage.getItem("leadsColumnsV3")) { localStorage.setItem("leadsColumnsV3", "1"); return [...new Set([...s, "company_name", "deal_value", "prospect_category", "store_count"])]; }
       return s;
     } } catch { /* noop */ }
     return DEFAULT_COLS;

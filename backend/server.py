@@ -794,6 +794,12 @@ async def _seed_defaults():
         logger.info("Seeded SaaS starter funnel tags + KPI milestones")
     from core.b2b_seed import seed_b2b_starter
     await seed_b2b_starter()
+    # Resume AI prospecting after a restart instead of waiting for the next cron tick.
+    from core import prospector
+    if (await prospector.get_settings())["enabled"]:
+        from routes.prospecting import _spawn
+        await db.settings.update_one({"key": "prospect_lock"}, {"$set": {"until": ""}})  # previous process is gone
+        _spawn(prospector.run_worker(840, "startup"))
     await db.import_jobs.update_many({"status": "running"}, {"$set": {
         "status": "done", "fatal": "Server restarted during the import — re-upload the file (duplicate mode 'skip' avoids repeats)"}})
     logger.info("Seed defaults complete")

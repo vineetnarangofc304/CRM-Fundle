@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { ArrowLeft, LinkedinLogo, Globe, Sparkle, UserPlus, Storefront } from "@phosphor-icons/react";
 import { API, apiErr } from "../lib/api";
 import { SEGMENT_STYLE } from "../lib/prospecting";
+import { useAuth } from "../context/AuthContext";
 
 const Row = ({ label, children, testid }) => (
   <div className="flex gap-3 border-b border-slate-50 py-2 text-sm" data-testid={testid}>
@@ -16,12 +17,17 @@ const ext = (url, label) => url ? <a href={url} target="_blank" rel="noreferrer"
 
 export default function ProspectDetail() {
   const { id } = useParams();
+  const { user } = useAuth();
   const [p, setP] = useState(null);
-  const load = useCallback(() => API.get(`/prospecting/prospects/${id}`).then(({ data }) => setP(data)).catch((e) => toast.error(apiErr(e))), [id]);
-  useEffect(() => { load(); }, [load]);
+  const [denied, setDenied] = useState(false);
+  const load = useCallback(() => API.get(`/prospecting/prospects/${id}`).then(({ data }) => setP(data)).catch((e) => {
+    if (e?.response?.status === 403) setDenied(true); else toast.error(apiErr(e));
+  }), [id]);
+  useEffect(() => { if (["admin", "manager"].includes(user?.role)) load(); else setDenied(true); }, [load, user]);
   useEffect(() => { if (p?.status !== "enriching") return undefined; const t = setInterval(load, 8000); return () => clearInterval(t); }, [p?.status, load]);
   const research = async () => { try { await API.post(`/prospecting/prospects/${id}/research`); toast.success("Deep research started — takes about a minute"); load(); } catch (e) { toast.error(apiErr(e)); } };
   const toLead = async () => { try { const { data } = await API.post(`/prospecting/prospects/${id}/lead`); toast.success("Lead updated"); setP({ ...p, lead_id: data.lead_id }); } catch (e) { toast.error(apiErr(e)); } };
+  if (denied) return <div className="p-8 text-sm text-slate-500" data-testid="prospect-denied">AI Prospecting is available to admins and managers only.</div>;
   if (!p) return <div className="p-8 text-sm text-slate-400">Loading…</div>;
   return (
     <div className="space-y-5 p-6" data-testid="prospect-detail">

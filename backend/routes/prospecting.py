@@ -130,11 +130,12 @@ async def get_prospect(pid: int, user: dict = Depends(require_roles("admin", "ma
 @router.post("/prospecting/prospects/{pid}/research")
 async def research_now(pid: int, user: dict = Depends(require_roles("admin", "manager"))):
     p = await db.prospects.find_one_and_update({"id": pid, "status": {"$ne": "enriching"}},
-                                               {"$set": {"status": "enriching", "enrich_attempts": 0}},
+                                               {"$set": {"status": "enriching", "enrich_attempts": 0,
+                                                         "enrich_started_at": pe.now_utc_str()}},
                                                projection={"_id": 0})
     if not p:
         raise HTTPException(status_code=409, detail="Research already in progress or prospect not found")
-    _spawn(pe.enrich(p))
+    _spawn(pe.enrich({**p, "enrich_attempts": 0}))
     return {"ok": True}
 
 
