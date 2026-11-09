@@ -32,7 +32,14 @@ This CRM is already live (React + FastAPI + MongoDB). Do NOT change any existing
 
   Insert each new company with an upsert on (country, company_key), and add a Lead for each one (source "AI Prospecting"). A category counts as saturated when 3 runs in a row add fewer than 3 companies and every angle has been used. Saturated categories are re-checked after 7 days.
 - **Deep research (Gemini Pro + Google Search):** for each "discovered" company (largest first), fill in the model fields above, including the list of product BRANDS the company owns. Update the linked Lead.
-- **Contact finder (Gemini Pro + Google Search, plus a DNS MX check on the domain):** find up to 6 decision makers, with work emails only if published, otherwise a pattern guess marked "pattern". The target roles, IN THIS PRIORITY:
+- **Contact finder (Gemini Pro + Google Search, plus a DNS MX check on the domain):** run several searches across:
+  - LinkedIn profiles via Google (`site:linkedin.com/in "<company>" "trade marketing"` and the same for each role), plus the People section of the company's LinkedIn page.
+  - Press releases (PR Newswire, Business Wire, PTI).
+  - Articles, interviews and appointment news ("appointed as", "joins as") in business papers and magazines: Economic Times, ET Infra, Business Standard, Mint, Financial Express, Construction World, Gulf News, Khaleej Times.
+  - The company's team pages.
+  - RocketReach, ZoomInfo and Apollo snippets.
+
+  Confirm each person is currently in the role, and keep their LinkedIn URL and the source URL. Find up to 6 decision makers, with work emails only if published, otherwise a pattern guess marked "pattern". The target roles, IN THIS PRIORITY:
   - CEO, MD or Founder
   - CMO or Head of Marketing
   - CTO, CIO or Head of IT/Digital

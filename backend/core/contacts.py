@@ -8,8 +8,15 @@ import dns.resolver
 from core.db import db
 from core.utils import now_utc_str
 
-CONTACT_SYS = ("You are a B2B contact researcher. Use Google Search (company site, LinkedIn, press releases, news, "
-               "RocketReach/SignalHire/ZoomInfo/Apollo snippets) to find decision makers and their WORK emails. "
+CONTACT_SYS = ("You are a B2B contact researcher. Run SEVERAL Google searches, using all of these sources: "
+               "(1) LinkedIn profiles via Google, e.g. site:linkedin.com/in \"<brand>\" CMO OR \"Head of Marketing\" OR CEO, "
+               "and the company's LinkedIn page People section; (2) press releases (PR Newswire, Business Wire, PTI, ANI); "
+               "(3) articles and interviews in business papers and magazines (Economic Times, ET Retail, ET BrandEquity, "
+               "Business Standard, Mint, Financial Express, Afaqs, exchange4media, Inc42, YourStory, Entrackr, Forbes India, "
+               "Gulf News, Khaleej Times, Arabian Business for UAE), plus 'appointed as' / 'joins as' / 'elevated to' "
+               "appointment news; (4) the company website team/about/contact pages; (5) RocketReach/SignalHire/ZoomInfo/"
+               "Apollo/Lusha snippets. Prefer people currently in the role (check recent dates) and give the LinkedIn "
+               "URL whenever found. Find decision makers and their WORK emails. "
                "Never invent an email: only return one you saw published, or mark it as a pattern guess. Reply with JSON only.")
 
 
@@ -58,6 +65,8 @@ async def find_contacts(p: dict) -> dict:
               f"CEO (if known): {p.get('ceo_name') or 'unknown'}.\n"
               "Find up to 4 decision makers for buying a customer-loyalty / CRM platform: the CEO / MD / Founder and the "
               "head of Marketing / CMO / Head of CRM, Loyalty or Customer Experience (also Head of Retail / Digital if no CMO).\n"
+              "Search LinkedIn profiles via Google AND recent news/press releases/magazine interviews and appointment "
+              "announcements to confirm names and current roles; put the best source URL in evidence_url.\n"
               "Also find the company's email address FORMAT (e.g. firstname.lastname@domain) if published anywhere.\n"
               'Return JSON: {"email_pattern": str|null, "contacts": [{"name": str, "role": str, "linkedin": str|null, '
               '"email": str|null, "email_status": "published"|"pattern"|null, "evidence_url": str|null}]}')
