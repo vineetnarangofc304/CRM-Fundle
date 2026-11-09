@@ -60,7 +60,7 @@ def seed():
     mdb.prospects.insert_many([{**b, **d, "brand_name": f"TEST_rq_{d['id']}", "brand_key": f"test_rq_{d['id']}"} for d in docs])
     yield
     mdb.prospects.delete_many({"id": {"$in": IDS}})
-    mdb.settings.update_one({"key": "prospecting"}, {"$set": {"enabled": True}})
+    mdb.settings.update_one({"key": "prospecting"}, {"$set": {"enabled": False}})  # preview must stay disabled
 
 
 def g(i):

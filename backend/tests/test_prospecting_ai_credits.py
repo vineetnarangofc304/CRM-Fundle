@@ -2,12 +2,14 @@
 import os
 import time
 import pytest
+import sys
 import requests
 from pymongo import MongoClient
 from dotenv import load_dotenv
 
 load_dotenv("/app/frontend/.env")
 load_dotenv("/app/backend/.env")
+sys.path.insert(0, "/app/backend")
 BASE_URL = os.environ.get("REACT_APP_BACKEND_URL").rstrip("/")
 mdb = MongoClient(os.environ["MONGO_URL"])[os.environ["DB_NAME"]]
 TEST_IDS = [9990001, 9990002]
@@ -25,6 +27,7 @@ def client():
 
 @pytest.fixture(scope="module", autouse=True)
 def test_prospects():
+    mdb.settings.update_one({"key": "prospecting"}, {"$set": {"enabled": True}}, upsert=True)
     mdb.prospects.delete_many({"id": {"$in": TEST_IDS}})
     base = {"country": "TEST_Land", "category": "TEST_cat", "store_count": None, "brand_key": "test"}
     mdb.prospects.insert_many([
@@ -35,6 +38,7 @@ def test_prospects():
     ])
     yield
     mdb.prospects.delete_many({"id": {"$in": TEST_IDS}})
+    mdb.settings.update_one({"key": "prospecting"}, {"$set": {"enabled": False}}, upsert=True)  # preview must stay disabled
 
 
 class TestAiCredits:
@@ -68,7 +72,9 @@ class TestAiCredits:
         assert finished is not None, "worker did not finish within 90s"
         assert took < 60
         assert finished.get("ai_blocked_at")
-        assert "spend limit" in finished.get("ai_blocked_reason", "").lower()
+        import re as _re
+        from core.prospector import QUOTA_REGEX
+        assert _re.search(QUOTA_REGEX, finished.get("ai_blocked_reason", ""), _re.I), finished.get("ai_blocked_reason")
 
     def test_overview_returns_blocked(self, client):
         r = client.get(f"{BASE_URL}/api/prospecting/overview")

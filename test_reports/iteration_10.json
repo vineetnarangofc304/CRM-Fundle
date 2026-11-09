@@ -1,0 +1,41 @@
+{
+  "summary": "Backend-only retest of the quota-detection fix for AI prospecting. 45/45 tests pass: 18 new unit/method tests in test_prospecting_quota_markers.py plus 27 regression tests (ai_credits, requeue, watchdog) run live against the preview LLM key, which returns real Gemini 429 errors. Results: (1) _QUOTA_MARKERS/QUOTA_REGEX match the Gemini 429 'exceeded your current quota', RateLimitError, RESOURCE_EXHAUSTED, 'No deployments available', 'overloaded' and the old 'spend limit' errors. They do not match timeout, bad JSON or connection errors. (2) _ask: a quota error on PRO retries once on FLASH. If FLASH also fails, AiCreditsOut is raised and ai_blocked_at/ai_blocked_reason are set. FLASH does not retry itself, and a non-quota PRO error does not fall back. (3) An enrich() hit by a 429 goes back to discovered with enrich_attempts unchanged. (4) requeue_failed returns 429 and 'No deployments' failures to discovered at once, with no retry_rounds increase, even when the brand is at max rounds. Quota contact failures are also cleared. (5) A live /api/prospecting/run stopped in about 17-20s with ai_blocked_reason holding the real 429 text. 0 new failed brands and 0 stuck in enriching. (6) Watchdog writes watchdog_action='ok' when prospecting is disabled and 'restarted' when it is enabled. Final state: prospecting enabled=false, all TEST_ prospects removed, 0 failed brands in the preview DB.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "core/prospector.py _QUOTA_MARKERS", "issue": "The marker '429' is a plain substring check, and 'budget' is a broad word. Any error text containing '429' (for example inside an id or a number) is treated as a quota error and stops all lanes. Low risk, but a word-boundary regex like '\\b429\\b' would be safer."},
+      {"endpoint": "core/prospector.py _ask / run_worker", "issue": "'overloaded' (a short 503-type error) is now treated as quota, so one overloaded reply stops the whole 14-minute batch. Nothing runs again until the next cron or hourly watchdog. That fits the 'retrying' pill, but it is an unnecessary loss of throughput. Consider a short backoff and retry for overloaded before raising AiCreditsOut."},
+      {"endpoint": "core/prospector.py run_worker finally (carried over from iteration 9)", "issue": "When a stuck run finally exits, its finally block still sets until='' and can release the lock of a newer, watchdog-started batch. Not addressed in this round."}
+    ]
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_prospecting_quota_markers.py",
+    "/app/backend/tests/test_prospecting_ai_credits.py",
+    "/app/backend/tests/test_prospecting_requeue.py",
+    "/app/backend/tests/test_prospecting_watchdog.py",
+    "/app/test_reports/pytest/pytest_quota_markers.xml",
+    "/app/test_reports/pytest/pytest_regression_iter10.xml"
+  ],
+  "action_items": [
+    "Optional: use a word-boundary match for '429' in quota detection.",
+    "Optional: retry briefly with backoff on 'overloaded' before stopping the batch.",
+    "Optional (from iteration 9): use a run token so an old run's finally block cannot clear a newer run's lock."
+  ],
+  "critical_code_review_comments": [
+    "Quota detection still relies on matching error text. Checking the exception class too (litellm RateLimitError, or a status_code attribute of 429) would hold up if the provider changes its wording again.",
+    "When the AI is blocked, there is no auto-retry inside a batch. Recovery depends on the cron/watchdog schedule, so make sure the production cron interval matches the 'retrying' message."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_prospecting_quota_markers.py (new)",
+    "/app/backend/tests/test_prospecting_ai_credits.py (blocked-reason assertion now uses QUOTA_REGEX; fixture enables prospecting for the run and sets enabled=false at teardown)",
+    "/app/backend/tests/test_prospecting_requeue.py (teardown now leaves enabled=false)",
+    "/app/backend/tests/test_prospecting_watchdog.py (asserts watchdog_action=='ok' when disabled)"
+  ],
+  "success_rate": {"backend": "100% (45/45)", "frontend": "not tested (backend only requested)"},
+  "seed_data_creation": "Temporary TEST_ prospects with ids 990001-990013, 991001-991006, 9990001-9990002 (country TEST_Land). All deleted by id at teardown.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Run the prospecting suites serially: pytest tests/test_prospecting_*.py -n 0. With xdist (-n 2 loadscope) the module-scoped seed fixture runs once per worker and hits the duplicate-key index. The preview LLM key returns real Gemini 429 errors, so live runs stop in about 20s. Every suite must leave settings.prospecting.enabled=false.",
+  "test_credentials": "Admin vineetnarangofc@gmail.com / Fundle@cf928c (from /app/memory/test_credentials.md) - works"
+}

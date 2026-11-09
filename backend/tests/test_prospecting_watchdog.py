@@ -132,7 +132,7 @@ class TestWatchdog:
         time.sleep(3)
         lk = lock()
         assert lk["until"] == "" and lk["trigger"] == "cron"  # disabled -> run_worker not spawned
-        print("watchdog_action when disabled:", lk["watchdog_action"])
+        assert lk["watchdog_action"] == "ok"  # disabled -> nothing restarted
 
     def test_restart_spawns_worker_and_migration_once(self):
         mdb.settings.delete_one({"key": "prospect_angles_v2"})

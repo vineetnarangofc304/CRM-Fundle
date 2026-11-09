@@ -103,19 +103,26 @@ class AiCreditsOut(Exception):
 
 
 _QUOTA_MARKERS = ("spend limit", "budget", "insufficient balance", "insufficient_quota", "exceeded your current quota",
-                  "ratelimit", "rate limit", "resource_exhausted", "429", "no deployments available", "overloaded")
+                  "ratelimit", "rate limit", "resource_exhausted", r"\b429\b", "no deployments available")
 QUOTA_REGEX = "|".join(_QUOTA_MARKERS)
+_QUOTA_RE = re.compile(QUOTA_REGEX, re.I)
 _blocked = {"on": None}
 
 
 async def _call(model: str, system: str, prompt: str):
     chat = (LlmChat(api_key=os.environ["EMERGENT_LLM_KEY"], session_id=f"prospect-{time.time_ns()}",
                     system_message=system).with_model("gemini", model).with_tools([{"googleSearch": {}}]))
-    return await asyncio.wait_for(chat.send_message_with_tools(UserMessage(text=prompt)), timeout=240)
+    for attempt in range(3):
+        try:
+            return await asyncio.wait_for(chat.send_message_with_tools(UserMessage(text=prompt)), timeout=240)
+        except Exception as e:
+            if attempt == 2 or not re.search(r"overloaded|\b503\b|unavailable", str(e), re.I):
+                raise
+            await asyncio.sleep(20 * (attempt + 1))
 
 
 def _is_quota(e) -> bool:
-    return any(m in str(e).lower() for m in _QUOTA_MARKERS)
+    return bool(_QUOTA_RE.search(str(e)))
 
 
 async def _ask(model: str, system: str, prompt: str) -> str:
@@ -418,14 +425,15 @@ async def watchdog(enabled: bool = True):
 
 async def run_worker(max_seconds: int = 840, trigger: str = "cron"):
     now = datetime.now(timezone.utc)
+    my_until = (now + timedelta(seconds=max_seconds + 120)).isoformat()
     lock = await db.settings.find_one_and_update(
         {"key": "prospect_lock", "$or": [{"until": {"$lt": now.isoformat()}}, {"until": {"$exists": False}}]},
-        {"$set": {"until": (now + timedelta(seconds=max_seconds + 120)).isoformat(), "started": now_utc_str(),
+        {"$set": {"until": my_until, "started": now_utc_str(),
                   "trigger": trigger}}, upsert=False)
     if lock is None:
         if await db.settings.find_one({"key": "prospect_lock"}):
             return {"skipped": "already running"}
-        await db.settings.insert_one({"key": "prospect_lock", "until": (now + timedelta(seconds=max_seconds + 120)).isoformat(),
+        await db.settings.insert_one({"key": "prospect_lock", "until": my_until,
                                       "started": now_utc_str(), "trigger": trigger})
     settings = await get_settings()
     stats = {"added": 0, "enriched": 0, "discover_runs": 0}
@@ -449,7 +457,8 @@ async def run_worker(max_seconds: int = 840, trigger: str = "cron"):
     except Exception:
         logger.exception("prospecting worker failed")
     finally:
-        await db.settings.update_one({"key": "prospect_lock"}, {"$set": {"until": "", "last_finished": now_utc_str(),
+        await db.settings.update_one({"key": "prospect_lock", "until": my_until}, {"$set": {"until": ""}})
+        await db.settings.update_one({"key": "prospect_lock"}, {"$set": {"last_finished": now_utc_str(),
                                                                          "last_stats": stats}})
         from routes import leads as leads_routes
         leads_routes._count_cache.clear()
