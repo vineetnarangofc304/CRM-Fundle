@@ -4,8 +4,9 @@ import { toast } from "sonner";
 import { PaperPlaneTilt, CheckCircle, XCircle, LinkedinLogo, Copy, StopCircle, Play, GearSix } from "@phosphor-icons/react";
 import { API, apiErr } from "../lib/api";
 import { useAuth } from "../context/AuthContext";
+import { EmailTemplates } from "../components/EmailTemplates";
 
-const TABS = [["pending_approval", "Needs approval"], ["approved", "Approved / scheduled"], ["sent", "Sent"], ["failed", "Failed"], ["stopped", "Stopped"], ["rejected", "Rejected"]];
+const TABS = [["pending_approval", "Needs review"], ["approved", "Approved / scheduled"], ["sent", "Sent"], ["failed", "Failed"], ["stopped", "Stopped"], ["rejected", "Rejected"]];
 
 function SettingsPanel({ s, isAdmin, reload }) {
   const [f, setF] = useState(s);
@@ -28,6 +29,7 @@ function SettingsPanel({ s, isAdmin, reload }) {
         <label className="font-semibold text-slate-500">Email signature<textarea data-testid="outreach-signature" rows={3} className="crm-input mt-1 w-full" value={f.signature} onChange={(e) => setF({ ...f, signature: e.target.value })} /></label>
         <label className="font-semibold text-slate-500">CC every outreach email to<input data-testid="outreach-cc" type="email" className="crm-input mt-1 w-full" value={f.cc || ""} onChange={(e) => setF({ ...f, cc: e.target.value })} /></label>
         <label className="flex items-center gap-2 font-semibold text-slate-600"><input data-testid="outreach-auto-send" type="checkbox" checked={!!f.auto_send} onChange={(e) => setF({ ...f, auto_send: e.target.checked })} /> Send automatically (no approval)</label>
+        <label className="flex items-center gap-2 font-semibold text-slate-600"><input data-testid="outreach-ai-sequence" type="checkbox" checked={!!f.ai_sequence} onChange={(e) => setF({ ...f, ai_sequence: e.target.checked })} /> Also write the old 3-email AI sequence</label>
         <label className="flex items-center gap-2 font-semibold text-slate-600"><input data-testid="outreach-enabled" type="checkbox" checked={f.enabled} onChange={(e) => setF({ ...f, enabled: e.target.checked })} /> Outreach agent on</label>
       </div>
       {isAdmin && <button data-testid="outreach-settings-save" onClick={save} className="crm-btn-primary mt-3 !py-1.5 text-xs">Save settings</button>}
@@ -42,11 +44,14 @@ function MessageCard({ m, reload, selected, onSelect }) {
   const save = async () => { try { await API.patch(`/outreach/messages/${m.id}`, d); toast.success("Saved"); setEdit(false); reload(); } catch (e) { toast.error(apiErr(e)); } };
   const li = m.channel === "linkedin";
   const canAct = ["pending_approval", "failed"].includes(m.status);
+  const tpl = m.kind === "template";
+  const sendNow = async () => { try { await API.post(`/outreach/messages/${m.id}/send-now`); toast.success(`Sent to ${m.to}`); reload(); } catch (e) { toast.error(apiErr(e)); } };
   return (
     <div className="crm-card p-4" data-testid={`outreach-msg-${m.id}`}>
       <div className="flex flex-wrap items-center gap-2 text-xs">
-        {m.step === 1 && m.channel === "email" && canAct && <input type="checkbox" data-testid={`outreach-select-${m.seq_id}`} checked={selected} onChange={() => onSelect(m.seq_id)} />}
-        <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${li ? "bg-[#0A66C2]/10 text-[#0A66C2]" : "bg-[#1A73E8]/10 text-[#1557B0]"}`}>{li ? "LinkedIn" : `Email ${m.step}/3`}</span>
+        {tpl && canAct && <input type="checkbox" data-testid={`outreach-select-msg-${m.id}`} checked={selected} onChange={() => onSelect(m.id)} />}
+        {m.step === 1 && m.channel === "email" && canAct && !tpl && <input type="checkbox" data-testid={`outreach-select-${m.seq_id}`} checked={selected} onChange={() => onSelect(m.seq_id)} />}
+        <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${li ? "bg-[#0A66C2]/10 text-[#0A66C2]" : "bg-[#1A73E8]/10 text-[#1557B0]"}`}>{li ? "LinkedIn" : tpl ? m.template_name : `Email ${m.step}/3`}</span>
         <Link to={`/prospecting/${m.prospect_id}`} className="font-bold text-slate-800 hover:underline">{m.brand}</Link>
         <span className="text-slate-400">{m.category}</span>
         {m.fit_score != null && <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-700">Fit {m.fit_score}</span>}
@@ -68,10 +73,13 @@ function MessageCard({ m, reload, selected, onSelect }) {
         <div className="mt-2">
           {!li && <div className="text-sm font-bold text-slate-800">{m.subject}</div>}
           {li ? <p className="whitespace-pre-wrap text-sm text-slate-600">{m.body}</p> : <div className="prose prose-sm max-w-none text-slate-600" dangerouslySetInnerHTML={{ __html: m.body }} />}
+          {(m.attachments?.length > 0 || m.video_links?.length > 0) && <div className="mt-1 flex flex-wrap gap-2 text-[11px] text-slate-500" data-testid={`outreach-extras-${m.id}`}>
+            {m.attachments?.map((a) => <span key={a.file_id}>📎 {a.filename}</span>)}{m.video_links?.map((v) => <span key={v}>🎬 {v}</span>)}</div>}
         </div>
       )}
       <div className="mt-3 flex flex-wrap gap-2">
-        {canAct && !li && m.step === 1 && <button data-testid={`outreach-approve-seq-${m.seq_id}`} onClick={() => act(`/outreach/sequences/${m.seq_id}/approve`, "Sequence approved — email 1 goes out on the next run")} className="crm-btn-primary !py-1 text-xs"><CheckCircle size={14} /> Approve sequence</button>}
+        {!li && ["pending_approval", "approved", "failed"].includes(m.status) && <button data-testid={`outreach-send-now-${m.id}`} onClick={sendNow} className="crm-btn-primary !py-1 text-xs"><PaperPlaneTilt size={14} /> Send now</button>}
+        {canAct && !li && m.step === 1 && !tpl && <button data-testid={`outreach-approve-seq-${m.seq_id}`} onClick={() => act(`/outreach/sequences/${m.seq_id}/approve`, "Sequence approved — email 1 goes out on the next run")} className="crm-btn-primary !py-1 text-xs"><CheckCircle size={14} /> Approve sequence</button>}
         {canAct && <button data-testid={`outreach-approve-${m.id}`} onClick={() => act(`/outreach/messages/${m.id}/approve`, "Approved")} className="crm-btn-secondary !py-1 text-xs"><CheckCircle size={14} /> Approve this</button>}
         {["pending_approval", "approved", "failed"].includes(m.status) && <button data-testid={`outreach-edit-${m.id}`} onClick={() => setEdit(!edit)} className="crm-btn-secondary !py-1 text-xs">{edit ? "Cancel" : "Edit"}</button>}
         {li && m.status !== "sent" && <>
@@ -93,6 +101,7 @@ export default function Outreach() {
   const [channel, setChannel] = useState("");
   const [data, setData] = useState({ items: [], total: 0 });
   const [sel, setSel] = useState([]);
+  const [view, setView] = useState("messages");
   const load = useCallback(() => {
     if (!["admin", "manager"].includes(user?.role)) return;
     API.get("/outreach/settings").then(({ data: d }) => { setS(d); setTab((t) => t || (d.auto_send ? "approved" : "pending_approval")); }).catch((e) => toast.error(apiErr(e)));
@@ -102,7 +111,16 @@ export default function Outreach() {
   }, [tab, channel]);
   useEffect(() => { load(); }, [load]);
   const count = (st) => (stats.email?.[st] || 0) + (stats.linkedin?.[st] || 0);
-  const bulk = async () => { try { const { data: d } = await API.post("/outreach/bulk-approve", { seq_ids: sel }); toast.success(`${d.approved} messages approved`); setSel([]); load(); } catch (e) { toast.error(apiErr(e)); } };
+  const bulk = async () => {
+    try {
+      const tplIds = sel.filter((x) => typeof x === "string").map((x) => Number(x.slice(1)));
+      const seqIds = sel.filter((x) => typeof x === "number");
+      let n = 0;
+      if (tplIds.length) n += (await API.post("/outreach/messages/send-selected", { ids: tplIds })).data.queued;
+      if (seqIds.length) n += (await API.post("/outreach/bulk-approve", { seq_ids: seqIds })).data.approved;
+      toast.success(`${n} emails finalised — they go out within 15 min`); setSel([]); load();
+    } catch (e) { toast.error(apiErr(e)); }
+  };
   const runNow = async () => {
     try { await API.post("/outreach/run"); toast.success("Outreach run started — drafts appear in a minute"); setTimeout(load, 30000); }
     catch (e) { toast.error(apiErr(e)); }
@@ -114,13 +132,19 @@ export default function Outreach() {
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="flex items-center gap-2 font-display text-3xl font-extrabold text-slate-900"><PaperPlaneTilt size={28} className="text-[#1A73E8]" /> Outreach</h1>
-          <p className="text-sm text-slate-500" data-testid="outreach-mode-text">AI drafts a 3-email sequence + LinkedIn notes for every brand with an email. {s.auto_send ? `Emails send automatically (max ${s.daily_cap}/day${s.cc ? `, CC ${s.cc}` : ""}).` : "Nothing is sent until you approve it."}</p>
+          <p className="text-sm text-slate-500" data-testid="outreach-mode-text">AI tailors your email templates for each contact. {s.auto_send ? `Auto templates send on their own (max ${s.daily_cap}/day${s.cc ? `, CC ${s.cc}` : ""}); manual ones are click-to-send from each brand page.` : "Nothing is sent until you approve it."}</p>
         </div>
         <button data-testid="outreach-run-now" onClick={runNow} className="crm-btn-primary !py-1.5 text-xs"><Play size={14} /> Run now</button>
       </div>
       {!s.mail_connected && <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800" data-testid="outreach-mail-warning">No email account connected — approved emails will wait. <Link to="/admin?tab=Email" className="font-bold underline">Connect Outlook in Admin → Email</Link></div>}
       {s.last_run?.at && <p className="text-[11px] text-slate-400">Last run {s.last_run.at} UTC · drafted {s.last_run.stats?.drafted ?? 0} · sent {s.last_run.stats?.sent ?? 0} · via {s.mail_provider}</p>}
       <SettingsPanel s={s} isAdmin={user.role === "admin"} reload={load} />
+      <div className="flex gap-1 border-b border-slate-200" data-testid="outreach-view-tabs">
+        {[["messages", "Emails & review"], ["templates", "Email templates"]].map(([k, l]) => (
+          <button key={k} data-testid={`outreach-view-${k}`} onClick={() => setView(k)} className={`-mb-px border-b-2 px-4 py-2 text-sm font-bold transition-colors ${view === k ? "border-[#1A73E8] text-[#1557B0]" : "border-transparent text-slate-500 hover:text-slate-700"}`}>{l}</button>
+        ))}
+      </div>
+      {view === "templates" ? <EmailTemplates /> : <>
       <div className="flex flex-wrap items-center gap-2">
         {TABS.map(([k, l]) => (
           <button key={k} data-testid={`outreach-tab-${k}`} onClick={() => { setTab(k); setSel([]); }} className={`rounded-full px-3 py-1.5 text-xs font-bold transition-colors ${tab === k ? "bg-[#1A73E8] text-white" : "bg-white text-slate-600 hover:bg-slate-100"}`}>{l} · {count(k)}</button>
@@ -128,12 +152,13 @@ export default function Outreach() {
         <select data-testid="outreach-channel" className="crm-select !w-36 !py-1 text-xs" value={channel} onChange={(e) => setChannel(e.target.value)}>
           <option value="">All channels</option><option value="email">Email</option><option value="linkedin">LinkedIn</option>
         </select>
-        {sel.length > 0 && <button data-testid="outreach-bulk-approve" onClick={bulk} className="crm-btn-primary ml-auto !py-1.5 text-xs"><CheckCircle size={14} /> Approve {sel.length} sequences</button>}
+        {sel.length > 0 && <button data-testid="outreach-bulk-approve" onClick={bulk} className="crm-btn-primary ml-auto !py-1.5 text-xs"><CheckCircle size={14} /> Finalise & send {sel.length}</button>}
       </div>
       <div className="space-y-3">
-        {data.items.length === 0 && <div className="crm-card p-10 text-center text-xs text-slate-400" data-testid="outreach-empty">Nothing here yet. Drafts appear automatically once researched brands have a contact email and a fit score ≥ {s.min_score}.</div>}
-        {data.items.map((m) => <MessageCard key={m.id} m={m} reload={load} selected={sel.includes(m.seq_id)} onSelect={(id) => setSel((x) => (x.includes(id) ? x.filter((y) => y !== id) : [...x, id]))} />)}
+        {data.items.length === 0 && <div className="crm-card p-10 text-center text-xs text-slate-400" data-testid="outreach-empty">Nothing here yet. Click a template next to a contact on any brand page, or switch a template to Auto.</div>}
+        {data.items.map((m) => { const key = m.kind === "template" ? `t${m.id}` : m.seq_id; return <MessageCard key={m.id} m={m} reload={load} selected={sel.includes(key)} onSelect={() => setSel((x) => (x.includes(key) ? x.filter((y) => y !== key) : [...x, key]))} />; })}
       </div>
+      </>}
     </div>
   );
 }

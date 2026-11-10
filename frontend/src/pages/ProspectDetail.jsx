@@ -21,14 +21,19 @@ const EMAIL_BADGE = {
 };
 
 function ContactsCard({ p, reload }) {
-  const [drafting, setDrafting] = useState(false);
+  const [busy, setBusy] = useState("");
+  const [tpls, setTpls] = useState([]);
+  const [hist, setHist] = useState([]);
+  const loadHist = useCallback(() => API.get(`/prospecting/prospects/${p.id}/emails`).then(({ data }) => setHist(data)).catch(() => {}), [p.id]);
+  useEffect(() => { API.get("/outreach/templates").then(({ data }) => setTpls(data.filter((t) => t.active))).catch(() => {}); loadHist(); }, [loadHist]);
   const find = async () => { try { await API.post(`/prospecting/prospects/${p.id}/contacts`); toast.success("Email finder started — about a minute"); setTimeout(reload, 45000); } catch (e) { toast.error(apiErr(e)); } };
-  const draft = async (i) => {
-    setDrafting(true);
-    try { await API.post(`/prospecting/prospects/${p.id}/draft`, { contact_index: i }); toast.success("Outreach drafted — review it in Outreach"); reload(); }
-    catch (e) { toast.error(apiErr(e)); } finally { setDrafting(false); }
+  const useTpl = async (i, t) => {
+    setBusy(`${i}-${t.id}`);
+    try { await API.post(`/prospecting/prospects/${p.id}/use-template`, { template_id: t.id, contact_index: i }); toast.success(`“${t.name}” tailored — review & send it in Outreach → Needs review`); loadHist(); }
+    catch (e) { toast.error(apiErr(e)); } finally { setBusy(""); }
   };
   const cs = p.contacts || [];
+  const sentTo = (c) => hist.filter((h) => h.to === c.email);
   return (
     <div className="crm-card p-4" data-testid="prospect-contacts">
       <div className="mb-2 flex flex-wrap items-center gap-2">
@@ -46,10 +51,14 @@ function ContactsCard({ p, reload }) {
           <tbody>
             {cs.map((c, i) => (
               <tr key={i} className="border-t border-slate-50" data-testid={`prospect-contact-${i}`}>
-                <td className="py-2 font-bold text-slate-800">{c.name}<div className="text-[11px] font-normal text-slate-500">{c.role}</div></td>
+                <td className="py-2 font-bold text-slate-800">{c.name}<div className="text-[11px] font-normal text-slate-500">{c.role}</div>
+                  {sentTo(c).length > 0 && <div className="mt-1 space-y-0.5" data-testid={`prospect-contact-history-${i}`}>{sentTo(c).slice(0, 4).map((h) => (
+                    <div key={h.id} className="text-[10px] font-normal text-slate-500">{h.template_name || `Email ${h.step}/3`} · <b className={h.status === "sent" ? "text-emerald-600" : "text-amber-600"}>{h.status.replace("_", " ")}</b>{h.sent_at ? ` ${h.sent_at}` : ""}</div>))}</div>}
+                </td>
                 <td className="text-xs">{c.email ? <>{c.email} {EMAIL_BADGE[c.email_status] && <span className={`ml-1 rounded px-1 text-[9px] font-bold ${EMAIL_BADGE[c.email_status][1]}`}>{EMAIL_BADGE[c.email_status][0]}</span>}</> : <span className="text-slate-300">no email found</span>}</td>
                 <td>{c.linkedin && <a href={c.linkedin} target="_blank" rel="noreferrer" className="text-[#0A66C2]"><LinkedinLogo size={16} weight="fill" /></a>}</td>
-                <td className="text-right">{c.email && <button data-testid={`prospect-draft-${i}`} disabled={drafting} onClick={() => draft(i)} className="text-xs font-bold text-[#1557B0] hover:underline disabled:opacity-50">{drafting ? "Drafting…" : "Draft outreach"}</button>}</td>
+                <td className="text-right">{c.email && <div className="flex flex-wrap justify-end gap-1">{tpls.map((t) => (
+                  <button key={t.id} data-testid={`prospect-tpl-${i}-${t.id}`} disabled={!!busy} onClick={() => useTpl(i, t)} title={`AI tailors “${t.name}” for ${c.name}, then you review & send`} className="rounded-full border border-[#1A73E8]/30 px-2 py-0.5 text-[10px] font-bold text-[#1557B0] transition-colors hover:bg-[#1A73E8]/10 disabled:opacity-50">{busy === `${i}-${t.id}` ? "Tailoring…" : t.name}</button>))}</div>}</td>
               </tr>
             ))}
           </tbody>

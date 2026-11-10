@@ -77,12 +77,23 @@ async def _creds() -> Credentials:
     return creds
 
 
-async def send_email(to: str, subject: str, body: str, html: bool = False, cc: str | None = None) -> dict:
+async def send_email(to: str, subject: str, body: str, html: bool = False, cc: str | None = None,
+                     attachments: list | None = None) -> dict:
     try:
         creds = await _creds()
         cfg = await get_config()
         service = build("gmail", "v1", credentials=creds, cache_discovery=False)
         msg = MIMEText(body or "", "html" if html else "plain", "utf-8")
+        if attachments:
+            from email.mime.application import MIMEApplication
+            from email.mime.multipart import MIMEMultipart
+            outer = MIMEMultipart()
+            outer.attach(msg)
+            for a in attachments:
+                part = MIMEApplication(a["data"], _subtype=(a["content_type"] or "/octet-stream").split("/")[-1])
+                part.add_header("Content-Disposition", "attachment", filename=a["filename"])
+                outer.attach(part)
+            msg = outer
         msg["to"] = to
         if cc:
             msg["cc"] = cc

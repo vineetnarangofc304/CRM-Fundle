@@ -76,7 +76,7 @@ async def exchange_code(cfg: dict, code: str, redirect: str) -> dict:
             "email": me.get("mail") or me.get("userPrincipalName"), "display_name": me.get("displayName")}
 
 
-async def _graph_send(cfg, to, subject, body, html, cc=None):
+async def _graph_send(cfg, to, subject, body, html, cc=None, attachments=None):
     try:
         tok = await _token(cfg, grant_type="refresh_token", refresh_token=dec(cfg.get("refresh_token_enc")))
     except RuntimeError as e:
@@ -89,7 +89,12 @@ async def _graph_send(cfg, to, subject, body, html, cc=None):
     payload = {"message": {"subject": subject or "(no subject)",
                            "body": {"contentType": "HTML" if html else "Text", "content": body or ""},
                            "toRecipients": [{"emailAddress": {"address": to}}],
-                           **({"ccRecipients": [{"emailAddress": {"address": cc}}]} if cc else {})}, "saveToSentItems": True}
+                           **({"ccRecipients": [{"emailAddress": {"address": cc}}]} if cc else {}),
+                           **({"attachments": [{"@odata.type": "#microsoft.graph.fileAttachment", "name": a["filename"],
+                                                "contentType": a["content_type"],
+                                                "contentBytes": base64.b64encode(a["data"]).decode()}
+                                               for a in attachments]} if attachments else {})},
+               "saveToSentItems": True}
     async with httpx.AsyncClient(timeout=30) as c:
         r = await c.post(f"{GRAPH}/me/sendMail", json=payload,
                          headers={"Authorization": f"Bearer {tok['access_token']}"})
@@ -102,7 +107,7 @@ async def _graph_send(cfg, to, subject, body, html, cc=None):
     return {"ok": True}
 
 
-async def _smtp_send(cfg, to, subject, body, html, cc=None):
+async def _smtp_send(cfg, to, subject, body, html, cc=None, attachments=None):
     sender = cfg.get("from_email") or cfg["smtp_user"]
     msg = EmailMessage()
     msg["From"] = formataddr((cfg.get("sender_name") or "Fundle.ai", sender))
@@ -115,6 +120,9 @@ async def _smtp_send(cfg, to, subject, body, html, cc=None):
         msg.add_alternative(body or "", subtype="html")
     else:
         msg.set_content(body or "")
+    for a in attachments or []:
+        mt, _, st = (a["content_type"] or "application/octet-stream").partition("/")
+        msg.add_attachment(a["data"], maintype=mt, subtype=st or "octet-stream", filename=a["filename"])
     port = int(cfg.get("smtp_port") or 587)
     try:
         await asyncio.wait_for(aiosmtplib.send(
@@ -126,12 +134,13 @@ async def _smtp_send(cfg, to, subject, body, html, cc=None):
     return {"ok": True}
 
 
-async def send_email(to: str, subject: str, body: str, html: bool = False, cc: str | None = None) -> dict:
+async def send_email(to: str, subject: str, body: str, html: bool = False, cc: str | None = None,
+                     attachments: list | None = None) -> dict:
     cfg = await get_config()
     try:
         if cfg.get("method") == "smtp":
-            return await _smtp_send(cfg, to, subject, body, html, cc)
-        return await _graph_send(cfg, to, subject, body, html, cc)
+            return await _smtp_send(cfg, to, subject, body, html, cc, attachments)
+        return await _graph_send(cfg, to, subject, body, html, cc, attachments)
     except Exception as e:
         msg = str(e)
         if "SmtpClientAuthentication is disabled" in msg:

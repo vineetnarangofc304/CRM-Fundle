@@ -17,7 +17,7 @@ DEFAULT_PITCH = ("Fundle.ai builds an AI-powered customer loyalty platform for r
                  "AI-driven personalised offers, and analytics that lift repeat purchase and customer lifetime value. "
                  "Quick to launch across all stores, integrates with POS and e-commerce.")
 DEFAULTS = {"enabled": True, "min_score": 0, "daily_cap": 100, "drafts_per_run": 30, "gaps": [3, 7],
-            "auto_send": True, "cc": "",
+            "auto_send": True, "cc": "", "ai_sequence": False,
             "pitch": DEFAULT_PITCH, "signature": "Team Fundle.ai\nhttps://fundle.ai", "sender_name": "Fundle.ai"}
 DRAFT_SYS = ("You write short, specific, human B2B outreach for an Indian/GCC/UK audience. No hype, no emojis, "
              "no fake claims or invented stats. Reference the brand's real context. Reply with JSON only.")
@@ -94,7 +94,14 @@ def _with_signature(body: str, st: dict) -> str:
 
 async def _send_one(m: dict, st: dict) -> bool:
     from core import mailer
-    res = await mailer.send_email(m["to"], m["subject"], _with_signature(m["body"], st), html=True, cc=st.get("cc") or None)
+    from core import email_templates as et
+    try:
+        files = await et.load_attachments(m.get("attachments"))
+    except Exception as e:
+        files, res = None, {"ok": False, "error": f"Attachment unavailable: {str(e)[:150]}"}
+    if files is not None:
+        body = _with_signature(m["body"] + et.video_block(m.get("video_links")), st)
+        res = await mailer.send_email(m["to"], m["subject"], body, html=True, cc=st.get("cc") or None, attachments=files)
     if not res.get("ok"):
         tries = m.get("send_attempts", 0) + 1
         retry = (datetime.now(timezone.utc) + timedelta(hours=1)).strftime("%Y-%m-%d %H:%M:%S")
@@ -113,28 +120,33 @@ async def _send_one(m: dict, st: dict) -> bool:
         await db.outreach.update_one({"seq_id": m["seq_id"], "channel": "email", "step": m["step"] + 1}, {"$set": {
             "scheduled_at": (datetime.now(timezone.utc) + timedelta(days=gaps[m["step"] - 1])).strftime("%Y-%m-%d %H:%M:%S")}})
     if m.get("lead_id"):
-        await log_message(m["lead_id"], f"📧 Outreach email {m['step']}/3 sent to {m['contact_name']} &lt;{m['to']}&gt;: <b>{m['subject']}</b>",
-                          author={"id": 0, "name": "Outreach Agent"})
+        what = f"“{m['template_name']}” email" if m.get("template_name") else f"Outreach email {m['step']}/3"
+        extra = "".join(f" · 📎 {a['filename']}" for a in m.get("attachments") or []) + (" · 🎬 video link" if m.get("video_links") else "")
+        await log_message(m["lead_id"], f"📧 {what} sent to {m['contact_name']} &lt;{m['to']}&gt;: <b>{m['subject']}</b>{extra}",
+                          author={"id": 0, "name": m.get("approved_by") or "Outreach Agent"})
     return True
 
 
 async def _stop_engaged():
     """Stop sequences whose lead has been worked by the team (moved beyond first contact)."""
-    seqs = await db.outreach.distinct("lead_id", {"status": {"$in": ["approved", "pending_approval"]}, "channel": "email"})
+    seqs = await db.outreach.distinct("lead_id", {"status": {"$in": ["approved", "pending_approval"]}, "channel": "email",
+                                                  "kind": {"$ne": "template"}})
     if not seqs:
         return
     engaged = await db.leads.distinct("id", {"id": {"$in": seqs}, "lead_stage": {"$in": ["Contacted", "Converted", "Closed"]}})
     if engaged:
-        await db.outreach.update_many({"lead_id": {"$in": engaged}, "status": {"$in": ["approved", "pending_approval"]}},
+        await db.outreach.update_many({"lead_id": {"$in": engaged}, "kind": {"$ne": "template"},
+                                       "status": {"$in": ["approved", "pending_approval"]}},
                                       {"$set": {"status": "stopped", "stop_reason": "Lead engaged by team"}})
 
 
 async def auto_approve() -> int:
-    """Auto-send mode: approve pending email drafts; step 1 goes out now, later steps follow the gaps."""
+    """Auto-send mode: approve pending AI-sequence drafts; step 1 goes out now, later steps follow the gaps."""
     now = _now()
-    r1 = await db.outreach.update_many({"status": "pending_approval", "channel": "email", "step": 1},
+    seq = {"channel": "email", "kind": {"$ne": "template"}}
+    r1 = await db.outreach.update_many({"status": "pending_approval", "step": 1, **seq},
                                        {"$set": {"status": "approved", "approved_by": "Auto-send", "approved_at": now, "scheduled_at": now}})
-    r2 = await db.outreach.update_many({"status": "pending_approval", "channel": "email", "step": {"$gt": 1}},
+    r2 = await db.outreach.update_many({"status": "pending_approval", "step": {"$gt": 1}, **seq},
                                        {"$set": {"status": "approved", "approved_by": "Auto-send", "approved_at": now}})
     if r1.modified_count or r2.modified_count:
         await db.prospects.update_many({"outreach_status": "pending_approval"}, {"$set": {"outreach_status": "approved"}})
@@ -149,8 +161,21 @@ async def _migrate_v2():
     await db.settings.insert_one({"key": "outreach_v2", "done": True})
 
 
+async def _migrate_v3():
+    """Switch to the template library: seed starters, retire unsent AI-sequence emails (Intro template replaces them)."""
+    from core import email_templates as et
+    if await db.settings.find_one({"key": "outreach_v3"}):
+        return
+    await et.seed_starters()
+    await db.settings.update_one({"key": "outreach"}, {"$set": {"ai_sequence": False}}, upsert=True)
+    await db.outreach.update_many({"kind": {"$ne": "template"}, "status": {"$in": ["pending_approval", "approved"]}},
+                                  {"$set": {"status": "stopped", "stop_reason": "Replaced by template outreach"}})
+    await db.settings.insert_one({"key": "outreach_v3", "done": True})
+
+
 async def run_outreach(trigger="cron") -> dict:
     await _migrate_v2()
+    await _migrate_v3()
     st = await get_settings()
     stats = {"drafted": 0, "sent": 0, "failed": 0}
     if not st["enabled"]:
@@ -170,13 +195,16 @@ async def run_outreach(trigger="cron") -> dict:
 
 async def _run_outreach(st, stats, trigger) -> dict:
     from core import mailer
+    from core import email_templates as et
     await db.outreach.update_many({"status": "sending"}, {"$set": {"status": "approved"}})
     await _stop_engaged()
-    f = {"outreach_seq": {"$exists": False}, "contacts": {"$elemMatch": {"email": {"$nin": [None, ""]}}}}
-    if st["min_score"] > 0:
-        f["fit_score"] = {"$gte": st["min_score"]}
-    cands = await db.prospects.find(f, {"_id": 0}
-                                    ).sort("fit_score", -1).limit(st["drafts_per_run"]).to_list(st["drafts_per_run"])
+    cands = []
+    if st["ai_sequence"]:
+        f = {"outreach_seq": {"$exists": False}, "contacts": {"$elemMatch": {"email": {"$nin": [None, ""]}}}}
+        if st["min_score"] > 0:
+            f["fit_score"] = {"$gte": st["min_score"]}
+        cands = await db.prospects.find(f, {"_id": 0}
+                                        ).sort("fit_score", -1).limit(st["drafts_per_run"]).to_list(st["drafts_per_run"])
     for p in cands:
         c = pick_contact(p)
         if c:
@@ -188,6 +216,7 @@ async def _run_outreach(st, stats, trigger) -> dict:
     if st["auto_send"]:
         stats["auto_approved"] = await auto_approve()
     if await mailer.is_connected():
+        stats["auto_template"] = await et.run_auto(st["drafts_per_run"])
         day = _now()[:10]
         sent_today = await db.outreach.count_documents({"status": "sent", "channel": "email", "sent_at": {"$gte": day}})
         for _ in range(max(0, st["daily_cap"] - sent_today)):

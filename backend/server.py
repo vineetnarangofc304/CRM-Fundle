@@ -36,6 +36,7 @@ from routes import gmail as gmail_routes
 from routes import outlook as outlook_routes
 from routes import prospecting as prospecting_routes
 from routes import outreach as outreach_routes
+from routes import email_templates as email_template_routes
 from routes import chatter as chatter_routes
 from routes import filters as filter_routes
 from routes import leads as lead_routes
@@ -210,6 +211,7 @@ api.include_router(gmail_routes.router)
 api.include_router(outlook_routes.router)
 api.include_router(prospecting_routes.router)
 api.include_router(outreach_routes.router)
+api.include_router(email_template_routes.router)
 api.include_router(wa_tracking_routes.router)
 api.include_router(meta_capi_routes.router)
 
@@ -303,6 +305,9 @@ INDEX_SPECS = [
     ("prospects", [("fit_score", -1)], {}),
     ("prospects", [("status", 1), ("contacts_status", 1), ("store_count", -1)], {}),
     ("outreach", [("id", 1)], {"unique": True}),
+    ("outreach", [("prospect_id", 1)], {}),
+    ("email_templates", [("id", 1)], {"unique": True}),
+    ("outreach_files", [("id", 1)], {"unique": True}),
     ("outreach", [("seq_id", 1), ("channel", 1), ("step", 1)], {}),
     ("outreach", [("status", 1), ("channel", 1), ("scheduled_at", 1)], {}),
     # "Ozonetel Lead" tab — a POSITIVE, selective match (only ~200 docs carry pipeline=False),

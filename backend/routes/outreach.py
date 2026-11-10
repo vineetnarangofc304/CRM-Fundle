@@ -33,6 +33,7 @@ class OutreachSettings(BaseModel):
     daily_cap: int = 100
     drafts_per_run: int = 30
     auto_send: bool = True
+    ai_sequence: bool = False
     cc: str = ""
     gaps: List[int] = [3, 7]
     pitch: str = oc.DEFAULT_PITCH
