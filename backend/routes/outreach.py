@@ -76,7 +76,7 @@ async def messages(status: Optional[str] = None, channel: Optional[str] = None, 
                    user: dict = Depends(STAFF)):
     f = {k: v for k, v in (("status", status), ("channel", channel)) if v}
     limit = max(1, min(limit, 200))
-    items = await db.outreach.find(f, {"_id": 0}).sort([("fit_score", -1), ("seq_id", 1), ("step", 1)]) \
+    items = await db.outreach.find(f, {"_id": 0}).sort([("kind", -1), ("fit_score", -1), ("seq_id", 1), ("step", 1)]) \
         .skip((max(page, 1) - 1) * limit).limit(limit).to_list(limit)
     return {"items": items, "total": await db.outreach.count_documents(f)}
 
@@ -138,10 +138,12 @@ async def bulk_approve(body: Ids, user: dict = Depends(STAFF)):
 
 @router.post("/outreach/messages/{mid}/reject")
 async def reject(mid: int, user: dict = Depends(STAFF)):
-    r = await db.outreach.update_one({"id": mid, "status": {"$in": ["pending_approval", "approved", "failed"]}},
-                                     {"$set": {"status": "rejected", "rejected_by": user["name"]}})
-    if not r.matched_count:
+    m = await db.outreach.find_one_and_update({"id": mid, "status": {"$in": ["pending_approval", "approved", "failed"]}},
+                                              {"$set": {"status": "rejected", "rejected_by": user["name"]}})
+    if not m:
         raise HTTPException(status_code=404, detail="Message not found or already sent/stopped")
+    if m.get("template_id"):
+        await db.prospects.update_one({"id": m["prospect_id"]}, {"$pull": {"tpl_sent": m["template_id"]}})
     return {"ok": True}
 
 

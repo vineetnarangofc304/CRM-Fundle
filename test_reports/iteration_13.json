@@ -1,0 +1,48 @@
+{
+  "summary": "Tested the email template library end to end. Backend: new tests/test_email_templates.py, 29 of 30 pass. Covered: live API tests, unit tests on a throw-away DB with the mailer, storage and LLM monkeypatched, and provider payload tests. Verified: the 5 starters (Intro=auto, the other 4 manual, no duplicates on repeat GET). Template CRUD and soft delete (404 on PUT after delete). Validation returns 400 for bad mode, blank name/subject/body, ftp:// or javascript: video links, and attachments over 3 MB total; <script> is stripped. ai-suggest returned 200 with a real draft (the LLM has credit right now). Uploads: pdf upload and download round-trip works; .exe and files over 3 MB are rejected; unknown id gives 404. use-template gives kind=template, pending_approval, template_name, merged placeholders, attachments and video links copied; 400 for a contact with no email or a bad index, 404 for an unknown template. History endpoint, send-now (400 'No email account connected') and send-selected (approved with scheduled_at; repeat call queues 0) all pass. Core: _send_one loads attachments from storage, puts the video block before the signature, passes CC, and logs on the lead with the template name, attachment name and video note. If storage fails, the message goes back to approved with 'Attachment unavailable' and is retried. run_auto skips no-email and tpl_sent prospects, handles mixed contacts, respects the limit and inactive templates, and adds to tpl_sent so nothing is sent twice. tailor falls back to a plain merge when the AI fails. _migrate_v3 seeds, sets ai_sequence=false, stops unsent non-template messages, leaves sent and template messages alone, and runs only once. auto_approve skips template messages. Outlook Graph fileAttachment, SMTP and Gmail MIME attachments are correct. ONE FAILURE: downloading a file whose name has non-ASCII characters returns 500. Frontend: the first page load showed a webpack 'Compiled with problems' overlay that blocked all clicks. The cause was ESLint react-hooks/rules-of-hooks: ProspectDetail.jsx named a plain function `useTpl`, so ESLint treated it as a Hook. I renamed it to applyTpl, which fixed it. After that, all flows passed: Templates tab (5 cards, AUTO/MANUAL badges), New template editor (name, mode, AI suggest with 'Writing…' state, live preview, Attach file upload, video link, save), bad video link shows an error toast and keeps the editor open. Prospect page: chips only on the contact that has an email, chip shows 'Tailoring…', toast appears, history line under the contact. Needs review: template badge, attachment and video extras, Send now (error toast with no mailbox), checkbox, 'Finalise & send 1', and the message moves to the Approved tab.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "GET /api/outreach/files/{id}", "issue": "Returns 500 when the uploaded filename has non-ASCII characters (e.g. 'broschüre–2026.pdf'). The Content-Disposition header is built from the raw filename, so starlette raises UnicodeEncodeError ('latin-1' codec). Fix: use filename*=UTF-8''<urlquoted> plus an ASCII fallback, or sanitise the filename on upload. The attachment still sends by email (only the download breaks)."},
+      {"endpoint": "core/email_templates.video_block", "issue": "Video URLs are put into href='...' without HTML escaping. Validation only checks the https?:// prefix, so a link containing a single quote can inject attributes into the outgoing email HTML. Use html.escape(v, quote=True)."},
+      {"endpoint": "POST/PUT /api/outreach/templates", "issue": "The 3 MB attachment total uses the client-sent attachments[].size and does not check that file_id exists. A client can send size=0 and bypass the limit, or point at any file id. Look up the sizes in db.outreach_files on the server."},
+      {"endpoint": "core/outreach._migrate_v3", "issue": "Has no channel filter, so it also stops pending LinkedIn drafts, not just emails. It has NOT run in preview yet (no outreach_v3 marker; last cron 04:15 was before the deploy). On the next cron it will stop about 630 messages (378 approved + 252 pending, AI-sequence email and LinkedIn). Confirm this is intended."},
+      {"endpoint": "core/email_templates.create_message", "issue": "tpl_sent is added as soon as a message is created, even if it is later rejected. Clicking 'Intro email' by hand (pending) and then rejecting it means the auto Intro never goes to that brand. run_auto also ignores leads that are already engaged (Contacted/Converted)."},
+      {"endpoint": "POST /api/outreach/files", "issue": "If object storage fails (put_object raise_for_status), the error is unhandled and returns 500 instead of a clean 502/503 with a message. The upload also checks only the file extension, not the actual file content."},
+      {"endpoint": "DELETE /api/outreach/templates/{id}", "issue": "Returns ok:true for unknown ids (no 404). seed_starters is not atomic, so concurrent first GETs could seed duplicates (unlikely)."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "ProspectDetail ContactsCard", "issue": "FIXED BY T1: the function `useTpl` triggered ESLint rules-of-hooks. This caused the webpack dev overlay (blocks all clicks) and would fail a CI production build. Renamed to applyTpl.", "selector": "[data-testid^=prospect-tpl-]", "priority": "HIGH"}
+    ],
+    "integration_issues": [
+      {"flow": "Outreach → Needs review", "issue": "Messages are sorted by fit_score with limit=100 and no pagination. Right now 252 items are pending (old AI-sequence and LinkedIn drafts), so a template email for a low-fit brand may not show in the review list at all. It only showed in this test because the TEST prospect had fit 100. Consider sorting templates first or by created_at desc, adding pagination, or adding a 'Templates' filter.", "affected_selectors": ["[data-testid^=outreach-msg-]"]}
+    ],
+    "design_issues": [
+      {"screen": "Outreach Needs review (template card)", "issues": ["Template messages show a 'Stop sequence' button, which is confusing for a single email (Reject does the same job).", "Default tab is 'Approved / scheduled' when auto_send is on, but click-to-send template messages land in 'Needs review'. The toast tells the user to go there, but the page still opens on another tab."]},
+      {"screen": "Template editor preview", "issues": ["The preview pane shows <p> paragraphs with no spacing between them (prose margins not applied), so it looks denser than the real email."]}
+    ]
+  },
+  "test_report_links": ["/app/backend/tests/test_email_templates.py", "/app/backend/tests/test_night_window_autosend.py", "/app/test_reports/pytest/pytest_email_templates_iter13.xml"],
+  "action_items": [
+    "Fix GET /api/outreach/files/{id} 500 for non-ASCII filenames (RFC 5987 filename* in Content-Disposition)",
+    "HTML-escape video links in video_block",
+    "Compute the attachment total from db.outreach_files on the server instead of trusting the client size",
+    "Make template messages easy to find in Needs review (sort or filter; the current limit is 100 with no pagination)",
+    "Confirm _migrate_v3 should also stop LinkedIn drafts; it will run on the next cron and stop about 630 messages",
+    "Optional: hide 'Stop sequence' on template messages; only add tpl_sent once the email is sent (or remove it on reject)"
+  ],
+  "critical_code_review_comments": [
+    "Do not name non-hook functions use* in React components (caused the compile overlay)",
+    "_send_one, run_auto, the migration and the provider attachment code are correct in the unit tests",
+    "upload_file and download_file call object storage with no error handling, so a storage outage gives a raw 500",
+    "run_auto calls the LLM once per prospect in sequence (up to drafts_per_run=30 per 15-minute run) and is not limited by daily_cap. The queue can grow faster than the 100/day send cap. Acceptable, but note it."
+  ],
+  "updated_files": ["/app/frontend/src/pages/ProspectDetail.jsx (useTpl -> applyTpl)", "/app/backend/tests/test_email_templates.py (new)", "/app/backend/tests/test_night_window_autosend.py (fake senders accept attachments; isolate et.db; pre-set outreach_v3 marker + ai_sequence for legacy tests) - 33/33 pass"],
+  "success_rate": {"backend": "97% (29/30 new + 33/33 legacy)", "frontend": "100% after the ESLint rename fix"},
+  "seed_data_creation": "Temporary TEST_ prospects (TEST_TplBrand, TEST_UIBrand id 9100001) were inserted directly in the live DB for the use-template flows. All are deleted by id, along with their outreach messages. TEST_ templates (ids 6, 7, 8) are soft-deleted, and TEST_ outreach_files are marked is_deleted. Verified 0 TEST_ prospects or messages remain, only the 5 starters are active, no real prospect got tpl_sent, prospecting enabled=false, outreach_lock until=''. No real email was sent and no mailbox was connected.",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Run: export REACT_APP_BACKEND_URL from frontend/.env (and WEBHOOK_CRON_SECRET from backend/.env for the legacy file); pytest tests/test_email_templates.py tests/test_night_window_autosend.py -n 0. The unit tests patch oc.db, et.db and et.next_id onto a throw-away DB, and et.ai_text raises so the plain-merge fallback is tested. The live use-template test inserts its own TEST_ prospect and deletes it afterwards. outreach_v3 had not run in preview at the time of testing. Retest: non-ASCII file download, the video link escaping, the server-side size check, and template visibility in Needs review."
+}

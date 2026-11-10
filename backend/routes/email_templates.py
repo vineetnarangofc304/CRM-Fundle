@@ -36,7 +36,7 @@ class Tpl(BaseModel):
     video_links: List[str] = []
 
 
-def _clean(body: Tpl) -> dict:
+async def _clean(body: Tpl) -> dict:
     if body.mode not in ("auto", "manual"):
         raise HTTPException(status_code=400, detail="Mode must be auto or manual")
     if not body.name.strip() or not body.subject.strip() or not body.body.strip():
@@ -44,9 +44,14 @@ def _clean(body: Tpl) -> dict:
     links = [v.strip() for v in body.video_links if v.strip()]
     if any(not re.match(r"https?://", v) for v in links):
         raise HTTPException(status_code=400, detail="Video links must start with http:// or https://")
-    if sum(a.size for a in body.attachments) > et.MAX_ATTACH_BYTES:
+    ids = [a.file_id for a in body.attachments]
+    files = await db.outreach_files.find({"id": {"$in": ids}, "is_deleted": {"$ne": True}}, {"_id": 0}).to_list(20)
+    if len(files) != len(set(ids)):
+        raise HTTPException(status_code=400, detail="An attachment was not found — upload it again")
+    if sum(f["size"] for f in files) > et.MAX_ATTACH_BYTES:
         raise HTTPException(status_code=400, detail="Attachments must total 3 MB or less — share bigger files as links")
-    return {**body.model_dump(), "name": body.name.strip()[:80], "subject": body.subject.strip()[:200],
+    atts = [{"file_id": f["id"], "filename": f["filename"], "size": f["size"]} for f in files]
+    return {**body.model_dump(), "attachments": atts, "name": body.name.strip()[:80], "subject": body.subject.strip()[:200],
             "body": oc.clean_html(body.body)[:8000], "video_links": links[:5], "updated_at": now_utc_str()}
 
 
@@ -58,7 +63,7 @@ async def list_templates(user: dict = Depends(STAFF)):
 
 @router.post("/outreach/templates")
 async def create_template(body: Tpl, user: dict = Depends(STAFF)):
-    doc = {**_clean(body), "id": await next_id("email_template"), "kind": "custom", "is_deleted": False,
+    doc = {**await _clean(body), "id": await next_id("email_template"), "kind": "custom", "is_deleted": False,
            "created_at": now_utc_str(), "created_by": user["name"]}
     await db.email_templates.insert_one(dict(doc))
     doc.pop("_id", None)
@@ -68,7 +73,7 @@ async def create_template(body: Tpl, user: dict = Depends(STAFF)):
 @router.put("/outreach/templates/{tid}")
 async def update_template(tid: int, body: Tpl, user: dict = Depends(STAFF)):
     r = await db.email_templates.update_one({"id": tid, "is_deleted": {"$ne": True}},
-                                            {"$set": {**_clean(body), "updated_by": user["name"]}})
+                                            {"$set": {**await _clean(body), "updated_by": user["name"]}})
     if not r.matched_count:
         raise HTTPException(status_code=404, detail="Template not found")
     return await db.email_templates.find_one({"id": tid}, {"_id": 0})
@@ -76,7 +81,10 @@ async def update_template(tid: int, body: Tpl, user: dict = Depends(STAFF)):
 
 @router.delete("/outreach/templates/{tid}")
 async def delete_template(tid: int, user: dict = Depends(STAFF)):
-    await db.email_templates.update_one({"id": tid}, {"$set": {"is_deleted": True, "deleted_by": user["name"]}})
+    r = await db.email_templates.update_one({"id": tid, "is_deleted": {"$ne": True}},
+                                            {"$set": {"is_deleted": True, "deleted_by": user["name"]}})
+    if not r.matched_count:
+        raise HTTPException(status_code=404, detail="Template not found")
     return {"ok": True}
 
 
@@ -117,7 +125,10 @@ async def upload_file(file: UploadFile = File(...), user: dict = Depends(STAFF))
     data = await file.read()
     if len(data) > et.MAX_ATTACH_BYTES:
         raise HTTPException(status_code=400, detail="File must be 3 MB or less — share bigger files or videos as a link")
-    res = await put_object(f"{APP_NAME}/outreach/{uuid.uuid4()}.{ext}", data, FILE_TYPES[ext])
+    try:
+        res = await put_object(f"{APP_NAME}/outreach/{uuid.uuid4()}.{ext}", data, FILE_TYPES[ext])
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"File storage is unavailable right now: {str(e)[:120]}")
     doc = {"id": await next_id("outreach_file"), "storage_path": res["path"], "filename": file.filename[:120],
            "content_type": FILE_TYPES[ext], "size": len(data), "is_deleted": False,
            "created_at": now_utc_str(), "created_by": user["name"]}
@@ -131,8 +142,10 @@ async def download_file(fid: int, user: dict = Depends(STAFF)):
     if not f:
         raise HTTPException(status_code=404, detail="File not found")
     data, _ = await get_object(f["storage_path"])
+    from urllib.parse import quote
+    safe = re.sub(r"[^A-Za-z0-9._-]", "_", f["filename"])
     return Response(content=data, media_type=f["content_type"],
-                    headers={"Content-Disposition": f'attachment; filename="{f["filename"]}"'})
+                    headers={"Content-Disposition": f"attachment; filename=\"{safe}\"; filename*=UTF-8''{quote(f['filename'])}"})
 
 
 class UseTpl(BaseModel):

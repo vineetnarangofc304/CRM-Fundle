@@ -168,7 +168,7 @@ async def _migrate_v3():
         return
     await et.seed_starters()
     await db.settings.update_one({"key": "outreach"}, {"$set": {"ai_sequence": False}}, upsert=True)
-    await db.outreach.update_many({"kind": {"$ne": "template"}, "status": {"$in": ["pending_approval", "approved"]}},
+    await db.outreach.update_many({"kind": {"$ne": "template"}, "channel": "email", "status": {"$in": ["pending_approval", "approved"]}},
                                   {"$set": {"status": "stopped", "stop_reason": "Replaced by template outreach"}})
     await db.settings.insert_one({"key": "outreach_v3", "done": True})
 

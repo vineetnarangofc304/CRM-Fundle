@@ -19,7 +19,7 @@ from dotenv import load_dotenv  # noqa: E402
 load_dotenv("/app/backend/.env")
 from motor.motor_asyncio import AsyncIOMotorClient  # noqa: E402
 
-from core import prospector as pe, outreach as oc, mailer, outlook_send, gmail_send  # noqa: E402
+from core import prospector as pe, outreach as oc, mailer, outlook_send, gmail_send, email_templates as et  # noqa: E402
 
 BASE_URL = os.environ.get("REACT_APP_BACKEND_URL").rstrip("/")
 ADMIN = {"email": "vineetnarangofc@gmail.com", "password": "Fundle@cf928c"}
@@ -121,6 +121,7 @@ class TestOutreachAutoSend:
         name = f"{os.environ['DB_NAME']}_t1_{uuid.uuid4().hex[:8]}"
         d = cli[name]
         monkeypatch.setattr(oc, "db", d)
+        monkeypatch.setattr(et, "db", d)
         self.db = d
         yield d
         run(cli.drop_database(name))
@@ -168,9 +169,12 @@ class TestOutreachAutoSend:
         async def is_conn():
             return connected
 
-        async def send(to, subject, body, html=False, cc=None):
+        async def send(to, subject, body, html=False, cc=None, attachments=None):
             sends.append({"to": to, "cc": cc})
             return {"ok": True}
+        # v3 (template library) migration already done; keep the legacy AI sequence on for these legacy tests
+        run(self.db.settings.update_one({"key": "outreach_v3"}, {"$set": {"done": True}}, upsert=True))
+        run(self.db.settings.update_one({"key": "outreach"}, {"$set": {"ai_sequence": True}}, upsert=True))
         monkeypatch.setattr(oc, "draft_sequence", fake_draft)
         monkeypatch.setattr(mailer, "is_connected", is_conn)
         monkeypatch.setattr(mailer, "send_email", send)
@@ -249,10 +253,13 @@ class TestOutreachAutoSend:
         async def is_conn():
             return True
 
-        async def send(to, subject, body, html=False, cc=None):
+        async def send(to, subject, body, html=False, cc=None, attachments=None):
             sends.append(to)
             await asyncio.sleep(delay)
             return {"ok": ok, **({} if ok else {"error": "TEST_boom"})}
+        # v3 (template library) migration already done; keep the legacy AI sequence on for these legacy tests
+        run(self.db.settings.update_one({"key": "outreach_v3"}, {"$set": {"done": True}}, upsert=True))
+        run(self.db.settings.update_one({"key": "outreach"}, {"$set": {"ai_sequence": True}}, upsert=True))
         monkeypatch.setattr(oc, "draft_sequence", fake_draft)
         monkeypatch.setattr(mailer, "is_connected", is_conn)
         monkeypatch.setattr(mailer, "send_email", send)
@@ -343,7 +350,7 @@ class TestMailerCC:
         async def ap():
             return "outlook"
 
-        async def se(to, subject, body, html=False, cc=None):
+        async def se(to, subject, body, html=False, cc=None, attachments=None):
             got.update(to=to, cc=cc)
             return {"ok": True}
         monkeypatch.setattr(mailer, "active_provider", ap)

@@ -1,4 +1,5 @@
 """Email template library: AI-tailored, click-to-send or auto-send templates with attachments + video links."""
+import html
 import logging
 import os
 import re
@@ -115,7 +116,7 @@ def video_block(links: list) -> str:
     links = [v for v in links or [] if v]
     if not links:
         return ""
-    items = "".join(f"<li><a href='{v}'>{v}</a></li>" for v in links)
+    items = "".join(f"<li><a href=\"{html.escape(v, quote=True)}\">{html.escape(v)}</a></li>" for v in links)
     return f"<p><b>Watch:</b></p><ul>{items}</ul>"
 
 

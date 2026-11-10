@@ -87,7 +87,7 @@ function MessageCard({ m, reload, selected, onSelect }) {
           <button data-testid={`outreach-mark-sent-${m.id}`} onClick={() => act(`/outreach/messages/${m.id}/mark-sent`, "Marked as sent")} className="crm-btn-secondary !py-1 text-xs"><LinkedinLogo size={14} /> Mark sent</button>
         </>}
         {canAct && <button data-testid={`outreach-reject-${m.id}`} onClick={() => act(`/outreach/messages/${m.id}/reject`, "Rejected")} className="crm-btn-secondary !py-1 text-xs"><XCircle size={14} /> Reject</button>}
-        {["pending_approval", "approved"].includes(m.status) && <button data-testid={`outreach-stop-${m.seq_id}-${m.id}`} onClick={() => act(`/outreach/sequences/${m.seq_id}/stop`, "Sequence stopped")} className="crm-btn-secondary !py-1 text-xs"><StopCircle size={14} /> Stop sequence</button>}
+        {["pending_approval", "approved"].includes(m.status) && !tpl && <button data-testid={`outreach-stop-${m.seq_id}-${m.id}`} onClick={() => act(`/outreach/sequences/${m.seq_id}/stop`, "Sequence stopped")} className="crm-btn-secondary !py-1 text-xs"><StopCircle size={14} /> Stop sequence</button>}
       </div>
     </div>
   );
@@ -104,7 +104,7 @@ export default function Outreach() {
   const [view, setView] = useState("messages");
   const load = useCallback(() => {
     if (!["admin", "manager"].includes(user?.role)) return;
-    API.get("/outreach/settings").then(({ data: d }) => { setS(d); setTab((t) => t || (d.auto_send ? "approved" : "pending_approval")); }).catch((e) => toast.error(apiErr(e)));
+    API.get("/outreach/settings").then(({ data: d }) => { setS(d); setTab((t) => t || "pending_approval"); }).catch((e) => toast.error(apiErr(e)));
     API.get("/outreach/stats").then(({ data: d }) => setStats(d)).catch(() => {});
     if (!tab) return;
     API.get("/outreach/messages", { params: { status: tab, channel: channel || undefined, limit: 100 } }).then(({ data: d }) => setData(d)).catch((e) => toast.error(apiErr(e)));

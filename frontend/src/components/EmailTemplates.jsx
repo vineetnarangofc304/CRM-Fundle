@@ -76,7 +76,7 @@ function Editor({ t, onDone }) {
       <input data-testid="tpl-subject" className="crm-input w-full" placeholder="Subject" value={f.subject} onChange={(e) => setF({ ...f, subject: e.target.value })} />
       <div className="grid gap-3 lg:grid-cols-2">
         <textarea data-testid="tpl-body" rows={12} className="crm-input w-full font-mono text-xs" value={f.body} onChange={(e) => setF({ ...f, body: e.target.value })} />
-        <div className="prose prose-sm max-w-none rounded-lg border border-slate-100 bg-slate-50 p-3 text-slate-600" data-testid="tpl-preview" dangerouslySetInnerHTML={{ __html: f.body }} />
+        <div className="prose prose-sm max-w-none rounded-lg border border-slate-100 bg-slate-50 p-3 text-slate-600 [&_p]:mb-3 [&_ul]:list-disc [&_ul]:pl-5" data-testid="tpl-preview" dangerouslySetInnerHTML={{ __html: f.body }} />
       </div>
       <p className="text-[11px] text-slate-400">Placeholders: {"{{first_name}}"}, {"{{brand}}"}, {"{{role}}"}. AI also tailors one line to each brand before sending. Signature and CC are added automatically.</p>
       <div className="grid gap-4 sm:grid-cols-2"><Attachments f={f} setF={setF} /><Videos f={f} setF={setF} /></div>
