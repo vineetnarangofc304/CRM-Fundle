@@ -59,8 +59,12 @@ class TestAggregate:
 
 # Main inbox pin + empty filter
 class TestSend:
-    def test_sender_id_main(self):
-        from core import brain
+    def test_sender_id_main(self, monkeypatch):
+        from core import brain, mailer
+
+        async def yes():
+            return True
+        monkeypatch.setattr(mailer, "is_connected", yes)  # iter27: 'main' now requires a connected main inbox
         for v in ("main", "0", "Main inbox", 0):
             assert run(brain._sender_id(v)) == 0
         assert run(brain._sender_id(None)) is None

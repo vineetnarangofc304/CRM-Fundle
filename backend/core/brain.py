@@ -272,7 +272,7 @@ async def t_job(ctx, a):
     return {"started": a["job"]}
 
 
-async def _send_now(ids: list, sid=None) -> dict:
+async def _send_now(ids: list) -> dict:
     """Send queued outreach docs right away through the normal sender (signature, retries, lead log)."""
     from core import mailboxes as mb, outreach as oc
     st = await oc.get_settings()
@@ -285,7 +285,9 @@ async def _send_now(ids: list, sid=None) -> dict:
         ok = await oc._send_one(m, st, pool, force=True)
         d = await db.outreach.find_one({"id": i}, {"_id": 0, "status": 1, "error": 1, "sent_from": 1, "to": 1})
         err = d.get("error")
-        if not ok and not err:
+        if ok is None:
+            err = "Stopped: its template was removed or switched off"
+        elif not ok and (not err or err == m.get("error")):
             pin = m.get("force_sender")
             err = ("No usable inbox: " + ("the main inbox isn't connected" if pin == mb.PRIMARY else
                    f"inbox #{pin} is inactive, untested or over its hourly limit" if pin is not None else
@@ -460,6 +462,8 @@ STOP = {"this", "that", "with", "from", "have", "they", "them", "their", "want",
 
 def _reason_ok(reason: str, said: str) -> bool:
     r = reason.strip().lower()
+    if r.startswith("instruction:"):
+        return False
     if len(r) < 4 or re.match(r"^(the )?user\b|^as (requested|asked)|^per (the )?user", r) or re.search(r"explicitly asked|user (requested|asked|wants)", r):
         return False
     words = {w for w in re.findall(r"[a-z0-9]{4,}", r) if w not in STOP}

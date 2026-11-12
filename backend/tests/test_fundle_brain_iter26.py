@@ -41,6 +41,16 @@ def setup_data():
     run(db.brain_audit.delete_many({"session_id": CTX["session_id"]}))
 
 
+@pytest.fixture(autouse=True)
+def main_connected(monkeypatch):
+    # iter27: _sender_id('main') raises unless the main inbox is connected; preview has none connected
+    from core import mailer
+
+    async def yes():
+        return True
+    monkeypatch.setattr(mailer, "is_connected", yes)
+
+
 @pytest.fixture
 def mock_ok(monkeypatch):
     async def senders(st, day):
@@ -105,6 +115,8 @@ def test_send_single_email_no_inbox(monkeypatch, setup_data):
     run(db.outreach.update_one({"id": oid}, {"$set": {"status": "stopped"}}))
     print("NO-INBOX MSG:", msg)
     assert "None" not in msg, f"Unclear error when no inbox connected: {msg}"
+    assert "No usable inbox: the main inbox isn't connected" in msg
+    assert run(db.outreach.find_one({"id": oid}))["error"].startswith("No usable inbox")
 
 
 # send_queued_emails_now: pending -> approved -> sent
@@ -211,10 +223,12 @@ def test_run_turn_settings_still_need_reason(monkeypatch):
     assert done["ok"] is False and "WHY" in done["summary"] and not cap
 
 
-# Bypass check: model-invented 'Instruction: ...' reason on a settings change must NOT be accepted
+# Bypass check (fixed iter27): 'Instruction: ...' prefix is no longer special-cased for settings/templates/data tools
 def test_run_turn_settings_instruction_prefix_bypass(monkeypatch):
-    cap = []
-    evs = _turn(monkeypatch, [("save_settings", {"section": "outreach", "changes": {"hourly_cap": 25},
-                                                  "reason": "Instruction: set hourly cap"})], "set hourly cap to 25", cap)
-    done = [e for e in evs if e["type"] == "tool_done"][0]
-    assert done["ok"] is False, "Model can bypass the WHY check by prefixing reason with 'Instruction: '"
+    for tool, args in (("save_settings", {"section": "outreach", "changes": {"hourly_cap": 25}}),
+                       ("save_email_template", {"name": "TEST_x", "subject": "s", "body": "b"})):
+        cap = []
+        evs = _turn(monkeypatch, [(tool, {**args, "reason": "Instruction: boost weekly throughput"})], "set hourly cap to 25", cap)
+        done = [e for e in evs if e["type"] == "tool_done"][0]
+        assert done["ok"] is False and "WHY" in done["summary"] and not cap, (tool, done)
+    assert brain._reason_ok("Instruction: boost weekly throughput", "set hourly cap to 25") is False

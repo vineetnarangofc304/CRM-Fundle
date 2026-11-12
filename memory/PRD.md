@@ -121,3 +121,10 @@ Gmail OAuth (GOOGLE_CLIENT_ID/SECRET, GMAIL_REDIRECT_URI), Meta CAPI (dataset id
 - Attach Excel/CSV in Brain chat (POST /api/brain/sessions/{sid}/upload → object storage + brain_files/brain_file_rows). Tools: read_uploaded_file, import_brands_from_file (new brands+leads, contacts_priority 1 → research → auto intro), import_contact_emails_from_file (verified/published, uploaded:true, contacts_status done, brand auto-created, lead email_from + timeline), manage_contact_sources (settings.contact_sources, defaults = 5 Indian trade sources; injected into contacts.find_contacts prompt).
 - Drafts emails/campaigns in chat, saves/sends only after approval. Server guards: user's own "reason:/because" phrase is used as audit reason; send/run tools gated on the latest message (GATES); contacts_only_mode only if asked; rule: never change engines/settings unless asked.
 - Tested: iteration_24, iteration_25 (45/45 pytest + live LLM turns).
+
+## 2026-11-12 — Prod fixes: Brain sending, collapsible menu, AI model fallback
+- Brain: direct send/stop/run orders need no extra reason (server sets "Instruction: <msg>"); settings/data/templates still need the user's WHY ("instruction:" reasons rejected there). send_single_email goes through outreach._send_one (signature, lead log, retry); new tools send_queued_emails_now, inbox_activity; clear "No usable inbox…" errors.
+- Left menu collapsible (sidebar-toggle, localStorage crm_nav_mini); Brain chat list toggle (brain-chats-toggle).
+- Prospecting stuck: Google rate-limits gemini-3.x models (not key balance). prospector._ask now falls back FLASH → gemini-3-flash-preview → gemini-2.5-flash and skips limited models for 30 min; banner shows provider's reason.
+- PROD SMTP: deployer RCA — since the 19:26 redeploy, prod pod times out connecting to smtp.office365.com:587 (network/egress, not code). Abhinav's inbox had sent its 200/day earlier. Pending: user retry / platform egress check; option: send via Microsoft Graph (HTTPS) instead of SMTP.
+- Tested: iteration_26, iteration_27 (65/65).

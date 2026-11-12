@@ -1,0 +1,36 @@
+{
+  "summary": "Iter27 verification. All 5 requested items work. NEW test_iter27_ai_fallback_send_errors.py passes 10/10; it mocks prospector._call and has no real email. Re-run of tests/test_fundle_brain_iter2*.py passes 55/55, after updating 2 tests (below). One real _ask call confirmed the fallback live: gemini-3.5-flash and gemini-3-flash-preview returned RateLimitError, gemini-2.5-flash answered, and both limited models were held for about 30 min. UI checks: the Prospecting banner shows 'Provider said: …' (ai-blocked-reason) when the lock is blocked. sidebar-toggle shrinks the menu from 224px to 64px and back, and sets crm_nav_mini. Collapsed nav-admin has title='Admin', is icon-only and goes to /admin. Prospecting stayed disabled, and the test lock values were removed afterwards.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "core/brain.py _reason_ok (WHY guard heuristic)", "issue": "The 'Instruction:' prefix is no longer special-cased, so the iter26 HIGH bug is fixed. But the word-overlap check still accepts a model-written reason that just repeats the user's command. Example: reason 'Instruction: set hourly cap' with user text 'set hourly cap to 25' gives words {instruction, hourly}, 1 of 2 match, so it is accepted and save_settings runs with no real WHY. Suggestion: for tools outside ACTION_TOOLS, reject reasons that start with 'instruction:'. Or require that the reason words are not all contained in the command itself."},
+      {"endpoint": "core/prospector._ask", "issue": "When every model in the reduced chain fails, the last model is not added to _limited. In practice: after FLASH and 3-flash-preview are limited, each call tries only gemini-2.5-flash. If that call is rate-limited, AiCreditsOut is raised at once and the expired-limit models are not retried for up to 30 min. This is acceptable behaviour; noting it for awareness."},
+      {"endpoint": "core/brain._send_now", "issue": "_send_one returns None when the doc's template was removed (_refresh_from_template returns None). _send_now then labels it 'No usable inbox…', which is misleading. Also, if a doc already has an error from an earlier attempt, that stale error is shown instead of the no-inbox reason. The unused 'sid' parameter should be removed."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [{"screen": "Prospecting banner", "issues": ["The 'Provider said' line is 11px at opacity-80 on a rose background. It is readable but faint; consider text-rose-700 at full opacity."]}]
+  },
+  "test_report_links": ["/app/backend/tests/test_iter27_ai_fallback_send_errors.py", "/app/backend/tests/test_fundle_brain_iter26.py", "/app/backend/tests/test_fundle_brain_iter23.py", "/app/test_reports/pytest/iter27.xml"],
+  "action_items": [
+    "Optional: tighten _reason_ok so a reason that only repeats the command (e.g. 'Instruction: set hourly cap') doesn't pass for settings/template/data tools",
+    "Optional: in _send_now, tell 'template removed' (ok is None) apart from 'no usable inbox', and ignore stale errors from earlier attempts"
+  ],
+  "critical_code_review_comments": [
+    "prospector._ask: the chain [requested, FLASH, 3-flash-preview, 2.5-flash] is correct. Only quota errors trigger a fallback. Non-quota errors raise at once and leave the lock untouched. On success, ai_blocked_at and ai_blocked_reason are unset. ai_blocked_reason is capped at 200 characters.",
+    "_limited and _blocked live in process memory, so they reset on restart. That is fine: the first success clears the DB flag.",
+    "_sender_id('main') now checks mailer.is_connected(). Older tests that used 'main' without that mock broke; they are now updated."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter27_ai_fallback_send_errors.py (new)",
+    "/app/backend/tests/test_fundle_brain_iter26.py (autouse mock of mailer.is_connected; the no-inbox test now asserts the new message; the bypass test now asserts the prefix gets no special treatment)",
+    "/app/backend/tests/test_fundle_brain_iter23.py (test_sender_id_main mocks mailer.is_connected)"
+  ],
+  "success_rate": {"backend": "100% (65/65)", "frontend": "100%"},
+  "seed_data_creation": "None kept. TEST outreach docs were created and deleted by id. prospect_lock ai_blocked_at/reason were set briefly for the UI/API check and then unset. The lock is back to its original state.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Run each iter test file in its OWN pytest process with -p no:xdist -o addopts=''. Each file builds its own asyncio loop at import, so running them together raises 'different loop' errors. Export REACT_APP_BACKEND_URL from frontend/.env first. Admin login: vineetnarangofc@gmail.com / Fundle@cf928c. The ADMIN_PASSWORD env var did not work for login. In preview, gemini-3.5-flash and gemini-3-flash-preview are rate-limited and gemini-2.5-flash works. The main inbox is not connected in preview, so mock mailer.is_connected for send tests."
+}
