@@ -67,6 +67,10 @@ async def find_contacts(p: dict) -> dict:
               "head of Marketing / CMO / Head of CRM, Loyalty or Customer Experience (also Head of Retail / Digital if no CMO).\n"
               "Search LinkedIn profiles via Google AND recent news/press releases/magazine interviews and appointment "
               "announcements to confirm names and current roles; put the best source URL in evidence_url.\n"
+              "Also search Indian retail trade media for named executives at this brand (interviews, appointments, quotes): "
+              "indianretailer.com/news, rai.net.in (STOrai), digest.d2cinsider.com, franchiseindia.com/insights, "
+              "retail.economictimes.indiatimes.com, and the LinkedIn posts of Indian Retailer, Retailers Association of India, "
+              "D2C Insider, Franchise India and ETRetail.\n"
               "Also find the company's email address FORMAT (e.g. firstname.lastname@domain) if published anywhere.\n"
               'Return JSON: {"email_pattern": str|null, "contacts": [{"name": str, "role": str, "linkedin": str|null, '
               '"email": str|null, "email_status": "published"|"pattern"|null, "evidence_url": str|null}]}')
@@ -124,7 +128,7 @@ async def next_contacts_job():
         p = await db.prospects.find_one_and_update(
             {**f, "contacts_status": {"$exists": False}},
             {"$set": {"contacts_status": "running", "contacts_started_at": now_utc_str()}},
-            sort=[("contacts_priority", -1), ("store_count", -1), ("id", 1)], projection={"_id": 0})
+            sort=[("contacts_priority", -1), ("store_count", 1), ("id", 1)], projection={"_id": 0})
         if p:
             return p
     return None

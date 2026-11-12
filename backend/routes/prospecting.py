@@ -92,7 +92,7 @@ async def overview(user: dict = Depends(require_roles("admin", "manager"))):
 
 @router.put("/prospecting/settings")
 async def save_settings(body: EngineSettings, user: dict = Depends(require_roles("admin"))):
-    if body.phase not in ("auto", "discovery", "enrichment"):
+    if body.phase not in ("auto", "discovery", "enrichment", "contacts"):
         raise HTTPException(status_code=400, detail="Invalid phase")
     countries = [c for c in body.countries if c in pe.COUNTRIES] or ["India"]
     await db.settings.update_one({"key": "prospecting"}, {"$set": {

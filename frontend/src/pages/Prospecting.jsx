@@ -38,6 +38,7 @@ function EnginePanel({ ov, isAdmin, reload }) {
         <span className="text-xs text-slate-500">{ov.pending_enrich.toLocaleString("en-IN")} brands waiting for deep research</span>
         <div className="ml-auto flex gap-2">
           <button data-testid="prospect-run-now" onClick={runNow} disabled={ov.running || !s.enabled} className="crm-btn-primary !py-1.5 text-xs"><Play size={14} /> Run now</button>
+          {isAdmin && <button data-testid="prospect-toggle-contacts-only" onClick={() => save({ phase: s.phase === "contacts" ? "auto" : "contacts" })} className={s.phase === "contacts" ? "crm-btn-primary !py-1.5 text-xs" : "crm-btn-secondary !py-1.5 text-xs"}>{s.phase === "contacts" ? "Contacts only ON — resume adding brands" : "Stop adding brands (contacts only)"}</button>}
           {isAdmin && <button data-testid="prospect-toggle-engine" onClick={() => save({ enabled: !s.enabled })} className="crm-btn-secondary !py-1.5 text-xs">{s.enabled ? <><Pause size={14} /> Pause engine</> : <><Play size={14} /> Resume engine</>}</button>}
         </div>
       </div>
@@ -48,6 +49,7 @@ function EnginePanel({ ov, isAdmin, reload }) {
             <option value="auto">Auto — find brands first, then research</option>
             <option value="discovery">Only find new brands</option>
             <option value="enrichment">Only research details</option>
+            <option value="contacts">Contacts only — no new brands, 24/7</option>
           </select>
           <span className="ml-3 font-bold text-slate-500">Parallel</span>
           <select data-testid="prospect-concurrency" className="crm-select !w-16 !py-1 text-xs" value={s.concurrency} onChange={(e) => save({ concurrency: Number(e.target.value) })}>

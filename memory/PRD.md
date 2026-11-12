@@ -99,3 +99,8 @@ Gmail OAuth (GOOGLE_CLIENT_ID/SECRET, GMAIL_REDIRECT_URI), Meta CAPI (dataset id
 - 8 follow-up templates (fu2_/fu3_<audience>, step 2 day 3 / step 3 day 7, subject "Re: {{intro_subject}}", ai_tailor false, editable incl. step + days). run_followups: same recipient + seq_id, skips replied/bounced, step 3 only after step 2 sent, no duplicates, scans all eligible intros (sorted by sent_at). Queued follow-ups keep intro subject after template edits.
 - Follow-ups are new messages with "Re:" subject (not threaded via In-Reply-To headers).
 - Tested: iteration_19 (14/14 after fixes, frontend 100%).
+
+## 2026-11-12 — Contacts-only mode
+- Prospecting phase "contacts" (button "Stop adding brands (contacts only)" + Mode option): no discovery, runs 24/7 (day mode all hours), contact finding first then deep research of already-added brands. Contacts + enrichment queues now go smallest store count first.
+- Contact finder prompt also searches Indian retail trade media: Indian Retailer, RAI (STOrai), D2C Insider, Franchise India, ETRetail (sites + LinkedIn posts).
+- Preview engine kept DISABLED (phase contacts, concurrency 10). Self-tested via API + screenshot.

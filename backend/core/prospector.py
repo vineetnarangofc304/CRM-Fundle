@@ -361,7 +361,7 @@ async def _next_enrich():
     return await db.prospects.find_one_and_update(
         {"status": "discovered", "enrich_attempts": {"$lt": 3}},
         {"$set": {"status": "enriching", "enrich_started_at": now_utc_str()}},
-        sort=[("store_count", -1), ("id", 1)], projection={"_id": 0})
+        sort=[("store_count", 1), ("id", 1)], projection={"_id": 0})
 
 
 async def _lane(deadline, settings, stats):
@@ -397,13 +397,16 @@ async def _step(settings, stats) -> bool:
         return True
     if settings["phase"] == "discovery" and not day:
         return False
-    if day or random.random() < 0.5:
+    if day or settings["phase"] == "contacts" or random.random() < 0.5:
         from core import contacts as ct
         cj = await ct.next_contacts_job()
         if cj:
             stats["contacts"] = stats.get("contacts", 0) + (1 if (await ct.find_contacts(cj))["ok"] else 0)
             return True
     p = await _next_enrich()
+    if not p and settings["phase"] == "contacts":
+        await asyncio.sleep(60)
+        return True
     if not p:
         return (not day and settings["phase"] == "auto" and await under_cap(settings)
                 and bool(await _next_discovery(settings)))
@@ -446,7 +449,7 @@ async def run_worker(max_seconds: int = 840, trigger: str = "cron"):
     day = False
     if trigger in ("cron", "watchdog"):
         left = night_seconds_left()
-        day = left < 60
+        day = left < 60 or (await get_settings())["phase"] == "contacts"
         if not day:
             max_seconds = min(max_seconds, left)
     now = datetime.now(timezone.utc)
