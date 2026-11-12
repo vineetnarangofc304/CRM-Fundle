@@ -16,7 +16,7 @@ DEFAULT_PITCH = ("Fundle.ai builds an AI-powered customer loyalty platform for r
                  "omnichannel points & rewards across stores and online, WhatsApp-first member engagement, "
                  "AI-driven personalised offers, and analytics that lift repeat purchase and customer lifetime value. "
                  "Quick to launch across all stores, integrates with POS and e-commerce.")
-DEFAULTS = {"enabled": True, "min_score": 0, "daily_cap": 200, "hourly_cap": 25, "drafts_per_run": 30, "gaps": [3, 7],
+DEFAULTS = {"enabled": True, "min_score": 0, "daily_cap": 200, "hourly_cap": 50, "drafts_per_run": 30, "gaps": [3, 7],
             "auto_send": True, "cc": "", "ai_sequence": False,
             "pitch": DEFAULT_PITCH, "signature": "", "sender_name": "Fundle.ai"}
 DRAFT_SYS = ("You write short, specific, human B2B outreach for an Indian/GCC/UK audience. No hype, no emojis, "
@@ -227,11 +227,23 @@ async def _migrate_v5():
     await db.settings.insert_one({"key": "outreach_v5", "done": True})
 
 
+async def _migrate_v6():
+    """Email-only outreach: retire LinkedIn drafts (brands with an email get the template intro) and raise hourly cap to 50."""
+    if await db.settings.find_one({"key": "outreach_v6"}):
+        return
+    await db.outreach.update_many({"channel": "linkedin", "status": {"$in": ["pending_approval", "approved", "failed"]}},
+                                  {"$set": {"status": "stopped", "stop_reason": "Switched to email outreach"}})
+    await db.settings.update_one({"key": "outreach"}, {"$set": {"hourly_cap": 50, "auto_send": True, "enabled": True}}, upsert=True)
+    await db.settings.update_one({"key": "linkedin"}, {"$set": {"enabled": False}}, upsert=True)
+    await db.settings.insert_one({"key": "outreach_v6", "done": True})
+
+
 async def run_outreach(trigger="cron") -> dict:
     await _migrate_v2()
     await _migrate_v3()
     await _migrate_v4()
     await _migrate_v5()
+    await _migrate_v6()
     st = await get_settings()
     stats = {"drafted": 0, "sent": 0, "failed": 0}
     if not st["enabled"]:

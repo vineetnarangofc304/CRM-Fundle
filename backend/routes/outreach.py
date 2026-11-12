@@ -34,7 +34,7 @@ class OutreachSettings(BaseModel):
     enabled: bool = True
     min_score: int = 0
     daily_cap: int = 100
-    hourly_cap: int = 25
+    hourly_cap: int = 50
     drafts_per_run: int = 30
     auto_send: bool = True
     ai_sequence: bool = False

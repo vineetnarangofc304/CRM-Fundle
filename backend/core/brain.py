@@ -439,7 +439,7 @@ SYSTEM MAP
 - To email a specific brand/contact now: find the contact, use the brand's matching intro template text (email_templates by audience, fill {{first_name}}/{{brand}}) unless the user gave text, and call send_single_email (or send_queued_emails_now if an intro is already queued for that brand). Report the real result (sent from which inbox, or the exact error).
 - Mailbox questions (what was sent, replies, bounces, errors per inbox): use inbox_activity.
 - Inboxes: call get_system_overview first to see main_inbox and inboxes_extra; to send from the main inbox use from_inbox "main".
-- mailboxes: extra sending inboxes (id, smtp_user email, sender_name, signature, active, verified). Main inbox = id 0 (its signature = outreach setting `signature`). Each inbox sends max hourly_cap per hour (default 25), spread over runs every 15 min. Ask "from Hardik's email" -> find the mailbox whose smtp_user/sender_name matches.
+- mailboxes: extra sending inboxes (id, smtp_user email, sender_name, signature, active, verified). Main inbox = id 0 (its signature = outreach setting `signature`). Each inbox sends max hourly_cap per hour (default 50), spread over runs every 15 min. Ask "from Hardik's email" -> find the mailbox whose smtp_user/sender_name matches.
 - settings: outreach / prospecting / linkedin sections (use save_settings).
 - Engines run every 15 minutes automatically (prospecting, outreach send + reply/bounce sync, email-format check).
 

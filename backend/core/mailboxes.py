@@ -33,7 +33,7 @@ def hour_ago() -> str:
 async def senders(st: dict, day: str) -> list:
     """Usable inboxes with this hour's remaining quota: [{id, email, remaining, cfg}]."""
     sent = await _sent_today(hour_ago())
-    cap = int(st.get("hourly_cap") or 25)
+    cap = int(st.get("hourly_cap") or 50)
     out = []
     if await mailer.is_connected():
         cfg = await ol.get_config()

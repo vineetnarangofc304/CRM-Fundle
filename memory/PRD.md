@@ -134,3 +134,8 @@ Gmail OAuth (GOOGLE_CLIENT_ID/SECRET, GMAIL_REDIRECT_URI), Meta CAPI (dataset id
 - _ask fallback chain on limits: requested → gemini-3.5-flash → gemini-3-flash-preview → gemini-2.5-flash → claude-sonnet-5-5 (limited models skipped 30 min).
 - Contact finder CONTACT_CHAIN: claude-sonnet-5-5 (best real sources) → gemini-3.1-pro → gemini-2.5-flash → claude-opus-5-5; moves to next model when no emails found (max 3), merges contacts; prospects.contacts_models records models used.
 - iter29 fixes: merge fills missing email/role into same-name contacts; per-model errors continue to next model (fail only if all fail); partial contacts saved if credits run out mid-chain; _ask(meta) records the model that actually answered (contacts_models) and the chain skips models already used. Tests: iteration_28/29 (41/41).
+
+## 2026-06 Email-only outreach switch
+- Migration outreach_v6: LinkedIn drafts (pending/approved/failed) -> stopped 'Switched to email outreach'; linkedin.enabled=False; outreach hourly_cap=50, auto_send on.
+- Default hourly cap per inbox now 50.
+- Pending: production SMTP timeout check (deployer debug requested).
