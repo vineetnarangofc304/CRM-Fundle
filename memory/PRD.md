@@ -104,3 +104,6 @@ Gmail OAuth (GOOGLE_CLIENT_ID/SECRET, GMAIL_REDIRECT_URI), Meta CAPI (dataset id
 - Prospecting phase "contacts" (button "Stop adding brands (contacts only)" + Mode option): no discovery, runs 24/7 (day mode all hours), contact finding first then deep research of already-added brands. Contacts + enrichment queues now go smallest store count first.
 - Contact finder prompt also searches Indian retail trade media: Indian Retailer, RAI (STOrai), D2C Insider, Franchise India, ETRetail (sites + LinkedIn posts).
 - Preview engine kept DISABLED (phase contacts, concurrency 10). Self-tested via API + screenshot.
+
+## 2026-11-12 — Signature fix (per inbox, incl. tests)
+- Test emails (main + extra inboxes) now include the inbox signature. Main inbox signature editable in Admin → Email → Outreach inboxes (primary-signature). Extra inbox signature saved on mailbox doc, kept on edits that omit it; fallback = main signature. iteration_20: 100%.

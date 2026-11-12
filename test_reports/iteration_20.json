@@ -1,0 +1,26 @@
+{
+  "summary": "Tested the per-inbox signature fix. Backend: new file test_mailbox_signature_iter20.py has 8 tests and all 8 pass. 3 run against the live API: inbox signature create, list, update and keep; PUT /api/outreach/signature with restore. 5 are unit tests on a throwaway DB with sending mocked: inbox test email uses the inbox signature; it falls back to the main signature; main-inbox send-test adds the main signature; senders() fallback works; _send_one adds the sender's signature. The regression file test_mailboxes.py passes 20 of 20. Frontend (Playwright): in Admin -> Email -> Outreach inboxes I added an inbox with a signature and saved it. The edit form opened pre-filled with the exact signature. I edited it, saved, reloaded, and the new signature was still there. No real email was sent.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "PUT /api/admin/mailboxes/{id}", "issue": "Box.signature defaults to ''. A PUT that leaves out the 'signature' field silently wipes the saved signature. The current UI always sends it, so users are not affected today. Consider Optional[str]=None and only $set the signature when it is provided."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": ["/app/backend/tests/test_mailbox_signature_iter20.py", "/app/test_reports/pytest/pytest_iter20.xml"],
+  "action_items": ["Optional: make Box.signature Optional and skip it in edit_box when it is None, so older clients or API callers don't wipe it"],
+  "critical_code_review_comments": [
+    "routes/outlook.outlook_send_test reads settings.outreach directly. That works, but oc.get_settings() would be more consistent.",
+    "The main inbox is not connected in preview, so the PrimarySignature card (primary-signature*) is not shown and could not be UI-tested. The API path (PUT /api/outreach/signature, then the DB) was verified. primary.signature in GET /api/admin/mailboxes could not be checked live because primary is null in preview; it is covered by code review."
+  ],
+  "updated_files": ["/app/backend/tests/test_mailbox_signature_iter20.py"],
+  "success_rate": {"backend": "100%", "frontend": "100% (primary signature card not testable in preview)"},
+  "seed_data_creation": "Created TEST inboxes through the API and UI (including id 81, test_ui_sig_iter20@example.com). All were soft-deleted by id. settings.outreach.signature was set to a test value and then restored to Abhinav's signature (checked in the DB).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Run with REACT_APP_BACKEND_URL exported; the pytest.ini xdist config is in use. Unit tests monkeypatch db in core.outreach, mailboxes, utils, email_templates and routes.mailboxes, outlook. Preview has no main inbox connected (primary is null)."
+}
