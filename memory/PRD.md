@@ -107,3 +107,6 @@ Gmail OAuth (GOOGLE_CLIENT_ID/SECRET, GMAIL_REDIRECT_URI), Meta CAPI (dataset id
 
 ## 2026-11-12 — Signature fix (per inbox, incl. tests)
 - Test emails (main + extra inboxes) now include the inbox signature. Main inbox signature editable in Admin → Email → Outreach inboxes (primary-signature). Extra inbox signature saved on mailbox doc, kept on edits that omit it; fallback = main signature. iteration_20: 100%.
+
+## 2026-11-12 — Hourly sending limit
+- No daily limit / warm-up for sending. Each inbox (main + extra) sends max settings.outreach.hourly_cap (default 25, 1–100) per rolling hour, spread over the 4 runs/hour (≤7 per run). UI shows "X/25 this hour". iteration_21: 100%.

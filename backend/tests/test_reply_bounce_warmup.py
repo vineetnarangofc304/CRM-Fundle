@@ -70,18 +70,25 @@ class TestWarmup:
         print("legacy cap today:", mb.warm_cap(b, "2026-01-15"), "in 30 days:", mb.warm_cap(b, "2026-02-14"))
         assert mb.warm_cap(b, "2026-02-14") > 30, "legacy verified box (no verified_at) is capped at 30/day permanently"
 
-    def test_senders_uses_warm_cap(self, tdb, monkeypatch):
+    def test_senders_ignores_warm_cap_hourly_model(self, tdb, monkeypatch):
+        # iteration 21: warm-up/daily_cap no longer limit; remaining = hourly_cap - sent in last 60 min
+        from datetime import datetime, timedelta as td, timezone
+        now = datetime.now(timezone.utc)
+        fmt = lambda m: (now - td(minutes=m)).strftime("%Y-%m-%d %H:%M:%S")
+
         async def ic():
             return False
         monkeypatch.setattr(mailer, "is_connected", ic)
 
         async def go():
             await tdb.mailboxes.insert_one({"id": 1, "smtp_user": "b1@fundle.ai", "daily_cap": 200, "active": True,
-                                            "verified": True, "verified_at": "2026-01-13 09:00:00"})
-            await tdb.outreach.insert_one({"id": 1, "status": "sent", "channel": "email", "sent_at": "2026-01-15 01:00:00", "sent_via": 1})
-            return await mb.senders({"daily_cap": 200}, "2026-01-15")
+                                            "verified": True, "verified_at": fmt(60 * 24 * 2)})  # warm-up day 2 (was 50/day)
+            await tdb.outreach.insert_many([
+                {"id": 1, "status": "sent", "channel": "email", "sent_at": fmt(5), "sent_via": 1},
+                {"id": 2, "status": "sent", "channel": "email", "sent_at": fmt(90), "sent_via": 1}])
+            return await mb.senders({"hourly_cap": 25, "daily_cap": 200}, now.strftime("%Y-%m-%d"))
         pool = run(go())
-        assert pool[0]["remaining"] == 49  # day 2 → 50, minus 1 sent
+        assert pool[0]["remaining"] == 24
 
 
 # ---------------- signature ----------------
@@ -199,8 +206,9 @@ class TestRefresh:
             got.append((subject, body))
             return {"ok": True}
         monkeypatch.setattr(mb, "send", fake_send)
-        pool = [{"id": 0, "email": "main@x.com", "remaining": 5, "cfg": None}]
-        assert run(oc._send_one(_msg(), {**oc.DEFAULTS, "signature": "TEST Sig"}, pool)) is True
+        # since iteration 19/20 the signature comes from the sender dict (per inbox), not settings
+        pool = [{"id": 0, "email": "main@x.com", "remaining": 5, "cfg": None, "signature": "TEST Sig"}]
+        assert run(oc._send_one(_msg(), {**oc.DEFAULTS, "signature": "SETTINGS Sig"}, pool)) is True
         assert got[0][0] == "Hi Jane at Acme" and "NEW Acme" in got[0][1] and got[0][1].endswith("TEST Sig</p>")
         assert "Team Fundle" not in got[0][1]
 
@@ -346,6 +354,8 @@ class TestContactsAuto:
 
     def test_run_auto_skips_replied(self, tdb):
         async def go():
+            # skip the one-time intro-v2 / follow-up seeding so only our template is auto
+            await tdb.settings.insert_many([{"key": "tpl_intro_v2"}, {"key": "tpl_followups_v1"}])
             await tdb.email_templates.insert_one(_tpl())
             await tdb.prospects.insert_many([
                 {"id": 1, "brand_name": "R", "category": "c", "country": "IN", "replied": True, "fit_score": 90, "contacts": [{"name": "A", "email": "a@r.com"}]},
@@ -425,7 +435,8 @@ class TestAPI:
                                                             "smtp_password": "x", "daily_cap": 150}).json()
         try:
             row = next(x for x in s.get(f"{BASE_URL}/api/admin/mailboxes").json()["boxes"] if x["id"] == b["id"])
-            assert "today_cap" in row and "reader" in row and row["reader"] is None
+            assert row["sent_hour"] == 0 and row["sent_today"] == 0 and "reader" in row and row["reader"] is None
+            assert isinstance(row["hourly_cap"], int) and 1 <= row["hourly_cap"] <= 100 and "today_cap" not in row
             rep = s.get(f"{BASE_URL}/api/admin/mailboxes/report")
             assert rep.status_code == 200
             rows = {x["id"]: x for x in rep.json()}

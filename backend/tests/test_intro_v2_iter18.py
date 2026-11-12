@@ -31,6 +31,13 @@ def run(coro):
     return LOOP.run_until_complete(coro)
 
 
+def _live():
+    # create the client inside this module's LOOP (xdist workers share a process with other modules' loops)
+    async def mk():
+        return AsyncIOMotorClient(os.environ["MONGO_URL"])[os.environ["DB_NAME"]]
+    return run(mk())
+
+
 @pytest.fixture(scope="module")
 def admin():
     s = requests.Session()
@@ -52,8 +59,9 @@ class TestTemplatesApi:
             assert t["mode"] == "auto" and t["ai_tailor"] is False and t["audience"] == aud and t["active"]
             assert "{{brand}}" in t["subject"] and "{{first_name}}" in t["body"]
         assert by[1]["name"] == "Intro email" and by[1]["mode"] == "manual"
-        autos = [t for t in r.json() if t["mode"] == "auto" and t["active"]]
-        assert sorted(t["id"] for t in autos) == sorted(INTRO_IDS), "only the 4 intro templates should be auto"
+        # since iteration 19 the 8 follow-up templates (step 2/3) are auto too; first-touch autos must be only the 4 intros
+        autos = [t for t in r.json() if t["mode"] == "auto" and t["active"] and (t.get("step") or 1) <= 1]
+        assert sorted(t["id"] for t in autos) == sorted(INTRO_IDS), "only the 4 intro templates should be first-touch auto"
 
     def test_create_update_audience_persist(self, admin):
         body = {"name": "TEST_aud", "subject": "S {{brand}}", "body": "<p>Hi {{first_name}}</p>", "mode": "manual",
@@ -74,7 +82,7 @@ class TestTemplatesApi:
             assert admin.delete(f"{BASE_URL}/api/outreach/templates/{tid}").status_code == 200
 
     def test_live_queue_one_intro_per_brand(self):
-        d = AsyncIOMotorClient(os.environ["MONGO_URL"])[os.environ["DB_NAME"]]
+        d = _live()
 
         async def q():
             rows = await d.outreach.aggregate([{"$match": {"template_id": {"$in": [1, *INTRO_IDS]}}},
@@ -130,7 +138,7 @@ class TestFormatAndLinkedin:
 
     def test_check_format_one_brand_and_409(self, admin):
         """ONE live AI call. Picks a prospect with contacts and a website."""
-        d = AsyncIOMotorClient(os.environ["MONGO_URL"])[os.environ["DB_NAME"]]
+        d = _live()
         p = run(d.prospects.find_one({"contacts.0": {"$exists": True}, "website": {"$nin": [None, ""]},
                                       "fmt_running": {"$exists": False}}, {"_id": 0, "id": 1, "brand_name": 1}))
         if not p:
@@ -153,7 +161,7 @@ class TestFormatAndLinkedin:
         assert r.status_code == 200 and r.json()["settings"]["enabled"] is False
 
     def test_lead_contacts(self, admin):
-        d = AsyncIOMotorClient(os.environ["MONGO_URL"])[os.environ["DB_NAME"]]
+        d = _live()
         p = run(d.prospects.find_one({"contacts.0": {"$exists": True}, "lead_id": {"$ne": None}}, {"_id": 0, "lead_id": 1}))
         r = admin.get(f"{BASE_URL}/api/linkedin/lead/{p['lead_id']}/contacts")
         assert r.status_code == 200 and len(r.json()["contacts"]) >= 1 and "name" in r.json()["contacts"][0]

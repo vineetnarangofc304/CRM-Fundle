@@ -58,11 +58,14 @@ class TestMailboxAPI:
         r = s.get(f"{BASE_URL}/api/admin/mailboxes")
         assert r.status_code == 200
         d = r.json()
-        assert set(d) >= {"primary", "boxes", "per_inbox_cap"}
+        # hourly model (iteration 21): per-inbox hourly_cap, each box has sent_hour/sent_today/hourly_cap
+        assert set(d) >= {"primary", "boxes", "hourly_cap"}
         assert isinstance(d["boxes"], list)
-        # 200 after _migrate_v4 ran (only runs inside run_outreach cron); may still be the legacy 100 before that
-        # test_outreach temporarily PUTs daily_cap=39 when run in parallel, so only check the type here
-        assert isinstance(d["per_inbox_cap"], int) and d["per_inbox_cap"] > 0
+        assert isinstance(d["hourly_cap"], int) and 1 <= d["hourly_cap"] <= 100
+        for b in d["boxes"]:
+            assert b["hourly_cap"] == d["hourly_cap"] and isinstance(b["sent_hour"], int) and isinstance(b["sent_today"], int)
+        if d["primary"]:
+            assert {"email", "hourly_cap", "sent_hour", "sent_today"} <= set(d["primary"])
 
     def test_unauth(self):
         assert requests.get(f"{BASE_URL}/api/admin/mailboxes").status_code in (401, 403)
@@ -151,27 +154,51 @@ async def _mk_box(d, bid, cap=200, active=True, verified=True, deleted=False, ve
 DAY = "2026-01-15"
 
 
+def _ago(minutes):
+    from datetime import datetime, timedelta, timezone
+    return (datetime.now(timezone.utc) - timedelta(minutes=minutes)).strftime("%Y-%m-%d %H:%M:%S")
+
+
 class TestSendersPick:
     def test_senders(self, tdb, monkeypatch):
+        # hourly model: remaining = hourly_cap - sent by that inbox in the last rolling 60 min; daily_cap ignored
         _conn(monkeypatch, True)
+        recent, old = _ago(10), _ago(61)
 
         async def go():
-            await _mk_box(tdb, 1, cap=50)
+            await _mk_box(tdb, 1, cap=5)  # tiny daily_cap must NOT reduce remaining any more
             await _mk_box(tdb, 2, verified=False)
             await _mk_box(tdb, 3, active=False)
             await _mk_box(tdb, 4, deleted=True)
             await tdb.outreach.insert_many([
-                {"id": 1, "status": "sent", "channel": "email", "sent_at": DAY + " 01:00:00"},  # legacy, no sent_via → primary
-                {"id": 2, "status": "sent", "channel": "email", "sent_at": DAY + " 02:00:00", "sent_via": 0},
-                {"id": 3, "status": "sent", "channel": "email", "sent_at": DAY + " 02:00:00", "sent_via": 1},
-                {"id": 4, "status": "sent", "channel": "email", "sent_at": "2026-01-14 23:00:00", "sent_via": 1},
-                {"id": 5, "status": "approved", "channel": "email", "sent_at": DAY + " 02:00:00", "sent_via": 1}])
-            return await mb.senders({"daily_cap": 200}, DAY)
+                {"id": 1, "status": "sent", "channel": "email", "sent_at": recent},  # legacy, no sent_via -> primary
+                {"id": 2, "status": "sent", "channel": "email", "sent_at": recent, "sent_via": 0},
+                {"id": 3, "status": "bounced", "channel": "email", "sent_at": recent, "sent_via": 1},
+                {"id": 4, "status": "sent", "channel": "email", "sent_at": old, "sent_via": 1},  # >60 min ago
+                {"id": 5, "status": "approved", "channel": "email", "sent_at": recent, "sent_via": 1}])
+            return await mb.senders({"hourly_cap": 25, "daily_cap": 1}, DAY)
         pool = run(go())
         by = {x["id"]: x for x in pool}
         assert set(by) == {0, 1}
-        assert by[0]["remaining"] == 198 and by[0]["cfg"] is None and by[0]["email"] == "main@fundle.ai"
-        assert by[1]["remaining"] == 49 and by[1]["cfg"]["method"] == "smtp" and by[1]["cfg"]["from_email"] == "box1@fundle.ai"
+        assert by[0]["remaining"] == 23 and by[0]["cfg"] is None and by[0]["email"] == "main@fundle.ai"
+        assert by[1]["remaining"] == 24 and by[1]["cfg"]["method"] == "smtp" and by[1]["cfg"]["from_email"] == "box1@fundle.ai"
+
+    def test_senders_zero_sent_and_full_inbox_only(self, tdb, monkeypatch):
+        _conn(monkeypatch, True)
+
+        async def go():
+            await _mk_box(tdb, 1)
+            await _mk_box(tdb, 2, verified_at=_ago(30))  # brand new (warm-up day 0) -> no longer limited to 30/day
+            fresh = await mb.senders({"hourly_cap": 25}, DAY)
+            await tdb.outreach.insert_many([{"id": i, "status": "sent", "channel": "email", "sent_at": _ago(i % 59 + 1),
+                                             "sent_via": 1} for i in range(1, 26)])
+            await tdb.outreach.insert_many([{"id": 100 + i, "status": "sent", "channel": "email", "sent_at": _ago(70 + i),
+                                             "sent_via": 2} for i in range(200)])  # 200 earlier today -> no daily limit
+            return fresh, await mb.senders({"hourly_cap": 25}, DAY), await mb.senders({}, DAY)
+        fresh, after, dflt = run(go())
+        assert {x["id"]: x["remaining"] for x in fresh} == {0: 25, 1: 25, 2: 25}
+        assert {x["id"]: x["remaining"] for x in after} == {0: 25, 1: 0, 2: 25}
+        assert {x["id"]: x["remaining"] for x in dflt} == {0: 25, 1: 0, 2: 25}  # default hourly_cap 25
 
     def test_senders_primary_disconnected(self, tdb, monkeypatch):
         _conn(monkeypatch, False)
@@ -220,6 +247,12 @@ class TestRotation:
         async def no_auto(n):
             return 0
         monkeypatch.setattr(et, "run_auto", no_auto)
+        from core import inbox_sync, linkedin  # never touch the live DB / Microsoft from unit runs
+
+        async def noop(*a, **k):
+            return {}
+        monkeypatch.setattr(inbox_sync, "sync_all", noop)
+        monkeypatch.setattr(linkedin, "build_queue", noop)
 
         async def go():
             await _mk_box(tdb, 1, cap=3)
@@ -232,14 +265,15 @@ class TestRotation:
         run(go())
         return sent
 
-    def test_total_is_sum_of_caps(self, tdb, monkeypatch):
-        sent = self._setup(tdb, monkeypatch, 12)
-        st = {**oc.DEFAULTS, "daily_cap": 4, "auto_send": False, "ai_sequence": False}
+    def test_per_run_cap_is_ceil_hourly_over_4(self, tdb, monkeypatch):
+        # hourly_cap 25 -> each 15-min run sends at most ceil(25/4)=7 per inbox; daily caps (3/2 on boxes) ignored
+        sent = self._setup(tdb, monkeypatch, 30)
+        st = {**oc.DEFAULTS, "hourly_cap": 25, "daily_cap": 4, "auto_send": False, "ai_sequence": False}
         stats = run(oc._run_outreach(st, {"drafted": 0, "sent": 0, "failed": 0}, "test"))
-        assert stats["sent"] == 9, stats
+        assert stats["sent"] == 21, stats
         from collections import Counter
         c = Counter(i for i, _ in sent)
-        assert c == {0: 4, 1: 3, 2: 2}
+        assert c == {0: 7, 1: 7, 2: 7}
 
         async def chk():
             sentdocs = await tdb.outreach.find({"status": "sent"}).to_list(100)
@@ -247,13 +281,38 @@ class TestRotation:
             msg = await tdb.messages.find_one({"body": {"$regex": "from box1@fundle.ai"}})
             return sentdocs, left, msg
         sentdocs, left, msg = run(chk())
-        assert left == 3
+        assert left == 9
         assert all("sent_via" in d and d["sent_from"] for d in sentdocs)
         assert {d["sent_from"] for d in sentdocs} == {"main@fundle.ai", "box1@fundle.ai", "box2@fundle.ai"}
         assert msg is not None
-        # stickiness saved
         p = run(tdb.prospects.find_one({"id": sentdocs[0]["prospect_id"]}))
         assert p["sender_mailbox"] == sentdocs[0]["sent_via"]
+        # 2nd run in the same hour: each inbox has 18 left this hour, per-run 7 -> the 9 remaining all go
+        stats2 = run(oc._run_outreach(st, {"drafted": 0, "sent": 0, "failed": 0}, "test"))
+        assert stats2["sent"] == 9, stats2
+
+    def test_run_respects_hour_remaining(self, tdb, monkeypatch):
+        # inbox 1 already sent 22 this hour -> only 3 more; inbox 2 at 25 -> 0; primary 7
+        sent = self._setup(tdb, monkeypatch, 30)
+
+        async def pre():
+            await tdb.outreach.insert_many([{"id": 1000 + i, "status": "sent", "channel": "email", "sent_at": _ago(5),
+                                             "sent_via": 1} for i in range(22)]
+                                           + [{"id": 2000 + i, "status": "sent", "channel": "email", "sent_at": _ago(5),
+                                               "sent_via": 2} for i in range(25)])
+        run(pre())
+        st = {**oc.DEFAULTS, "hourly_cap": 25, "auto_send": False, "ai_sequence": False}
+        stats = run(oc._run_outreach(st, {"drafted": 0, "sent": 0, "failed": 0}, "test"))
+        from collections import Counter
+        assert Counter(i for i, _ in sent) == {0: 7, 1: 3}, stats
+        assert stats["sent"] == 10
+
+    def test_per_run_small_cap(self, tdb, monkeypatch):
+        sent = self._setup(tdb, monkeypatch, 30)
+        st = {**oc.DEFAULTS, "hourly_cap": 5, "auto_send": False, "ai_sequence": False}  # ceil(5/4)=2
+        stats = run(oc._run_outreach(st, {"drafted": 0, "sent": 0, "failed": 0}, "test"))
+        from collections import Counter
+        assert Counter(i for i, _ in sent) == {0: 2, 1: 2, 2: 2} and stats["sent"] == 6
 
     def test_no_room_goes_back_to_approved(self, tdb, monkeypatch):
         self._setup(tdb, monkeypatch, 1)

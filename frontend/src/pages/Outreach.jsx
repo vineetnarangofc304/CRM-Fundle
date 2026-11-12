@@ -22,7 +22,7 @@ function SettingsPanel({ s, isAdmin, reload }) {
       <div className="mt-3 grid gap-3 text-xs sm:grid-cols-2 lg:grid-cols-4">
         <label className="font-semibold text-slate-500">Auto-draft for fit score ≥<input data-testid="outreach-min-score" type="number" className="crm-input mt-1 w-full" value={f.min_score} onChange={(e) => num("min_score", e.target.value)} /></label>
         <label className="font-semibold text-slate-500">New drafts per run (every 15 min)<input data-testid="outreach-drafts-per-run" type="number" className="crm-input mt-1 w-full" value={f.drafts_per_run} onChange={(e) => num("drafts_per_run", e.target.value)} /></label>
-        <label className="font-semibold text-slate-500">Emails per hour, each inbox<input data-testid="outreach-hourly-cap" type="number" className="crm-input mt-1 w-full" value={f.hourly_cap} onChange={(e) => num("hourly_cap", e.target.value)} /></label>
+        <label className="font-semibold text-slate-500">Emails per hour, each inbox<input data-testid="outreach-hourly-cap" type="number" min={1} max={100} className="crm-input mt-1 w-full" value={f.hourly_cap} onChange={(e) => num("hourly_cap", e.target.value)} /></label>
         <label className="font-semibold text-slate-500">Follow-up gaps (days)
           <div className="mt-1 flex gap-1">{[0, 1].map((i) => <input key={i} data-testid={`outreach-gap-${i}`} type="number" className="crm-input w-full" value={f.gaps[i]} onChange={(e) => setF({ ...f, gaps: f.gaps.map((g, j) => (j === i ? Number(e.target.value) : g)) })} />)}</div>
         </label>

@@ -1,0 +1,43 @@
+{
+  "summary": "Tested the change from a daily limit to an hourly limit (25 per inbox per rolling hour). Backend: all 103 tests pass in the 6 suites (pytest with xdist). These are the new test_hourly_cap_iter21.py plus test_mailboxes.py, test_reply_bounce_warmup.py, test_mailbox_signature_iter20.py, test_followups_iter19.py and test_intro_v2_iter18.py. test_mark_bounced_iter17.py and test_outreach.py also pass (49/49). Checked: GET /api/outreach/settings returns hourly_cap=25. PUT clamps the value to 1-100 (0 and -5 become 1, 500 becomes 100). GET /api/admin/mailboxes returns hourly_cap at the top level and hourly_cap, sent_hour and sent_today on each box. senders() unit tests: remaining is 25 per inbox when nothing was sent; it drops to 0 only for the inbox that sent 25 in the last hour; emails older than 60 minutes don't count; daily_cap and warm-up no longer reduce it; bounced emails count; the default hourly cap is 25. _run_outreach (with mb.send mocked): 7 per inbox per run, which is ceil(25/4); a second run sends the rest; an inbox with 22 sent this hour sends only 3 more and a full inbox sends 0; hourly_cap=5 gives 2 per run. Frontend (Playwright): the 'Outreach inboxes' text says 'up to 25 an hour ... (no daily limit)'. Rows show '0/25 this hour · 0 today' for a live inbox and 'not live yet · 25/hour once tested' for an untested one. The add and edit forms have no 'Emails per day' field. Outreach settings shows 'Emails per hour, each inbox'. Changing it from 25 to 30 saved, survived a reload and updated the header text ('max 30/hour per inbox, no daily limit'). It was then set back to 25. No real email was sent.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "core/mailboxes.py", "issue": "Leftover code: warm_cap and WARMUP are no longer used. _sent_today() is now also called with an hour cutoff, so its name is misleading (suggest _sent_since)."},
+      {"endpoint": "PUT /api/outreach/settings", "issue": "OutreachSettings.daily_cap still defaults to 100 and is still clamped/saved, but nothing uses it now. Box.daily_cap still validates 1-1000 and is stored, although the UI no longer shows it. Harmless, but confusing."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Outreach settings", "issues": ["The hourly cap input has no min=1 max=100. The backend clamps silently (500 is saved as 100) and the user gets no message."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_hourly_cap_iter21.py",
+    "/app/backend/tests/test_mailboxes.py",
+    "/app/backend/tests/test_reply_bounce_warmup.py",
+    "/app/backend/tests/test_intro_v2_iter18.py",
+    "/app/test_reports/pytest/pytest_iter21.xml"
+  ],
+  "action_items": [
+    "Optional: remove the unused warm_cap/WARMUP and daily_cap code, or mark it as legacy",
+    "Optional: add min=1 max=100 to data-testid=outreach-hourly-cap"
+  ],
+  "critical_code_review_comments": [
+    "The logic is sound. The hourly window uses UTC strings in the same format as sent_at (from _now()), so the string comparison is correct. A failed send counts nothing: the message goes back to approved. A forced send-now (force=True) can go over the hour limit; this is intentional.",
+    "_run_outreach applies per_run = ceil(hourly_cap/4) to each inbox's rolling remaining, so a manual 'Run now' clicked repeatedly still can't go over hourly_cap in a rolling hour."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_hourly_cap_iter21.py (new)",
+    "/app/backend/tests/test_mailboxes.py (test_list_shape and test_senders rewritten for the hourly model; added test_senders_zero_sent_and_full_inbox_only; test_total_is_sum_of_caps replaced by test_per_run_cap_is_ceil_hourly_over_4, test_run_respects_hour_remaining and test_per_run_small_cap; inbox_sync.sync_all and linkedin.build_queue are now mocked so the unit runs never touch the live DB)",
+    "/app/backend/tests/test_reply_bounce_warmup.py (test_senders_uses_warm_cap renamed to test_senders_ignores_warm_cap_hourly_model; the send_one signature test now takes the signature from the sender dict; run_auto pre-inserts tpl_intro_v2/tpl_followups_v1; the mailboxes API test checks sent_hour/hourly_cap)",
+    "/app/backend/tests/test_intro_v2_iter18.py (the 'only 4 auto' check now excludes step>1 follow-ups; the motor client is created inside the module loop, which fixes the 'future belongs to a different loop' failure under xdist)"
+  ],
+  "success_rate": {"backend": "100% (103/103 + 49/49 related)", "frontend": "100%"},
+  "seed_data_creation": "Created TEST inboxes 127 and 128 (test_ui_hour_*@example.com, active=false). Inbox 127 was set to verified=true directly in the DB so its live row could be shown. Both were soft-deleted by id. API tests created and deleted their own test_*@example.com inboxes. settings.outreach.hourly_cap was changed and set back to 25. The signature and cc were checked afterwards and are unchanged.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Export REACT_APP_BACKEND_URL and run the suites with the default pytest.ini (xdist -n 2). Unit tests use a throwaway DB named <DB_NAME>_t1_<uuid> and mock mailer.is_connected, ol.get_config and mb.send. Preview has no main inbox connected (primary is null), so the primary usage line could not be checked in the UI. test_intro_v2_iter18::test_check_format_one_brand_and_409 makes one live AI call."
+}
