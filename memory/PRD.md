@@ -143,3 +143,4 @@ Gmail OAuth (GOOGLE_CLIENT_ID/SECRET, GMAIL_REDIRECT_URI), Meta CAPI (dataset id
 - Brain update_brands_from_file: fills only blank store_count/category/city/website/segment; adds unknown brands. Saved CSV files view (GET /api/brain/exports).
 - Contact search rate-limit on prod: RCA requested from deployer (pending).
 - Prod RCA: Gemini 429 'exceeded quota' on Emergent key + concurrency 10. Fix: lanes capped at 4, quota-limited models skipped 3h, exponential backoff (60s→300s) on AI limits.
+- Brain send_queued_emails_now: >3 emails run as background job (brain_send_jobs) one by one ~2s apart, up to 3000; GET /api/brain/send-jobs/{id}, POST .../cancel; live 'x of N sent' progress bar + Stop in chat. Fixes 'network error' (long synchronous send inside chat stream).

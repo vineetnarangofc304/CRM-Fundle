@@ -113,6 +113,21 @@ async def chat(sid: int, b: Say, user: dict = Depends(brain_user)):
     return StreamingResponse(gen(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
+@router.get("/send-jobs/{jid}")
+async def send_job(jid: int, user: dict = Depends(brain_user)):
+    j = await db.brain_send_jobs.find_one({"id": jid}, {"_id": 0})
+    if not j or (j["user_id"] != user["id"] and user.get("role") != "admin"):
+        raise HTTPException(status_code=404, detail="Send job not found")
+    return j
+
+
+@router.post("/send-jobs/{jid}/cancel")
+async def cancel_send_job(jid: int, user: dict = Depends(brain_user)):
+    await send_job(jid, user)
+    await db.brain_send_jobs.update_one({"id": jid, "status": "running"}, {"$set": {"status": "cancelled"}})
+    return {"ok": True}
+
+
 @router.get("/exports")
 async def exports(user: dict = Depends(brain_user)):
     f = {} if user.get("role") == "admin" else {"user_id": user["id"]}

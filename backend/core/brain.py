@@ -369,22 +369,49 @@ async def t_email(ctx, a):
     return r
 
 
+async def _send_job(jid: int, ids: list):
+    import asyncio
+    for i in ids:
+        if (await db.brain_send_jobs.find_one({"id": jid}, {"status": 1}) or {}).get("status") == "cancelled":
+            return
+        try:
+            r = await _send_now([i])
+        except Exception as e:
+            r = {"sent": [], "failed": [{"id": i, "error": str(e)[:200]}]}
+        inc = {"done": 1, "sent": len(r["sent"]), "failed": len(r["failed"])}
+        upd = {"$inc": inc, "$set": {"updated_at": now_utc_str()}}
+        if r["failed"]:
+            upd["$push"] = {"errors": {"$each": [f"#{x['id']} {x.get('to') or ''}: {x.get('error')}" for x in r["failed"]], "$slice": -20}}
+        await db.brain_send_jobs.update_one({"id": jid}, upd)
+        await asyncio.sleep(2)
+    await db.brain_send_jobs.update_one({"id": jid}, {"$set": {"status": "done", "finished_at": now_utc_str()}})
+
+
 async def t_send_queued(ctx, a):
     f = a.get("outreach_filter") or {}
     _check(f)
     if not f:
-        raise ValueError("A filter is required (e.g. {\"brand\": \"Go Colors\"} or {\"id\": {\"$in\": [..]}})")
-    ids = [m["id"] async for m in db.outreach.find({"$and": [f, {"status": {"$in": ["approved", "pending_approval"]}}]}, {"id": 1}).limit(50)]
+        raise ValueError("A filter is required (e.g. {\"brand\": \"Go Colors\"} or {\"status\": \"approved\"} for everything queued)")
+    ids = [m["id"] async for m in db.outreach.find({"$and": [f, {"channel": "email", "status": {"$in": ["approved", "pending_approval"]}}]},
+                                                     {"id": 1}).sort("scheduled_at", 1).limit(3000)]
     if not ids:
         return {"sent": [], "failed": [], "note": "Nothing queued matches that filter."}
     await db.outreach.update_many({"id": {"$in": ids}, "status": "pending_approval"},
                                   {"$set": {"status": "approved", "approved_by": "Fundle Brain", "approved_at": now_utc_str()}})
     if a.get("from_inbox"):
         await db.outreach.update_many({"id": {"$in": ids}}, {"$set": {"force_sender": await _sender_id(a["from_inbox"])}})
-    r = await _send_now(ids)
-    if r["failed"] and not r["sent"]:
-        raise ValueError("Nothing sent: " + "; ".join(f"#{x['id']} {x['error']}" for x in r["failed"][:5]))
-    return r
+    if len(ids) <= 3:
+        r = await _send_now(ids)
+        if r["failed"] and not r["sent"]:
+            raise ValueError("Nothing sent: " + "; ".join(f"#{x['id']} {x['error']}" for x in r["failed"][:5]))
+        return r
+    from routes.prospecting import _spawn
+    jid = await next_id("brain_send_job")
+    await db.brain_send_jobs.insert_one({"id": jid, "session_id": ctx["session_id"], "user_id": ctx["user"]["id"], "total": len(ids),
+                                         "done": 0, "sent": 0, "failed": 0, "errors": [], "status": "running", "started_at": now_utc_str()})
+    _spawn(_send_job(jid, ids))
+    return {"send_job_id": jid, "total": len(ids),
+            "note": "Sending one by one in the background (about 2 s apart); a live 'x of N sent' progress bar is shown to the user under your reply."}
 
 
 async def t_inbox(ctx, a):
@@ -461,7 +488,7 @@ TOOLS = {
     "run_job": (t_job, _fn("run_job", "Start a background job now: outreach (send queued emails + auto templates), prospecting, email_format, inbox_sync.", {"job": STR}, ["job"])),
     "send_single_email": (t_email, _fn("send_single_email", "Send one email RIGHT NOW to an address (e.g. a brand's contact), optionally from a specific inbox (email, sender name match or 'main'). Goes through the normal sender: inbox signature, logged on the brand's lead, auto-retry if it fails.",
                                        {"to": STR, "subject": STR, "body_html": STR, "from_inbox": STR, "campaign_name": STR}, ["to", "subject", "body_html"])),
-    "send_queued_emails_now": (t_send_queued, _fn("send_queued_emails_now", "Send already-queued outreach emails (e.g. a brand's pending intro) immediately instead of waiting for the next run. Optional from_inbox pins the sender.",
+    "send_queued_emails_now": (t_send_queued, _fn("send_queued_emails_now", "Send already-queued outreach emails immediately instead of waiting for the next run — one brand, or ALL queued ones (filter {\"status\": \"approved\"} for the whole Approved/scheduled bucket; up to 3000). More than 3 run in the background one by one with a live progress bar. Optional from_inbox pins the sender.",
                                                   {"outreach_filter": OBJ, "from_inbox": STR}, ["outreach_filter"])),
     "inbox_activity": (t_inbox, _fn("inbox_activity", "Mailbox knowledge: per-inbox sent/bounced/failed counts for the last N days, recent replies, recent send errors and reply-tracking status.",
                                     {"days": INT}, [], False)),

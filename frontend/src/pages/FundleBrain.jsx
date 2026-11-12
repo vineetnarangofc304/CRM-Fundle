@@ -38,6 +38,30 @@ function Exports() {
   );
 }
 
+function SendProgress({ t }) {
+  const id = (t.summary || "").match(/"send_job_id": (\d+)/)?.[1];
+  const [j, setJ] = useState(null);
+  useEffect(() => {
+    if (!t.ok || !id) return undefined;
+    let stop = false;
+    const tick = () => API.get(`/brain/send-jobs/${id}`).then(({ data }) => { if (stop) return; setJ(data); if (data.status === "running") setTimeout(tick, 3000); }).catch(() => !stop && setTimeout(tick, 6000));
+    tick();
+    return () => { stop = true; };
+  }, [id, t.ok]);
+  if (!id || !j) return null;
+  const pct = j.total ? Math.round((j.done / j.total) * 100) : 0;
+  return (
+    <div className="mt-2 rounded-xl border border-slate-100 bg-slate-50 p-3" data-testid={`brain-send-progress-${id}`}>
+      <div className="flex items-center justify-between text-xs font-semibold text-slate-700">
+        <span data-testid="brain-send-progress-text">{j.sent} of {j.total} sent{j.failed ? ` · ${j.failed} failed` : ""}{j.status === "done" ? " · finished" : j.status === "cancelled" ? " · stopped" : " · sending…"}</span>
+        {j.status === "running" && <button data-testid="brain-send-cancel" onClick={() => API.post(`/brain/send-jobs/${id}/cancel`)} className="text-rose-600 hover:underline">Stop</button>}
+      </div>
+      <div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-200"><div className="h-full bg-[#1A73E8] transition-[width] duration-500" style={{ width: `${pct}%` }} /></div>
+      {!!j.errors?.length && <div className="mt-2 max-h-24 overflow-y-auto text-[10px] text-rose-600" data-testid="brain-send-errors">{j.errors.slice(-5).map((e, i) => <div key={i}>{e}</div>)}</div>}
+    </div>
+  );
+}
+
 function ExportButton({ t }) {
   const id = (t.summary || "").match(/"export_id": (\d+)/)?.[1];
   const name = (t.summary || "").match(/"filename": "([^"]+)"/)?.[1] || "export.csv";
@@ -63,6 +87,7 @@ function Bubble({ m }) {
         {!!m.tools?.length && <div className="mb-2 flex flex-wrap gap-1">{m.tools.map((t, i) => <ToolChip key={i} t={t} />)}</div>}
         {me ? <div className="whitespace-pre-wrap">{m.content}</div> : <div className="space-y-1" dangerouslySetInnerHTML={{ __html: fmt(m.content) || "<p class='text-slate-400'>Thinking…</p>" }} />}
         {m.tools?.some((t) => t.name === "export_csv") && <div className="mt-2 flex flex-wrap gap-2">{m.tools.filter((t) => t.name === "export_csv").map((t, i) => <ExportButton key={i} t={t} />)}</div>}
+        {m.tools?.filter((t) => t.name === "send_queued_emails_now").map((t, i) => <SendProgress key={i} t={t} />)}
       </div>
     </div>
   );
