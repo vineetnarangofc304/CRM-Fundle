@@ -30,12 +30,12 @@ def hour_ago() -> str:
     return (datetime.now(timezone.utc) - timedelta(hours=1)).strftime("%Y-%m-%d %H:%M:%S")
 
 
-async def senders(st: dict, day: str) -> list:
+async def senders(st: dict, day: str, with_main: bool | None = None) -> list:
     """Usable inboxes with this hour's remaining quota: [{id, email, remaining, cfg}]."""
     sent = await _sent_today(hour_ago())
     cap = int(st.get("hourly_cap") or 50)
     out = []
-    if await mailer.is_connected():
+    if (st.get("use_main_inbox", True) if with_main is None else with_main) and await mailer.is_connected():
         cfg = await ol.get_config()
         out.append({"id": PRIMARY, "email": cfg.get("email") or cfg.get("smtp_user") or "Primary inbox",
                     "remaining": cap - sent.get(PRIMARY, 0), "cfg": None,
@@ -49,7 +49,7 @@ async def senders(st: dict, day: str) -> list:
 
 async def pick(prospect_id, pool: list, force: bool = False, prefer=None):
     """Sticky per brand; otherwise the inbox with the most room left this hour. `prefer` pins a specific inbox."""
-    if prefer is not None:
+    if prefer is not None and any(s["id"] == prefer for s in pool):
         return next((s for s in pool if s["id"] == prefer and (force or s["remaining"] > 0)), None)
     avail = [s for s in pool if force or s["remaining"] > 0]
     if not avail:

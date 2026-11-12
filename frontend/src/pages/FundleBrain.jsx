@@ -53,10 +53,11 @@ function SendProgress({ t }) {
   return (
     <div className="mt-2 rounded-xl border border-slate-100 bg-slate-50 p-3" data-testid={`brain-send-progress-${id}`}>
       <div className="flex items-center justify-between text-xs font-semibold text-slate-700">
-        <span data-testid="brain-send-progress-text">{j.sent} of {j.total} sent{j.failed ? ` · ${j.failed} failed` : ""}{j.status === "done" ? " · finished" : j.status === "cancelled" ? " · stopped" : " · sending…"}</span>
+        <span data-testid="brain-send-progress-text">{j.sent} of {j.total} sent{j.failed ? ` · ${j.failed} failed` : ""}{j.status === "done" ? " · finished" : j.status === "cancelled" ? " · stopped" : j.status === "paused" ? " · paused" : " · sending…"}</span>
         {j.status === "running" && <button data-testid="brain-send-cancel" onClick={() => API.post(`/brain/send-jobs/${id}/cancel`)} className="text-rose-600 hover:underline">Stop</button>}
       </div>
       <div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-200"><div className="h-full bg-[#1A73E8] transition-[width] duration-500" style={{ width: `${pct}%` }} /></div>
+      {j.pause_reason && <div className="mt-2 text-[11px] font-semibold text-amber-700" data-testid="brain-send-paused">{j.pause_reason}</div>}
       {!!j.errors?.length && <div className="mt-2 max-h-24 overflow-y-auto text-[10px] text-rose-600" data-testid="brain-send-errors">{j.errors.slice(-5).map((e, i) => <div key={i}>{e}</div>)}</div>}
     </div>
   );

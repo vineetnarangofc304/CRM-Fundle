@@ -371,6 +371,8 @@ async def t_email(ctx, a):
 
 async def _send_job(jid: int, ids: list):
     import asyncio
+    from core.outreach import _conn_err
+    streak = 0
     for i in ids:
         if (await db.brain_send_jobs.find_one({"id": jid}, {"status": 1}) or {}).get("status") == "cancelled":
             return
@@ -383,6 +385,12 @@ async def _send_job(jid: int, ids: list):
         if r["failed"]:
             upd["$push"] = {"errors": {"$each": [f"#{x['id']} {x.get('to') or ''}: {x.get('error')}" for x in r["failed"]], "$slice": -20}}
         await db.brain_send_jobs.update_one({"id": jid}, upd)
+        streak = streak + 1 if any(_conn_err(x.get("error")) for x in r["failed"]) else 0
+        if streak >= 3:
+            await db.brain_send_jobs.update_one({"id": jid}, {"$set": {
+                "status": "paused", "finished_at": now_utc_str(),
+                "pause_reason": "Paused: the email server keeps dropping the connection. Unsent emails stay queued and retry automatically."}})
+            return
         await asyncio.sleep(2)
     await db.brain_send_jobs.update_one({"id": jid}, {"$set": {"status": "done", "finished_at": now_utc_str()}})
 
@@ -473,7 +481,7 @@ TOOLS = {
                                   "one_row_per_contact": BOOL, "file_name": STR}, ["collection"], False)),
     "update_records": (t_update, _fn("update_records", f"Change fields on records matching a filter (prospects, leads, outreach, email_templates, mailboxes, settings). $set / unset only, max {MAX_WRITE} records. Use for repairs, data fixes, inbox signature/sender_name/active, etc.",
                                      {"collection": STR, "filter": OBJ, "set": OBJ, "unset": {"type": "array", "items": STR}}, ["collection", "filter"])),
-    "save_settings": (t_settings, _fn("save_settings", "Change engine settings. outreach: enabled, auto_send, hourly_cap, cc, drafts_per_run, signature (main inbox), sender_name, min_score, gaps, ai_sequence, daily_cap, pitch. prospecting: enabled, countries, phase (auto|discovery|enrichment|contacts), concurrency, create_leads, daily_cap (new brands/day, 0=unlimited). linkedin: enabled, daily_connects, daily_messages.",
+    "save_settings": (t_settings, _fn("save_settings", "Change engine settings. outreach: enabled, auto_send, hourly_cap, use_main_inbox (false = main inbox not used for outreach, only extra inboxes send), cc, drafts_per_run, signature (main inbox), sender_name, min_score, gaps, ai_sequence, daily_cap, pitch. prospecting: enabled, countries, phase (auto|discovery|enrichment|contacts), concurrency, create_leads, daily_cap (new brands/day, 0=unlimited). linkedin: enabled, daily_connects, daily_messages.",
                                       {"section": {"type": "string", "enum": ["outreach", "prospecting", "linkedin"]}, "changes": OBJ}, ["section", "changes"])),
     "save_email_template": (t_template, _fn("save_email_template", "Create (no template_id) or edit an email template. mode auto = goes out automatically to matching brands; audience all|d2c|stores_100|stores_11_99|stores_1_10; step 1 intro, 2/3 follow-ups with wait_days after the intro. Placeholders {{first_name}}, {{brand}}, {{role}}, {{intro_subject}}. Set active false to switch off.",
                                             {"template_id": INT, "name": STR, "subject": STR, "body_html": STR, "mode": {"type": "string", "enum": ["auto", "manual"]},

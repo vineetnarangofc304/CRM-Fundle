@@ -120,7 +120,8 @@ export function OutreachInboxes({ isAdmin }) {
     if (q.get("inboxread")) { q.delete("inboxread"); q.delete("reason"); window.history.replaceState(null, "", `${window.location.pathname}?${q}`); }
   }, []);
   if (!d) return null;
-  const total = ((d.primary ? 1 : 0) + d.boxes.filter((b) => b.active && b.verified).length) * d.hourly_cap;
+  const total = ((d.primary?.outreach_on ? 1 : 0) + d.boxes.filter((b) => b.active && b.verified).length) * d.hourly_cap;
+  const toggleMain = async () => { try { await API.put("/admin/mailboxes/main-outreach", { on: !d.primary.outreach_on }); load(); } catch (e) { toast.error(apiErr(e)); } };
   return (
     <div className="crm-card space-y-3 p-4" data-testid="outreach-inboxes">
       <div className="flex items-center gap-2">
@@ -129,7 +130,7 @@ export function OutreachInboxes({ isAdmin }) {
         {isAdmin && !edit && <button data-testid="mailbox-add" onClick={() => setEdit({})} className="crm-btn-primary ml-auto !py-1 text-xs"><Plus size={14} /> Add inbox</button>}
       </div>
       <p className="text-xs text-slate-500">Outreach emails take turns across these inboxes, each sending up to {d.hourly_cap} an hour, spread evenly (no daily limit). A brand always hears from the same inbox. Office 365 inboxes need Authenticated SMTP switched on. “Read replies” needs the Microsoft app above with the <b>Mail.Read</b> permission; replies stop the auto emails to that brand, and bounces trigger a search for a new contact.</p>
-      {d.primary ? <div className="flex items-center gap-2 rounded-lg border border-slate-100 p-2 text-xs" data-testid="mailbox-primary"><EnvelopeSimple size={16} className="text-slate-400" /><b className="text-slate-700">{d.primary.email}</b><span className="font-bold text-emerald-600">Main inbox</span><span className="text-slate-500" data-testid="mailbox-primary-usage">{d.primary.sent_hour}/{d.primary.hourly_cap} this hour · {d.primary.sent_today} today</span><span className="ml-auto"><ReadReplies bid={0} reader={d.primary.reader} /></span></div>
+      {d.primary ? <div className="flex items-center gap-2 rounded-lg border border-slate-100 p-2 text-xs" data-testid="mailbox-primary"><EnvelopeSimple size={16} className="text-slate-400" /><b className="text-slate-700">{d.primary.email}</b><span className="font-bold text-emerald-600">Main inbox</span>{!d.primary.outreach_on && <span className="rounded-full bg-amber-50 px-2 py-0.5 font-bold text-amber-700" data-testid="mailbox-primary-off">not used for outreach</span>}<span className="text-slate-500" data-testid="mailbox-primary-usage">{d.primary.sent_hour}/{d.primary.hourly_cap} this hour · {d.primary.sent_today} today</span>{isAdmin && <button data-testid="mailbox-primary-toggle" onClick={toggleMain} className="crm-btn-secondary !py-0.5 text-[11px]">{d.primary.outreach_on ? "Stop using for outreach" : "Use for outreach"}</button>}<span className="ml-auto"><ReadReplies bid={0} reader={d.primary.reader} /></span></div>
         : <div className="text-xs text-amber-600">Main inbox not connected — set up Outlook or Gmail on this page.</div>}
       {d.primary && <PrimarySignature sig={d.primary.signature} isAdmin={isAdmin} />}
       {d.boxes.map((b) => <BoxRow key={b.id} b={b} reload={load} onEdit={setEdit} />)}

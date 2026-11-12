@@ -48,15 +48,26 @@ async def list_boxes(user: dict = Depends(require_roles("admin", "manager"))):
     cap = st["hourly_cap"]
     boxes = [_public(b) | {"sent_today": sent.get(b["id"], 0), "sent_hour": hour.get(b["id"], 0), "hourly_cap": cap}
              async for b in db.mailboxes.find({"is_deleted": {"$ne": True}}).sort("id", 1)]
-    primary = next((s for s in await mb.senders(st, day) if s["id"] == mb.PRIMARY), None)
+    primary = next((s for s in await mb.senders(st, day, with_main=True) if s["id"] == mb.PRIMARY), None)
     readers = {r["mailbox_id"]: {"email": r.get("email"), "last_sync": r.get("last_sync"), "error": r.get("error")}
                async for r in db.inbox_readers.find({}, {"_id": 0, "refresh_token_enc": 0})}
     for b in boxes:
         b["reader"] = readers.get(b["id"])
     return {"primary": primary and {"email": primary["email"], "hourly_cap": cap, "sent_today": sent.get(mb.PRIMARY, 0),
                                     "sent_hour": hour.get(mb.PRIMARY, 0),
-                                    "reader": readers.get(mb.PRIMARY), "signature": st.get("signature") or ""},
+                                    "reader": readers.get(mb.PRIMARY), "signature": st.get("signature") or "",
+                                    "outreach_on": st["use_main_inbox"]},
             "boxes": boxes, "hourly_cap": cap}
+
+
+class MainUse(BaseModel):
+    on: bool
+
+
+@router.put("/admin/mailboxes/main-outreach")
+async def main_outreach(body: MainUse, user: dict = Depends(ADMIN)):
+    await db.settings.update_one({"key": "outreach"}, {"$set": {"use_main_inbox": body.on}}, upsert=True)
+    return {"use_main_inbox": body.on}
 
 
 @router.get("/admin/mailboxes/report")

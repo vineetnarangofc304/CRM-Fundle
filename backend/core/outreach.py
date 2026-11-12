@@ -17,7 +17,7 @@ DEFAULT_PITCH = ("Fundle.ai builds an AI-powered customer loyalty platform for r
                  "AI-driven personalised offers, and analytics that lift repeat purchase and customer lifetime value. "
                  "Quick to launch across all stores, integrates with POS and e-commerce.")
 DEFAULTS = {"enabled": True, "min_score": 0, "daily_cap": 200, "hourly_cap": 50, "drafts_per_run": 30, "gaps": [3, 7],
-            "auto_send": True, "cc": "", "ai_sequence": False,
+            "auto_send": True, "cc": "", "ai_sequence": False, "use_main_inbox": True,
             "pitch": DEFAULT_PITCH, "signature": "", "sender_name": "Fundle.ai"}
 DRAFT_SYS = ("You write short, specific, human B2B outreach for an Indian/GCC/UK audience. No hype, no emojis, "
              "no fake claims or invented stats. Reference the brand's real context. Reply with JSON only.")
@@ -115,6 +115,10 @@ async def _refresh_from_template(m: dict):
     return {**m, **upd}
 
 
+def _conn_err(err) -> bool:
+    return bool(re.search(r"connection lost|could not reach|timed? ?out|connection (refused|reset)|error connecting", err or "", re.I))
+
+
 async def _send_one(m: dict, st: dict, pool: list | None = None, force: bool = False) -> bool:
     from core import mailboxes as mb
     from core import email_templates as et
@@ -139,7 +143,7 @@ async def _send_one(m: dict, st: dict, pool: list | None = None, force: bool = F
         await db.outreach.update_one({"id": m["id"]}, {"$set": {"failed_via": sender["id"], "failed_at": _now()}})
         if sender["id"] != 0 and any(x in (res.get("error") or "") for x in ("rejected the mailbox", "SMTP sending turned off")):
             await db.mailboxes.update_one({"id": sender["id"]}, {"$set": {"verified": False, "last_error": res.get("error")}})
-        tries = m.get("send_attempts", 0) + 1
+        tries = m.get("send_attempts", 0) + (0 if _conn_err(res.get("error")) else 1)  # network drops don't burn attempts
         retry = (datetime.now(timezone.utc) + timedelta(hours=1)).strftime("%Y-%m-%d %H:%M:%S")
         await db.outreach.update_one({"id": m["id"]}, {"$set": {
             "error": res.get("error"), "send_attempts": tries,
@@ -238,12 +242,22 @@ async def _migrate_v6():
     await db.settings.insert_one({"key": "outreach_v6", "done": True})
 
 
+async def _migrate_v7():
+    """Main inbox (smtp.office365.com keeps dropping) is taken out of outreach; extra inboxes send."""
+    if await db.settings.find_one({"key": "outreach_v7"}):
+        return
+    await db.settings.update_one({"key": "outreach"}, {"$set": {"use_main_inbox": False}}, upsert=True)
+    await db.outreach.update_many({"status": "approved", "force_sender": 0}, {"$unset": {"force_sender": 1}})
+    await db.settings.insert_one({"key": "outreach_v7", "done": True})
+
+
 async def run_outreach(trigger="cron") -> dict:
     await _migrate_v2()
     await _migrate_v3()
     await _migrate_v4()
     await _migrate_v5()
     await _migrate_v6()
+    await _migrate_v7()
     st = await get_settings()
     stats = {"drafted": 0, "sent": 0, "failed": 0}
     if not st["enabled"]:
