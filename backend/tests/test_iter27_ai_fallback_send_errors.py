@@ -8,7 +8,10 @@ import time
 import pytest
 import requests
 
-LOOP = asyncio.new_event_loop()
+# share ONE loop across test modules (Motor binds to the loop of first use; per-module loops -> ValueError)
+LOOP = asyncio.get_event_loop_policy().get_event_loop()
+if LOOP.is_closed():
+    LOOP = asyncio.new_event_loop()
 asyncio.set_event_loop(LOOP)
 sys.path.insert(0, "/app/backend")
 from dotenv import load_dotenv  # noqa: E402

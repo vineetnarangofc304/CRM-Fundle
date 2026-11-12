@@ -135,8 +135,6 @@ async def _call(model: str, system: str, prompt: str):
         chat = chat.with_tools([{"googleSearch": {}}])
     elif prov == "anthropic":
         chat = chat.with_tools([{"type": "web_search_20250305", "name": "web_search", "max_uses": 8}])
-    else:
-        chat = chat.with_params(web_search_options={"search_context_size": "high"})
     for attempt in range(3):
         try:
             if prov == "openai":

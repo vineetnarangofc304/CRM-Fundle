@@ -80,11 +80,14 @@ async def find_contacts(p: dict) -> dict:
         d, used, errs = {"contacts": []}, [], []
         # Best web researcher first; if it finds no emails (or errors), ask the next model and merge what each finds.
         for mdl in CONTACT_CHAIN:
+            if mdl in used:
+                continue
             meta = {}
             try:
                 r = pe._json(await pe._ask(mdl, CONTACT_SYS, prompt, meta), "obj") or {}
             except pe.AiCreditsOut:
                 if d["contacts"]:
+                    errs.append(f"{mdl}: AI limit hit — saved what earlier models found")
                     break  # keep what earlier models found
                 raise
             except Exception as e:
@@ -113,12 +116,12 @@ async def find_contacts(p: dict) -> dict:
             raise RuntimeError("All models failed: " + " | ".join(errs)[:300])
     except pe.AiCreditsOut as e:
         await db.prospects.update_one({"id": p["id"]}, {"$unset": {"contacts_status": 1}})
-        await pe._log_run("contacts", pe.PRO, False, e, time.time() - t, brand=p["brand_name"])
+        await pe._log_run("contacts", " → ".join(CONTACT_CHAIN), False, e, time.time() - t, brand=p["brand_name"])
         raise
     except Exception as e:
         await db.prospects.update_one({"id": p["id"]}, {"$set": {"contacts_status": "failed", "contacts_error": str(e)[:200],
                                                                  "contacts_failed_at": now_utc_str()}})
-        await pe._log_run("contacts", pe.PRO, False, e, time.time() - t, brand=p["brand_name"])
+        await pe._log_run("contacts", " → ".join(CONTACT_CHAIN), False, e, time.time() - t, brand=p["brand_name"])
         return {"ok": False}
     mx = await _mx_ok(dom)
     contacts = []

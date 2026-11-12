@@ -1,0 +1,32 @@
+{
+  "summary": "Iter29 backend-only retest of the iter28 contact-chain fixes, all mocked with no real LLM calls. All 5 fixes are verified. FIX1: the duplicate name fills email, email_status and role into the existing contact and the search stops at 2 models. The xfail marker is gone and the test passes normally. FIX2: a non-quota error is recorded and the next model is tried; 'All models failed: …' is returned only when all 4 CONTACT_CHAIN models error. FIX3: AiCreditsOut after partial results saves them (ok True); AiCreditsOut on the first model still re-queues and re-raises. FIX4: _ask sets meta['model'] to the answering model, contacts_models stores actual models, and a repeated actual model is not counted twice. FIX5: the prompt contains 'short format only, e.g. firstname.lastname@domain.com'. The setup ValueErrors were caused by the tests, not the app. RCA: test_iter28 and test_iter27 each created their own event loop at import and called set_event_loop. When collected in one process, the Motor client bound to the last-set loop, while iter28's run() drove its own loop, giving 'The future belongs to a different loop'. The fake _ask signature was not the cause; it already accepted meta=None. Fixed by having both modules share asyncio.get_event_loop_policy().get_event_loop(). Results: 41 passed, 1 skipped (the RUN_REAL_LLM real call) across the 3 files. The suite was run serially (-n 0), with the default xdist addopts, and in reversed file order.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "core/contacts.find_contacts (FIX4)", "issue": "The check for an already-used actual model runs only AFTER _ask returns. If step 2 (gemini-3.1-pro) falls back to gemini-2.5-flash, step 3 (gemini-2.5-flash) is still called and its paid answer is thrown away. Verified by mock: calls=[sonnet, pro, 2.5-flash, opus], stored=[sonnet, 2.5-flash, opus]. Suggest skipping before the call (`if mdl in used: continue` at loop top), or merging the duplicate answer instead of discarding it."},
+      {"endpoint": "core/contacts.find_contacts (FIX3)", "issue": "When partial contacts are saved after AiCreditsOut, _ask has already set prospect_lock.ai_blocked_at and _blocked=True, while find_contacts returns ok True. This is probably intended (the engine pauses), but no log entry records that the search was cut short by credits."},
+      {"endpoint": "core/contacts.find_contacts", "issue": "Failure and credits paths still call _log_run with pe.PRO as the model, although the chain starts with Claude. Log the attempted models or errs instead."},
+      {"endpoint": "core/prospector._call", "issue": "Still open from iter28: the else (openai) branch sets web_search_options, which the universal key rejects."}
+    ]
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": ["/app/backend/tests/test_iter28_contact_chain.py", "/app/backend/tests/test_iter27_ai_fallback_send_errors.py", "/app/backend/tests/test_prospecting_quota_markers.py", "/app/test_reports/pytest/iter29.xml"],
+  "action_items": [
+    "Optional: in find_contacts, skip a CONTACT_CHAIN model that is already in `used` BEFORE calling _ask, to avoid a wasted paid call",
+    "Optional: log the real model or errs (not pe.PRO) in the failure _log_run calls",
+    "Optional: remove or guard the openai branch in _call"
+  ],
+  "critical_code_review_comments": [
+    "The merge fills only empty fields of the existing contact. A 'pattern' email from model 1 is never upgraded by a 'published' email from a later model, but this does not matter in practice because the loop stops on the first email.",
+    "With FIX4 skip logic, CONTACT_CHAIN[3] (opus) can now be reached when one actual model repeats, so it is no longer dead config."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter28_contact_chain.py (shared event loop; FIX1 test without xfail plus email_status/role/len asserts; credits_out split into requeue + keep_partial; non-quota now continues; new all_models_error_fails, actual_model_recorded, ask_meta_model, prompt_short_pattern)",
+    "/app/backend/tests/test_iter27_ai_fallback_send_errors.py (shared event loop only)"
+  ],
+  "success_rate": {"backend": "100% (41/41 run, 1 real-LLM test skipped by design)", "frontend": "not tested"},
+  "seed_data_creation": "The TEST_Brand28 prospect (id 99999928) was created and deleted for each test, and none remains. prospect_lock has no ai_blocked fields, and prospecting is still disabled (enabled False, phase 'contacts').",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "The test modules now share one asyncio loop, so they can run in the same process (serially or with xdist). Keep that pattern in new modules that use a module-level LOOP with Motor, otherwise you get 'future belongs to a different loop'. The real call needs RUN_REAL_LLM=1. Two old failures in test_prospecting.py and test_prospecting_24h_tailor.py (from iter28) were not rechecked."
+}

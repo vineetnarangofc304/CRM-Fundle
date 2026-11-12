@@ -7,7 +7,10 @@ import time
 
 import pytest
 
-LOOP = asyncio.new_event_loop()
+# share ONE loop across test modules (Motor binds to the loop of first use; per-module loops -> ValueError)
+LOOP = asyncio.get_event_loop_policy().get_event_loop()
+if LOOP.is_closed():
+    LOOP = asyncio.new_event_loop()
 asyncio.set_event_loop(LOOP)
 sys.path.insert(0, "/app/backend")
 from dotenv import load_dotenv  # noqa: E402
@@ -106,12 +109,14 @@ def test_merges_and_continues(monkeypatch, prospect):
     assert d["contacts_models"] == list(ct.CONTACT_CHAIN[:2])
 
 
-# BUG: model 2 returns the SAME person with an email -> dropped as duplicate, email lost, 3rd model called
+# FIX1: model 2 returns the SAME person with an email -> email/status filled into existing contact, stop at 2
 def test_duplicate_name_email_merged(monkeypatch, prospect):
     calls = _mock_ask(monkeypatch, [C_NOEMAIL, C_EMAIL, C_NOEMAIL])
     run(ct.find_contacts(prospect[0]))
     d = _doc()
     assert d["contacts"][0]["email"] == "asha.rao@example.com" and calls == list(ct.CONTACT_CHAIN[:2])
+    assert d["contacts"][0]["email_status"] == "published" and d["contacts"][0]["role"] == "CMO"
+    assert len(d["contacts"]) == 2
 
 
 # never emails -> max 3 models; case/whitespace dedupe; email_pattern truncated to 300
@@ -125,22 +130,89 @@ def test_max_three_models(monkeypatch, prospect):
     assert d["contacts_models"] == list(ct.CONTACT_CHAIN[:3])
 
 
-# AiCreditsOut -> contacts_status unset (re-queued), raises
+# AiCreditsOut on FIRST model (nothing found) -> contacts_status unset (re-queued), raises
 def test_credits_out_requeues(monkeypatch, prospect):
-    _mock_ask(monkeypatch, [C_NOEMAIL, pe.AiCreditsOut("TEST out")])
+    _mock_ask(monkeypatch, [pe.AiCreditsOut("TEST out")])
     with pytest.raises(pe.AiCreditsOut):
         run(ct.find_contacts(prospect[0]))
     d = _doc()
     assert "contacts_status" not in d and "contacts_models" not in d
 
 
-# non-quota error on 1st model -> whole search marked failed (does NOT move to next model)
-def test_non_quota_error_marks_failed(monkeypatch, prospect):
-    calls = _mock_ask(monkeypatch, [RuntimeError("TEST boom"), C_EMAIL])
-    assert run(ct.find_contacts(prospect[0])) == {"ok": False}
+# AiCreditsOut AFTER earlier model found contacts -> partial results saved, ok True, no raise
+def test_credits_out_keeps_partial(monkeypatch, prospect):
+    calls = _mock_ask(monkeypatch, [C_NOEMAIL, pe.AiCreditsOut("TEST out"), C_EMAIL])
+    assert run(ct.find_contacts(prospect[0])) == {"ok": True}
+    assert calls == list(ct.CONTACT_CHAIN[:2])
     d = _doc()
-    print("calls on non-quota error:", calls)
-    assert d["contacts_status"] == "failed"
+    assert d["contacts_status"] == "done" and [c["name"] for c in d["contacts"]] == ["Asha Rao", "Ravi K"]
+    assert d["contacts_models"] == [ct.CONTACT_CHAIN[0]]
+
+
+# non-quota error on 1st model -> recorded, loop continues to next model
+def test_non_quota_error_continues(monkeypatch, prospect):
+    calls = _mock_ask(monkeypatch, [RuntimeError("TEST boom"), C_EMAIL])
+    assert run(ct.find_contacts(prospect[0])) == {"ok": True}
+    assert calls == list(ct.CONTACT_CHAIN[:2])
+    d = _doc()
+    assert d["contacts_status"] == "done" and d["contacts"][0]["email"] == "asha.rao@example.com"
+    assert d["contacts_models"] == [ct.CONTACT_CHAIN[1]]
+
+
+# every model errors -> failed with 'All models failed'
+def test_all_models_error_fails(monkeypatch, prospect):
+    calls = _mock_ask(monkeypatch, [RuntimeError(f"TEST boom{i}") for i in range(len(ct.CONTACT_CHAIN))])
+    assert run(ct.find_contacts(prospect[0])) == {"ok": False}
+    assert calls == list(ct.CONTACT_CHAIN)
+    d = _doc()
+    assert d["contacts_status"] == "failed" and d["contacts_error"].startswith("All models failed:")
+    assert "TEST boom0" in d["contacts_error"]
+
+
+# FIX4: meta['model'] = model that actually answered -> stored; same actual model not counted twice
+def test_actual_model_recorded(monkeypatch, prospect):
+    calls = []
+    actual = {"gemini-3.1-pro-preview": "gemini-2.5-flash"}  # pro falls back to 2.5-flash
+
+    async def fake(model, system, prompt, meta=None):
+        calls.append(model)
+        if meta is not None:
+            meta["model"] = actual.get(model, model)
+        return C_NOEMAIL
+    monkeypatch.setattr(pe, "_ask", fake)
+    assert run(ct.find_contacts(prospect[0])) == {"ok": True}
+    d = _doc()
+    print("calls:", calls, "models:", d["contacts_models"])
+    assert d["contacts_models"] == [pe.CLAUDE, "gemini-2.5-flash", pe.CLAUDE_TOP]
+    assert calls == [pe.CLAUDE, "gemini-3.1-pro-preview", pe.CLAUDE_TOP]  # 2.5-flash not asked twice
+
+
+# FIX4: _ask writes the answering model into meta
+def test_ask_meta_model(monkeypatch):
+    pe._limited.clear()
+
+    async def fake(model, system, prompt):
+        if model == pe.PRO:
+            raise Exception(RL)
+        return "ok"
+    monkeypatch.setattr(pe, "_call", fake)
+    meta = {}
+    assert run(pe._ask(pe.PRO, "s", "p", meta)) == "ok"
+    assert meta["model"] == pe.FLASH
+    assert run(pe._ask(pe.FLASH, "s", "p")) == "ok"  # meta optional
+    pe._limited.clear()
+
+
+# FIX5: prompt asks email_pattern as a short format
+def test_prompt_short_pattern(monkeypatch, prospect):
+    seen = []
+
+    async def fake(model, system, prompt, meta=None):
+        seen.append(prompt)
+        return C_EMAIL
+    monkeypatch.setattr(pe, "_ask", fake)
+    run(ct.find_contacts(prospect[0]))
+    assert "short format only, e.g. firstname.lastname@domain.com" in seen[0]
 
 
 # _ask: gemini models rate-limited -> Claude spec succeeds, gemini models recorded in _limited
