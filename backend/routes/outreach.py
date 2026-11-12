@@ -34,6 +34,7 @@ class OutreachSettings(BaseModel):
     enabled: bool = True
     min_score: int = 0
     daily_cap: int = 100
+    hourly_cap: int = 25
     drafts_per_run: int = 30
     auto_send: bool = True
     ai_sequence: bool = False
@@ -62,7 +63,7 @@ async def save_settings(body: OutreachSettings, user: dict = Depends(require_rol
     data["cc"] = body.cc.strip()
     if data["cc"] and not re.fullmatch(r"[^@\s]+@[^@\s]+\.[a-zA-Z]{2,}", data["cc"]):
         raise HTTPException(status_code=400, detail="Enter a valid CC email address")
-    data.update(min_score=max(0, min(body.min_score, 100)), daily_cap=max(1, min(body.daily_cap, 300)),
+    data.update(min_score=max(0, min(body.min_score, 100)), daily_cap=max(1, min(body.daily_cap, 300)), hourly_cap=max(1, min(body.hourly_cap, 100)),
                 drafts_per_run=max(0, min(body.drafts_per_run, 50)))
     await db.settings.update_one({"key": "outreach"}, {"$set": data}, upsert=True)
     return await oc.get_settings()

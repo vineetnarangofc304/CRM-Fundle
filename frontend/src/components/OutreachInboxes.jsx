@@ -22,7 +22,6 @@ function BoxForm({ b, onDone }) {
       <label className="font-semibold text-slate-500">Sender name{inp("sender_name")}</label>
       <label className="font-semibold text-slate-500">SMTP server{inp("smtp_host")}</label>
       <label className="font-semibold text-slate-500">Port{inp("smtp_port", { type: "number" })}</label>
-      <label className="font-semibold text-slate-500">Emails per day{inp("daily_cap", { type: "number", min: 1, max: 1000 })}</label>
       <label className="font-semibold text-slate-500 sm:col-span-3">Signature for emails from this inbox<textarea data-testid="mailbox-signature" rows={5} className="crm-input mt-1 w-full" placeholder={"Regards,\nYour name\nTitle | Fundle.AI\nM: …"} value={f.signature || ""} onChange={(e) => setF({ ...f, signature: e.target.value })} /></label>
       <label className="flex items-center gap-2 font-semibold text-slate-600"><input data-testid="mailbox-active" type="checkbox" checked={f.active} onChange={(e) => setF({ ...f, active: e.target.checked })} /> Use for outreach</label>
       <div className="flex gap-2 sm:col-span-2 sm:justify-end">
@@ -79,7 +78,7 @@ function BoxRow({ b, reload, onEdit }) {
       {b.verified ? <span className="flex items-center gap-1 font-bold text-emerald-600" data-testid={`mailbox-status-${b.id}`}><CheckCircle size={14} /> Live</span>
         : <span className="flex items-center gap-1 font-bold text-amber-600" data-testid={`mailbox-status-${b.id}`} title={b.last_error || ""}><WarningCircle size={14} /> Send a test to switch on</span>}
       {!b.active && <span className="font-bold text-slate-400">Paused</span>}
-      <span className="text-slate-500" data-testid={`mailbox-usage-${b.id}`}>{b.verified ? `${b.sent_today}/${b.today_cap ?? b.daily_cap} today${b.today_cap < b.daily_cap ? ` · warming up to ${b.daily_cap}` : ""}` : `not live yet · ${b.daily_cap}/day once warmed up`}</span>
+      <span className="text-slate-500" data-testid={`mailbox-usage-${b.id}`}>{b.verified ? `${b.sent_hour}/${b.hourly_cap} this hour · ${b.sent_today} today` : `not live yet · ${b.hourly_cap}/hour once tested`}</span>
       <div className="ml-auto flex items-center gap-1">
         <ReadReplies bid={b.id} reader={b.reader} />
         <input data-testid={`mailbox-test-to-${b.id}`} className="crm-input w-44 !py-1 text-xs" placeholder="Test to (optional)" value={to} onChange={(e) => setTo(e.target.value)} />
@@ -121,16 +120,16 @@ export function OutreachInboxes({ isAdmin }) {
     if (q.get("inboxread")) { q.delete("inboxread"); q.delete("reason"); window.history.replaceState(null, "", `${window.location.pathname}?${q}`); }
   }, []);
   if (!d) return null;
-  const total = (d.primary ? d.primary.daily_cap : 0) + d.boxes.filter((b) => b.active && b.verified).reduce((a, b) => a + (b.today_cap ?? b.daily_cap), 0);
+  const total = ((d.primary ? 1 : 0) + d.boxes.filter((b) => b.active && b.verified).length) * d.hourly_cap;
   return (
     <div className="crm-card space-y-3 p-4" data-testid="outreach-inboxes">
       <div className="flex items-center gap-2">
         <h3 className="font-display text-sm font-extrabold text-slate-800">Outreach inboxes</h3>
-        <span className="rounded-full bg-[#1A73E8]/10 px-2 py-0.5 text-[10px] font-bold text-[#1557B0]" data-testid="outreach-inboxes-total">{total ? `up to ${total} emails/day` : "no inbox live yet"}</span>
+        <span className="rounded-full bg-[#1A73E8]/10 px-2 py-0.5 text-[10px] font-bold text-[#1557B0]" data-testid="outreach-inboxes-total">{total ? `up to ${total} emails/hour` : "no inbox live yet"}</span>
         {isAdmin && !edit && <button data-testid="mailbox-add" onClick={() => setEdit({})} className="crm-btn-primary ml-auto !py-1 text-xs"><Plus size={14} /> Add inbox</button>}
       </div>
-      <p className="text-xs text-slate-500">Outreach emails take turns across these inboxes, each with its own daily limit. A brand always hears from the same inbox. New inboxes warm up from 30 to 200 a day over 2 weeks. Office 365 inboxes need Authenticated SMTP switched on. “Read replies” needs the Microsoft app above with the <b>Mail.Read</b> permission; replies stop the auto emails to that brand, and bounces trigger a search for a new contact.</p>
-      {d.primary ? <div className="flex items-center gap-2 rounded-lg border border-slate-100 p-2 text-xs" data-testid="mailbox-primary"><EnvelopeSimple size={16} className="text-slate-400" /><b className="text-slate-700">{d.primary.email}</b><span className="font-bold text-emerald-600">Main inbox</span><span className="text-slate-500">{d.primary.sent_today}/{d.primary.daily_cap} today</span><span className="ml-auto"><ReadReplies bid={0} reader={d.primary.reader} /></span></div>
+      <p className="text-xs text-slate-500">Outreach emails take turns across these inboxes, each sending up to {d.hourly_cap} an hour, spread evenly (no daily limit). A brand always hears from the same inbox. Office 365 inboxes need Authenticated SMTP switched on. “Read replies” needs the Microsoft app above with the <b>Mail.Read</b> permission; replies stop the auto emails to that brand, and bounces trigger a search for a new contact.</p>
+      {d.primary ? <div className="flex items-center gap-2 rounded-lg border border-slate-100 p-2 text-xs" data-testid="mailbox-primary"><EnvelopeSimple size={16} className="text-slate-400" /><b className="text-slate-700">{d.primary.email}</b><span className="font-bold text-emerald-600">Main inbox</span><span className="text-slate-500" data-testid="mailbox-primary-usage">{d.primary.sent_hour}/{d.primary.hourly_cap} this hour · {d.primary.sent_today} today</span><span className="ml-auto"><ReadReplies bid={0} reader={d.primary.reader} /></span></div>
         : <div className="text-xs text-amber-600">Main inbox not connected — set up Outlook or Gmail on this page.</div>}
       {d.primary && <PrimarySignature sig={d.primary.signature} isAdmin={isAdmin} />}
       {d.boxes.map((b) => <BoxRow key={b.id} b={b} reload={load} onEdit={setEdit} />)}

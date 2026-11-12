@@ -44,16 +44,19 @@ async def list_boxes(user: dict = Depends(require_roles("admin", "manager"))):
     st = await oc.get_settings()
     day = oc._now()[:10]
     sent = await mb._sent_today(day)
-    boxes = [_public(b) | {"sent_today": sent.get(b["id"], 0), "today_cap": mb.warm_cap(b, day)}
+    hour = await mb._sent_today(mb.hour_ago())
+    cap = st["hourly_cap"]
+    boxes = [_public(b) | {"sent_today": sent.get(b["id"], 0), "sent_hour": hour.get(b["id"], 0), "hourly_cap": cap}
              async for b in db.mailboxes.find({"is_deleted": {"$ne": True}}).sort("id", 1)]
     primary = next((s for s in await mb.senders(st, day) if s["id"] == mb.PRIMARY), None)
     readers = {r["mailbox_id"]: {"email": r.get("email"), "last_sync": r.get("last_sync"), "error": r.get("error")}
                async for r in db.inbox_readers.find({}, {"_id": 0, "refresh_token_enc": 0})}
     for b in boxes:
         b["reader"] = readers.get(b["id"])
-    return {"primary": primary and {"email": primary["email"], "daily_cap": st["daily_cap"], "sent_today": sent.get(mb.PRIMARY, 0),
+    return {"primary": primary and {"email": primary["email"], "hourly_cap": cap, "sent_today": sent.get(mb.PRIMARY, 0),
+                                    "sent_hour": hour.get(mb.PRIMARY, 0),
                                     "reader": readers.get(mb.PRIMARY), "signature": st.get("signature") or ""},
-            "boxes": boxes, "per_inbox_cap": st["daily_cap"]}
+            "boxes": boxes, "hourly_cap": cap}
 
 
 @router.get("/admin/mailboxes/report")

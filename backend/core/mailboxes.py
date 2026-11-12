@@ -1,6 +1,6 @@
 """Multiple outreach sending inboxes: primary (Admin → Email provider) + extra Office 365 SMTP inboxes.
-Outreach emails take turns across inboxes, each with its own daily limit; a brand sticks to one inbox."""
-from datetime import date
+Outreach emails take turns across inboxes, each limited per rolling hour (no daily limit); a brand sticks to one inbox."""
+from datetime import date, datetime, timedelta, timezone
 
 from core.db import db
 from core import mailer, outlook_send as ol
@@ -26,24 +26,29 @@ async def _sent_today(day: str) -> dict:
     return {r["_id"]: r["n"] for r in rows}
 
 
+def hour_ago() -> str:
+    return (datetime.now(timezone.utc) - timedelta(hours=1)).strftime("%Y-%m-%d %H:%M:%S")
+
+
 async def senders(st: dict, day: str) -> list:
-    """Usable inboxes with today's remaining quota: [{id, email, remaining, cfg}]."""
-    sent = await _sent_today(day)
+    """Usable inboxes with this hour's remaining quota: [{id, email, remaining, cfg}]."""
+    sent = await _sent_today(hour_ago())
+    cap = int(st.get("hourly_cap") or 25)
     out = []
     if await mailer.is_connected():
         cfg = await ol.get_config()
         out.append({"id": PRIMARY, "email": cfg.get("email") or cfg.get("smtp_user") or "Primary inbox",
-                    "remaining": st["daily_cap"] - sent.get(PRIMARY, 0), "cfg": None,
+                    "remaining": cap - sent.get(PRIMARY, 0), "cfg": None,
                     "signature": st.get("signature") or ""})
     async for b in db.mailboxes.find({"active": True, "verified": True, "is_deleted": {"$ne": True}}, {"_id": 0}):
-        out.append({"id": b["id"], "email": b["smtp_user"], "remaining": warm_cap(b, day) - sent.get(b["id"], 0),
+        out.append({"id": b["id"], "email": b["smtp_user"], "remaining": cap - sent.get(b["id"], 0),
                     "signature": b.get("signature") or st.get("signature") or "",
                     "cfg": {**b, "method": "smtp", "from_email": b.get("from_email") or b["smtp_user"]}})
     return out
 
 
 async def pick(prospect_id, pool: list, force: bool = False):
-    """Sticky per brand; otherwise the inbox with the most room left today."""
+    """Sticky per brand; otherwise the inbox with the most room left this hour."""
     avail = [s for s in pool if force or s["remaining"] > 0]
     if not avail:
         return None

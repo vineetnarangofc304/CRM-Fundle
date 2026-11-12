@@ -16,7 +16,7 @@ DEFAULT_PITCH = ("Fundle.ai builds an AI-powered customer loyalty platform for r
                  "omnichannel points & rewards across stores and online, WhatsApp-first member engagement, "
                  "AI-driven personalised offers, and analytics that lift repeat purchase and customer lifetime value. "
                  "Quick to launch across all stores, integrates with POS and e-commerce.")
-DEFAULTS = {"enabled": True, "min_score": 0, "daily_cap": 200, "drafts_per_run": 30, "gaps": [3, 7],
+DEFAULTS = {"enabled": True, "min_score": 0, "daily_cap": 200, "hourly_cap": 25, "drafts_per_run": 30, "gaps": [3, 7],
             "auto_send": True, "cc": "", "ai_sequence": False,
             "pitch": DEFAULT_PITCH, "signature": "", "sender_name": "Fundle.ai"}
 DRAFT_SYS = ("You write short, specific, human B2B outreach for an Indian/GCC/UK audience. No hype, no emojis, "
@@ -280,6 +280,9 @@ async def _run_outreach(st, stats, trigger) -> dict:
             logger.warning(f"inbox sync failed: {e}")
         stats["auto_template"] = await et.run_auto(st["drafts_per_run"])
         pool = await mb.senders(st, _now()[:10])
+        per_run = -(-st["hourly_cap"] // 4)  # spread the hourly limit over the 4 runs each hour
+        for s in pool:
+            s["remaining"] = min(s["remaining"], per_run)
         while any(s["remaining"] > 0 for s in pool):
             m = await db.outreach.find_one_and_update(
                 {"status": "approved", "channel": "email", "scheduled_at": {"$ne": None, "$lte": _now()}},
