@@ -1,0 +1,40 @@
+{
+  "summary": "Tested the 24h prospecting engine (day_mode, _step day/night mix, _lane AiCreditsOut backoff, contacts queue order, watchdog any-hour restart, concurrency clamp 10), the template ai_tailor flag (tailor with and without AI, POST/PUT persistence, default true) and the frontend (Daytime pill, Parallel select 1-10, AUTO EMAILER / AI-personalised / sent as written badges, tpl-ai-tailor checkbox create and edit round trip). Every requested feature works. Regression: 155 passed and 27 skipped (gated live-run suites) across the email templates, outreach, night window and prospecting suites. Prospecting is still enabled=false at the end.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/prospecting/run (manual)", "issue": "Manual runs are not day-gated (day_mode=False), so 'Run now' during the day still does about 70% discovery. That conflicts with 'new brands only 10 PM-9 AM IST'. Decide whether manual daytime runs should also use day_mode."},
+      {"endpoint": "prospect_lock after backend reload", "issue": "If the backend restarts or hot-reloads mid-batch, the lock keeps 'until' (up to max_seconds+120, about 16 min) and last_finished is never written. The overview then shows 'Researching… (started …)' with no worker running until the lock expires. Seen in preview after test-file edits triggered a uvicorn reload."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Template editor", "issues": ["The static hint under the body says 'AI also tailors one line to each brand before sending' even when tpl-ai-tailor is unticked. Make it conditional on f.ai_tailor.", "The 'AI-personalised' / 'sent as written' label on cards has no data-testid."]}
+    ]
+  },
+  "test_report_links": ["/app/backend/tests/test_prospecting_24h_tailor.py", "/app/backend/tests/test_night_window_autosend.py", "/app/backend/tests/test_email_templates.py", "/app/test_reports/pytest/pytest_results.xml"],
+  "action_items": [
+    "Optional: decide whether manual 'Run now' during the day should skip discovery (day_mode), to honour the night-only discovery rule.",
+    "Optional: on backend startup, clear a prospect_lock whose worker is gone, or show 'stale' in the overview, so the pill does not say 'Researching…' after a restart.",
+    "Make the template editor hint text depend on ai_tailor."
+  ],
+  "critical_code_review_comments": [
+    "Legacy suites test_prospecting_ai_credits.py, test_prospecting_requeue.py and test_prospecting_watchdog.py set prospecting enabled=True on the LIVE DB and trigger real batches. They assumed the AI had no credits, but it now has credits. In this session one run did real work before teardown disabled the engine: about 11 new brands discovered, 6 enrichments and 7 contact lookups on real brands (BIBA, Louis Philippe, Sparx, KTM India, Zink London, Liberty Shoes, Poojara Telecom), all logged in prospect_runs between 09:59 and 10:02 UTC. I gated these three files with pytestmark skipif RUN_LIVE_PROSPECTING!='1'.",
+    "night_seconds_left()>=60 means night. Within the last minute before 9 AM the run is treated as day and runs a full 840s day batch. Fine, just noting it.",
+    "In day mode, phase='discovery' still runs contacts and enrich (it does not stop). That looks intended."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_prospecting_24h_tailor.py (new)",
+    "/app/backend/tests/test_night_window_autosend.py (removed the daytime-skip test, watchdog (True,0) now expects spawn, run() re-sets the event loop)",
+    "/app/backend/tests/test_email_templates.py (unique brand_key on the TEST prospect to avoid the country+brand_key unique-index collision, run() re-sets the event loop)",
+    "/app/backend/tests/test_prospecting_ai_credits.py, test_prospecting_requeue.py, test_prospecting_watchdog.py (gated behind RUN_LIVE_PROSPECTING=1)"
+  ],
+  "success_rate": {"backend": "100% (155/155 executed; 27 live-run tests skipped by gate)", "frontend": "100%"},
+  "seed_data_creation": "None kept. TEST_ templates and prospects were created and deleted by id. One leftover TEST_TplBrand (id 9853475) from an aborted first run was deleted by id.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Run suites with REACT_APP_BACKEND_URL exported. Unit tests use fakes or a throw-away DB. Do NOT set RUN_LIVE_PROSPECTING=1 unless real AI runs on the live DB are acceptable. Editing files under /app/backend (including tests/) hot-reloads uvicorn and kills in-flight engine tasks. Prospecting enabled=false at the end. The daytime pill was verified by intercepting /api/prospecting/overview (enabled=true, night_window=false).",
+  "rca of the issue": "Real-data mutation during regression: the legacy ai_credits/requeue suites call POST /api/prospecting/run after setting enabled=True on the live DB. Previously AI credits were exhausted, so the run stopped fast. Now credits exist, so the run did real discovery, enrichment and contact work until teardown set enabled=False. Mitigation: gated those suites."
+}

@@ -27,7 +27,11 @@ BASE_URL = os.environ.get("REACT_APP_BACKEND_URL").rstrip("/")
 ADMIN = {"email": "vineetnarangofc@gmail.com", "password": "Fundle@cf928c"}
 LOOP = asyncio.new_event_loop()
 asyncio.set_event_loop(LOOP)
-run = LOOP.run_until_complete
+
+
+def run(coro):
+    asyncio.set_event_loop(LOOP)  # other suites may switch/clear the current loop
+    return LOOP.run_until_complete(coro)
 PDF = b"%PDF-1.4\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF\n"
 
 
@@ -70,7 +74,7 @@ def created():
 def prospect(created):
     d = _livedb()
     pid = 9_000_000 + random.randint(1, 999_999)
-    run(d.prospects.insert_one({"id": pid, "brand_name": "TEST_TplBrand", "category": "Apparel", "country": "India",
+    run(d.prospects.insert_one({"id": pid, "brand_name": "TEST_TplBrand", "brand_key": f"test_tplbrand_{pid}", "category": "Apparel", "country": "India",
                                 "fit_score": 100, "status": "enriched", "description": "TEST brand",
                                 "contacts": [{"name": "Asha Rao", "role": "CMO", "email": "TEST_asha@example.com",
                                               "email_status": "published"},

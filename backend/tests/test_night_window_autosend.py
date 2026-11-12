@@ -25,7 +25,11 @@ BASE_URL = os.environ.get("REACT_APP_BACKEND_URL").rstrip("/")
 ADMIN = {"email": "vineetnarangofc@gmail.com", "password": "Fundle@cf928c"}
 LOOP = asyncio.new_event_loop()
 asyncio.set_event_loop(LOOP)
-run = LOOP.run_until_complete
+
+
+def run(coro):
+    asyncio.set_event_loop(LOOP)  # other suites (asyncio.run) may clear the current loop
+    return LOOP.run_until_complete(coro)
 IST = timedelta(hours=5, minutes=30)
 
 
@@ -48,12 +52,7 @@ class TestNightWindow:
         monkeypatch.setattr(pe, "datetime", _fake_dt(h, m))
         assert pe.night_seconds_left() == int(expected)
 
-    def test_run_worker_daytime_skip(self, monkeypatch):
-        monkeypatch.setattr(pe, "night_seconds_left", lambda: 0)
-        assert run(pe.run_worker(840, "cron")) == {"skipped": "daytime"}
-        assert run(pe.run_worker(840, "watchdog")) == {"skipped": "daytime"}
-        monkeypatch.setattr(pe, "night_seconds_left", lambda: 59)
-        assert run(pe.run_worker(840, "cron")) == {"skipped": "daytime"}
+    # 24h engine: daytime cron/watchdog runs no longer return skipped (see test_prospecting_24h_tailor.py)
 
     def _fake_db(self, captured):
         class Col:
@@ -91,7 +90,7 @@ class TestNightWindow:
         secs = (datetime.fromisoformat(cap["until"]) - t0).total_seconds()
         assert 955 <= secs <= 965
 
-    @pytest.mark.parametrize("enabled,left,spawn", [(True, 3600, True), (True, 0, False), (False, 3600, False)])
+    @pytest.mark.parametrize("enabled,left,spawn", [(True, 3600, True), (True, 0, True), (False, 3600, False)])
     def test_watchdog_spawn_rules(self, monkeypatch, enabled, left, spawn):
         from routes import prospecting as rp
         spawned = []

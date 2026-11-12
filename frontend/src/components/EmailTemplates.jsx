@@ -81,7 +81,7 @@ function Editor({ t, onDone }) {
         <textarea data-testid="tpl-body" rows={12} className="crm-input w-full font-mono text-xs" value={f.body} onChange={(e) => setF({ ...f, body: e.target.value })} />
         <div className="prose prose-sm max-w-none rounded-lg border border-slate-100 bg-slate-50 p-3 text-slate-600 [&_p]:mb-3 [&_ul]:list-disc [&_ul]:pl-5" data-testid="tpl-preview" dangerouslySetInnerHTML={{ __html: f.body }} />
       </div>
-      <p className="text-[11px] text-slate-400">Placeholders: {"{{first_name}}"}, {"{{brand}}"}, {"{{role}}"}. AI also tailors one line to each brand before sending. Signature and CC are added automatically.</p>
+      <p className="text-[11px] text-slate-400">Placeholders: {"{{first_name}}"}, {"{{brand}}"}, {"{{role}}"}. {f.ai_tailor !== false ? "AI also tailors one line to each brand before sending." : "Sent exactly as written."} Signature and CC are added automatically.</p>
       <div className="grid gap-4 sm:grid-cols-2"><Attachments f={f} setF={setF} /><Videos f={f} setF={setF} /></div>
       <div className="flex gap-2">
         <button data-testid="tpl-save" onClick={save} className="crm-btn-primary !py-1.5 text-xs"><FloppyDisk size={14} /> Save template</button>
@@ -110,7 +110,7 @@ export function EmailTemplates() {
             <div className="flex items-center gap-2">
               <span className="font-bold text-slate-800">{t.name}</span>
               <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${t.mode === "auto" ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-600"}`} data-testid={`tpl-mode-badge-${t.id}`}>{t.mode === "auto" ? "AUTO EMAILER" : "MANUAL"}</span>
-              <span className="text-[10px] font-semibold text-slate-400">{t.ai_tailor === false ? "sent as written" : "AI-personalised"}</span>
+              <span className="text-[10px] font-semibold text-slate-400" data-testid={`tpl-tailor-label-${t.id}`}>{t.ai_tailor === false ? "sent as written" : "AI-personalised"}</span>
               {!t.active && <span className="rounded-full bg-rose-50 px-2 py-0.5 text-[10px] font-bold text-rose-600">OFF</span>}
             </div>
             <div className="text-xs font-semibold text-slate-600">{t.subject}</div>

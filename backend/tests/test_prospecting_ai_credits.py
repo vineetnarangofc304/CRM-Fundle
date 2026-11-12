@@ -10,6 +10,9 @@ from dotenv import load_dotenv
 load_dotenv("/app/frontend/.env")
 load_dotenv("/app/backend/.env")
 sys.path.insert(0, "/app/backend")
+# T1 iter14: these tests start REAL engine batches on the shared DB (AI now has credits -> real discovery/contacts
+# + leads). Gated so regression runs never mutate real data; set RUN_LIVE_PROSPECTING=1 to run deliberately.
+pytestmark = pytest.mark.skipif(os.environ.get("RUN_LIVE_PROSPECTING") != "1", reason="starts real prospecting runs")
 BASE_URL = os.environ.get("REACT_APP_BACKEND_URL").rstrip("/")
 mdb = MongoClient(os.environ["MONGO_URL"])[os.environ["DB_NAME"]]
 TEST_IDS = [9990001, 9990002]
