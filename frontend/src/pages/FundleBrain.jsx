@@ -10,9 +10,10 @@ const TOOL_LABEL = { get_system_overview: "Checked system status", find_records:
 const EXAMPLES = ["Send this email to all women fashion brands from Abhinav's inbox: …", "Change the hourly limit from 25 to 60 — reason: inboxes are warmed up", "Stop adding brands and search contacts for grocery brands with up to 5 stores first", "How many intro emails went out today, and how many bounced?"];
 
 function ToolChip({ t }) {
+  const warn = t.ok && /"emailed": false/.test(t.summary || "");
   return (
-    <div className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold ${t.ok === false ? "bg-rose-50 text-rose-700" : t.ok ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-500"}`} title={t.summary || ""} data-testid="brain-tool-chip">
-      {t.ok === false ? <WarningCircle size={12} /> : t.ok ? <CheckCircle size={12} /> : <Wrench size={12} className="animate-spin" />}{TOOL_LABEL[t.name] || t.name}
+    <div className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold ${t.ok === false ? "bg-rose-50 text-rose-700" : warn ? "bg-amber-50 text-amber-700" : t.ok ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-500"}`} title={t.summary || ""} data-testid="brain-tool-chip">
+      {t.ok === false ? <WarningCircle size={12} /> : t.ok ? <CheckCircle size={12} /> : <Wrench size={12} className="animate-spin" />}{warn ? "Change request saved (email not sent)" : TOOL_LABEL[t.name] || t.name}
     </div>
   );
 }
@@ -40,7 +41,7 @@ function Sidebar({ list, cur, pick, add, del, audit }) {
         {list.map((s) => (
           <div key={s.id} className={`group flex items-center gap-1 rounded-lg px-2 py-2 text-xs transition-colors ${cur === s.id ? "bg-white font-bold text-slate-800 shadow-sm" : "text-slate-600 hover:bg-white"}`}>
             <button data-testid={`brain-session-${s.id}`} onClick={() => pick(s.id)} className="flex min-w-0 flex-1 items-center gap-2 text-left"><ChatsCircle size={14} className="shrink-0 text-slate-400" /><span className="truncate">{s.title}</span></button>
-            <button data-testid={`brain-delete-${s.id}`} onClick={() => del(s.id)} className="opacity-0 transition-opacity group-hover:opacity-100"><Trash size={13} className="text-slate-400 hover:text-rose-600" /></button>
+            <button data-testid={`brain-delete-${s.id}`} onClick={() => del(s.id)} className="opacity-40 transition-opacity hover:opacity-100 group-hover:opacity-100"><Trash size={13} className="text-slate-400 hover:text-rose-600" /></button>
           </div>
         ))}
         {!list.length && <p className="px-2 text-[11px] text-slate-400">No chats yet.</p>}
@@ -81,7 +82,7 @@ export default function FundleBrain() {
   useEffect(() => { if (typeof cur === "number") API.get(`/brain/sessions/${cur}/messages`).then(({ data }) => setMsgs(data)); else setMsgs([]); }, [cur]);
   useEffect(() => { end.current?.scrollIntoView({ behavior: "smooth" }); }, [msgs]);
   const add = async () => { const { data } = await API.post("/brain/sessions"); await loadList(); setCur(data.id); return data.id; };
-  const del = async (id) => { await API.delete(`/brain/sessions/${id}`); const d = await loadList(); if (cur === id) setCur(d[0]?.id ?? null); };
+  const del = async (id) => { if (!window.confirm("Delete this chat? The audit log keeps its changes.")) return; await API.delete(`/brain/sessions/${id}`); const d = await loadList(); if (cur === id) setCur(d[0]?.id ?? null); };
 
   const send = async (override) => {
     const q = (override ?? text).trim();
@@ -112,7 +113,7 @@ export default function FundleBrain() {
         });
       }
     } catch (e) { upd((x) => ({ ...x, content: `⚠️ ${e.message}` })); }
-    setBusy(false); loadList();
+    setBusy(false); await loadList();
   };
 
   return (
@@ -122,7 +123,7 @@ export default function FundleBrain() {
         <div className="flex min-w-0 flex-1 flex-col">
           <div className="flex items-center gap-2 border-b border-slate-100 px-6 py-3">
             <Brain size={20} weight="fill" className="text-[#1A73E8]" /><span className="font-display text-sm font-extrabold text-slate-800">Fundle Brain</span>
-            <span className="text-[11px] text-slate-400">runs prospecting, outreach, templates, inboxes and data for you · every change is logged with its reason</span>
+            <span className="text-[11px] text-slate-500">runs prospecting, outreach, templates, inboxes and data for you · every change is logged with its reason</span>
           </div>
           <div className="flex-1 space-y-4 overflow-y-auto bg-slate-50/40 px-6 py-5" data-testid="brain-messages">
             {!msgs.length && (

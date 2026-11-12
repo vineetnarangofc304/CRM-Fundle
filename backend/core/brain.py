@@ -21,9 +21,15 @@ BAD_OPS = {"$where", "$function", "$accumulator", "$out", "$merge"}
 MAX_WRITE = 5000
 
 
+def _secret(k: str) -> bool:
+    k = k.lower()
+    return k in SECRET or k.endswith("_enc") or any(w in k for w in ("password", "secret", "token"))
+
+
 def _scrub(o):
+    from bson import ObjectId
     if isinstance(o, dict):
-        return {k: ("***" if k in SECRET else _scrub(v)) for k, v in o.items() if k != "_id"}
+        return {k: ("***" if _secret(k) else _scrub(v)) for k, v in o.items() if not (k == "_id" and isinstance(v, ObjectId))}
     if isinstance(o, list):
         return [_scrub(x) for x in o]
     return o if isinstance(o, (str, int, float, bool, type(None))) else str(o)
@@ -42,7 +48,7 @@ def _check(o):
 
 def _fields_ok(d: dict):
     for k in d:
-        if k.split(".")[0] in SECRET or k in ("_id", "id"):
+        if any(_secret(x) for x in k.split(".")) or k in ("_id", "id"):
             raise ValueError(f"Field {k} can't be changed by the Brain")
 
 
@@ -64,7 +70,9 @@ async def t_overview(ctx, a):
         pool = [{k: s[k] for k in ("id", "email", "remaining")} for s in await mb.senders(st, oc._now()[:10])]
     except Exception:
         pass
-    return {"outreach_settings": {k: v for k, v in st.items() if k != "pitch"}, "prospecting_settings": await pe.get_settings(),
+    main = await ol_main()
+    return {"main_inbox": {"id": 0, "email": main, "how_to_pin": "from_inbox='main' or this email"},
+            "outreach_settings": {k: v for k, v in st.items() if k != "pitch"}, "prospecting_settings": await pe.get_settings(),
             "linkedin_settings": await li.get_settings(), "inboxes_extra": _scrub(boxes), "senders_now": pool,
             "templates": _scrub(tpls),
             "counts": {"prospects": await db.prospects.estimated_document_count(),
@@ -164,11 +172,24 @@ async def t_template(ctx, a):
     return {"created": doc["id"]}
 
 
+async def ol_main():
+    from core import mailer, outlook_send as ol
+    try:
+        cfg = await ol.get_config() or {}
+        if await mailer.is_connected():
+            return cfg.get("email") or cfg.get("smtp_user") or cfg.get("from_email")
+    except Exception:
+        pass
+    return None
+
+
 async def _sender_id(email):
     from core import mailboxes as mb, outlook_send as ol
-    if not email:
+    if email is None or str(email).strip() == "":
         return None
-    e = email.strip().lower()
+    e = str(email).strip().lower()
+    if e in ("main", "0", "primary", "main inbox"):
+        return mb.PRIMARY
     b = await db.mailboxes.find_one({"smtp_user": e, "is_deleted": {"$ne": True}}, {"id": 1})
     if b:
         return b["id"]
@@ -188,6 +209,8 @@ async def t_send(ctx, a):
     lim = max(1, min(int(a.get("limit") or 500), MAX_WRITE))
     t = {"subject": a["subject"], "body": clean_html(a["body_html"]), "ai_tailor": False}
     made, skipped, now = 0, 0, now_utc_str()
+    if not await db.prospects.count_documents(f):
+        raise ValueError("No brands match that filter — check categories/fields with find_records first")
     async for p in db.prospects.find({"$and": [f, {"replied": {"$ne": True}}]}, {"_id": 0}).limit(lim):
         bounced = {e.lower() for e in p.get("bounced_emails") or []}
         cs = [c for c in p.get("contacts") or [] if c.get("email") and c["email"].lower() not in bounced]
@@ -225,7 +248,10 @@ async def t_stop(ctx, a):
 async def t_contacts(ctx, a):
     f = a.get("prospect_filter") or {}
     _check(f)
-    r = await db.prospects.update_many({"$and": [f, {"contacts_status": {"$ne": "running"}}]},
+    q = [f, {"contacts_status": {"$ne": "running"}}]
+    if not a.get("include_brands_with_emails"):
+        q.append({"contacts.email": {"$in": [None, ""]}})
+    r = await db.prospects.update_many({"$and": q},
                                        {"$set": {"contacts_priority": int(a.get("priority") or 5)}, "$unset": {"contacts_status": 1}})
     if a.get("contacts_only_mode"):
         await db.settings.update_one({"key": "prospecting"}, {"$set": {"phase": "contacts"}}, upsert=True)
@@ -266,9 +292,12 @@ async def t_escalate(ctx, a):
             f"<p>{doc['details']}</p><p>Reason: {doc['reason']}</p>")
     try:
         res = await mailer.send_email(DEV_EMAIL, f"Fundle Brain request: {doc['summary'][:80]}", body, html=True)
-    except Exception as e:
-        res = {"ok": False, "error": str(e)}
-    return {"request_id": doc["id"], "emailed": bool(res.get("ok")), "to": DEV_EMAIL, "error": res.get("error")}
+    except Exception:
+        res = {"ok": False}
+    if res.get("ok"):
+        return {"request_id": doc["id"], "logged": True, "emailed": True, "to": DEV_EMAIL}
+    return {"request_id": doc["id"], "logged": True, "emailed": False,
+            "note": f"Request #{doc['id']} is saved for Vineet, but the email couldn't be sent (main inbox not connected or failed)."}
 
 
 def _fn(name, desc, props, req, write=True):
@@ -298,7 +327,8 @@ TOOLS = {
                                          "limit": INT, "campaign_name": STR}, ["prospect_filter", "subject", "body_html"])),
     "stop_emails": (t_stop, _fn("stop_emails", "Stop queued (not yet sent) outreach emails matching an outreach filter, e.g. {\"template_name\": \"Intro email\"} or {\"brand\": \"X\"}.", {"outreach_filter": OBJ}, ["outreach_filter"])),
     "prioritize_contact_search": (t_contacts, _fn("prioritize_contact_search", "Put brands matching a prospects filter at the front of the AI contact search (e.g. category grocery, store_count 5). Optionally switch prospecting to contacts-only mode (no new brands).",
-                                                  {"prospect_filter": OBJ, "priority": INT, "contacts_only_mode": BOOL}, ["prospect_filter"])),
+                                                  {"prospect_filter": OBJ, "priority": INT, "contacts_only_mode": BOOL,
+                                                   "include_brands_with_emails": {"type": "boolean", "description": "also re-research brands that already have emails (costs more)"}}, ["prospect_filter"])),
     "run_job": (t_job, _fn("run_job", "Start a background job now: outreach (send queued emails + auto templates), prospecting, email_format, inbox_sync.", {"job": STR}, ["job"])),
     "send_single_email": (t_email, _fn("send_single_email", "Send one email right now to an address, optionally from a specific connected inbox.",
                                        {"to": STR, "subject": STR, "body_html": STR, "from_inbox": STR}, ["to", "subject", "body_html"])),
@@ -314,6 +344,7 @@ SYSTEM MAP
 - leads: CRM leads (id, name/company fields, lead_stage, user_id, tags, email_from, fit_score). Each prospect has lead_id.
 - outreach: each email. Fields: id, seq_id, kind (template|brain), template_id, template_name, step, prospect_id, lead_id, brand, to, subject, status (pending_approval|approved|sending|sent|failed|stopped|bounced), scheduled_at, sent_at, sent_via (inbox id), force_sender, replied_at.
 - email_templates: id, name, subject, body (HTML), mode (auto|manual), audience, step, wait_days, ai_tailor, active. Auto intros: one intro per brand chosen by audience (d2c segment; stores_100 = 100+; stores_11_99; stores_1_10 incl unknown). Follow-ups step 2/3 go wait_days after the intro to the same person if no reply.
+- Inboxes: call get_system_overview first to see main_inbox and inboxes_extra; to send from the main inbox use from_inbox "main".
 - mailboxes: extra sending inboxes (id, smtp_user email, sender_name, signature, active, verified). Main inbox = id 0 (its signature = outreach setting `signature`). Each inbox sends max hourly_cap per hour (default 25), spread over runs every 15 min. Ask "from Hardik's email" -> find the mailbox whose smtp_user/sender_name matches.
 - settings: outreach / prospecting / linkedin sections (use save_settings).
 - Engines run every 15 minutes automatically (prospecting, outreach send + reply/bounce sync, email-format check).

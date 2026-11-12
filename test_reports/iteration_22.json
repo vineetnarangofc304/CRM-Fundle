@@ -1,0 +1,53 @@
+{
+  "summary": "Tested Fundle Brain (iter22) end to end: 9 pytest checks with no LLM calls (sessions CRUD, 403 for a caller without the brain perm, own-sessions only, audit/requests endpoints, _scrub/$where/password guards) all pass. Ran 7 live GPT-6-Luna turns over SSE plus UI. Working: the read question (131 prospects with email, hourly cap 25); asking WHY when no reason is given (an invented reason was rejected by the guard and hourly_cap stayed 25); a real reason changed it to 40 with an audit row; the campaign queued 2 'brain' docs as approved and both were then stopped; grocery contact priority (56 brands, contacts_only not enabled); escalation (brain_requests #1 logged, email failed in preview as expected). UI: sidebar card, new chat, examples, streaming, tool chips, reload keeps history, delete and audit log all work. Several logic and security defects are listed below.",
+  "backend_issues": {
+    "critical": [
+      {"endpoint": "core/brain.py SECRET/_scrub", "issue": "mailboxes.smtp_password_enc is not in SECRET, so find_records on mailboxes sent the encrypted SMTP password to the LLM (seen in the tool_done summary). update_records also lets the Brain overwrite smtp_password_enc, because _fields_ok only checks the SECRET names. Fix: add smtp_password_enc (or any key ending in _enc) to SECRET.", "priority": "HIGH"},
+      {"endpoint": "core/brain.py _scrub on aggregate_records", "issue": "_scrub drops every '_id' key, and $group puts its group key in _id. So every breakdown loses its labels: the email count came back as [{count:132},{count:2090}] with no true/false key. Category or status breakdowns can't be read. Fix: keep _id in aggregate results (only remove ObjectId values), or rename _id to 'group'.", "priority": "HIGH"},
+      {"endpoint": "send_email_campaign / force_sender", "issue": "The Brain can't pin the MAIN inbox. from_inbox only accepts an email address, the main inbox address isn't in get_system_overview, and 'main' or 0 isn't accepted. Asked for 'from the main inbox', it queued with force_sender=null (rotating), then stopped its own emails. Fix: accept 'main'/0 in from_inbox and list the main inbox address/id in the overview. Also tell the model to check the inbox before queuing.", "priority": "HIGH"}
+    ],
+    "minor": [
+      {"endpoint": "prioritize_contact_search", "issue": "The default priority is 5, but contacts.next_contacts_job's priority pass matches contacts_priority == 1 exactly. Priority 5 brands skip that pass and only rank higher inside the enriched/discovered passes. Also, the $unset of contacts_status re-queues brands that already have contacts: 7 of the 56 grocery brands were 'done' with contacts and are now queued for paid re-research. Fix: use $gte 1 in the priority pass and skip brands that are done with emails unless asked."},
+      {"endpoint": "request_developer_change", "issue": "When the email fails, the error is the raw KeyError text \"'client_id'\". The model then told the user 'I couldn't submit the request' although brain_requests #1 was saved. Fix: return a clear message (request logged as #N; email not sent because no inbox is connected) and tell the model."},
+      {"endpoint": "reason guard", "issue": "The regex only blocks reasons starting with 'User requested/asked/wants'. The model got past it on its third try by mixing the user's reason with its own words, which was acceptable here. Older audit rows 1-2 (from E1's manual test) show invented reasons that were accepted. Expect the model to try invented reasons several times; each failed try writes an audit row."},
+      {"endpoint": "aggregate_records", "issue": "_check only blocks $where/$function/$accumulator/$out/$merge. $lookup and $unionWith can read collections outside READ_COLS, such as sessions or tokens. Output is scrubbed only by key name. Consider blocking $lookup/$unionWith/$graphLookup when 'from' is not in READ_COLS."},
+      {"endpoint": "PUT /api/outreach/settings", "issue": "This is a full replace, not a partial update: missing fields fall back to the Pydantic defaults (daily_cap 100, cc '', the default pitch). The review request suggested 'PUT settings' to restore the cap, which is a trap. I PUT only {hourly_cap:25}, which reset cc and daily_cap; I restored cc=vineet.narang@fundle.ai and daily_cap=200 straight in the DB. pitch is now DEFAULT_PITCH: if a custom pitch was saved before, it was lost and must be re-entered."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "ToolChip", "issue": "The 'Emailed Vineet a change request' chip is green although emailed=false. The chip only reflects ok, not the email result.", "selector": "[data-testid='brain-tool-chip']", "priority": "LOW"},
+      {"component": "Sidebar session title", "issue": "After the first message a new chat keeps showing 'New chat' until the list refreshes again or the page reloads. loadList() after setBusy is not awaited and the title can arrive late.", "selector": "[data-testid^='brain-session-']", "priority": "LOW"},
+      {"component": "Session delete", "issue": "The delete button is invisible until hover (opacity-0), so it can't be found on touch screens, and it deletes without asking.", "selector": "[data-testid^='brain-delete-']", "priority": "LOW"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "/brain header", "issues": ["The 11px slate-400 subtitle has low contrast on white"]}
+    ]
+  },
+  "test_report_links": ["/app/backend/tests/test_fundle_brain_iter22.py", "/app/backend/tests/brain_chat_cli.py", "/app/test_reports/pytest/iter22_brain.xml"],
+  "action_items": [
+    "Add smtp_password_enc (and *_enc keys) to SECRET in core/brain.py so it is hidden from reads and blocked in update_records",
+    "Keep $group _id labels in aggregate_records output",
+    "Let send_email_campaign/send_single_email pin the main inbox ('main'/0) and put the main inbox address/id in get_system_overview",
+    "Fix the contacts_priority mismatch (contacts.py matches ==1, Brain default is 5) and don't re-queue brands that are already done with contacts",
+    "When the escalation email fails, return a clear message that the request was logged",
+    "Consider making PUT /api/outreach/settings merge with the saved settings instead of resetting missing fields to defaults"
+  ],
+  "critical_code_review_comments": [
+    "brain.py _scrub removes _id everywhere, which breaks aggregations",
+    "SECRET list is missing smtp_password_enc",
+    "t_contacts $unset contacts_status re-queues brands already marked done",
+    "t_escalate KeyError text leaks to the user; the result needs a 'logged' flag",
+    "aggregate $lookup can reach collections outside READ_COLS",
+    "routes/brain._session lets admins open any user's session by id (probably intended); GET /sessions correctly lists only your own"
+  ],
+  "updated_files": ["/app/backend/tests/test_fundle_brain_iter22.py", "/app/backend/tests/brain_chat_cli.py"],
+  "success_rate": {"backend": "9/9 pytest pass; LLM flows 5/6 work as specified (main-inbox pin fails)", "frontend": "100% of tested flows"},
+  "seed_data_creation": "Brain session 4 (7 turns) and session 5 (deleted in UI). Outreach ids 787 and 788 (kind brain, status stopped). brain_audit rows 3-10, brain_requests #1 (TEST_escalation). 56 grocery prospects set to contacts_priority=1 with contacts_status unset. A TEST_brain_caller user was created and deleted.",
+  "data_changes_to_existing_data": "outreach settings: hourly_cap restored to 25. My partial PUT reset cc and daily_cap (restored to vineet.narang@fundle.ai / 200) and pitch (now DEFAULT_PITCH; earlier custom value unknown). 7 grocery prospects that were 'done' with contacts are re-queued for contact search.",
+  "test_credentials": "Admin vineetnarangofc@gmail.com / Fundle@cf928c",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Use brain_chat_cli.py <sid|new> 'msg' to run SSE turns. Prospecting settings already had enabled=false, phase=contacts before this run (not changed by me). No inbox is connected in preview, so sends and the escalation email fail as expected."
+}

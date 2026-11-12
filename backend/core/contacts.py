@@ -124,7 +124,7 @@ async def find_contacts(p: dict) -> dict:
 
 async def next_contacts_job():
     """Researched brands first; then any discovered brand, so contacts don't wait for deep research."""
-    for f in ({"contacts_priority": 1, "status": {"$ne": "enriching"}}, {"status": "enriched"}, {"status": "discovered"}):
+    for f in ({"contacts_priority": {"$gte": 1}, "status": {"$ne": "enriching"}}, {"status": "enriched"}, {"status": "discovered"}):
         p = await db.prospects.find_one_and_update(
             {**f, "contacts_status": {"$exists": False}},
             {"$set": {"contacts_status": "running", "contacts_started_at": now_utc_str()}},
