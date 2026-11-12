@@ -18,7 +18,9 @@ logger = logging.getLogger(__name__)
 
 FLASH = "gemini-3.5-flash"
 PRO = "gemini-3.1-pro-preview"
-FALLBACK_MODELS = ("gemini-3-flash-preview", "gemini-2.5-flash")
+CLAUDE, CLAUDE_TOP = "anthropic:claude-sonnet-5-5", "anthropic:claude-opus-5-5"
+# OpenAI live web search isn't available on the universal key, so GPT isn't used for web research (it would guess).
+FALLBACK_MODELS = ("gemini-3-flash-preview", "gemini-2.5-flash", CLAUDE)
 SOURCE = "AI Prospecting"
 
 COUNTRIES = ["India", "UAE", "Saudi Arabia", "Qatar", "Kuwait", "Oman", "Bahrain", "United Kingdom"]
@@ -125,10 +127,20 @@ _limited = {}
 
 
 async def _call(model: str, system: str, prompt: str):
-    chat = (LlmChat(api_key=os.environ["EMERGENT_LLM_KEY"], session_id=f"prospect-{time.time_ns()}",
-                    system_message=system).with_model("gemini", model).with_tools([{"googleSearch": {}}]))
+    """model = 'gemini-…' or 'openai:…' / 'anthropic:…' — every provider runs with its own live web search."""
+    prov, _, name = model.partition(":") if ":" in model else ("gemini", "", model)
+    chat = LlmChat(api_key=os.environ["EMERGENT_LLM_KEY"], session_id=f"prospect-{time.time_ns()}",
+                   system_message=system).with_model(prov, name)
+    if prov == "gemini":
+        chat = chat.with_tools([{"googleSearch": {}}])
+    elif prov == "anthropic":
+        chat = chat.with_tools([{"type": "web_search_20250305", "name": "web_search", "max_uses": 8}])
+    else:
+        chat = chat.with_params(web_search_options={"search_context_size": "high"})
     for attempt in range(3):
         try:
+            if prov == "openai":
+                return await asyncio.wait_for(chat.send_message(UserMessage(text=prompt)), timeout=240)
             return await asyncio.wait_for(chat.send_message_with_tools(UserMessage(text=prompt)), timeout=240)
         except Exception as e:
             if attempt == 2 or not re.search(r"overloaded|\b503\b|unavailable", str(e), re.I):

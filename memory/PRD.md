@@ -128,3 +128,8 @@ Gmail OAuth (GOOGLE_CLIENT_ID/SECRET, GMAIL_REDIRECT_URI), Meta CAPI (dataset id
 - Prospecting stuck: Google rate-limits gemini-3.x models (not key balance). prospector._ask now falls back FLASH → gemini-3-flash-preview → gemini-2.5-flash and skips limited models for 30 min; banner shows provider's reason.
 - PROD SMTP: deployer RCA — since the 19:26 redeploy, prod pod times out connecting to smtp.office365.com:587 (network/egress, not code). Abhinav's inbox had sent its 200/day earlier. Pending: user retry / platform egress check; option: send via Microsoft Graph (HTTPS) instead of SMTP.
 - Tested: iteration_26, iteration_27 (65/65).
+
+## 2026-11-12 — Multi-LLM web research (universal key)
+- prospector._call supports "provider:model": gemini (googleSearch), anthropic (web_search_20250305, max_uses 8), openai (web_search_options — NOT available on universal key: gpt-5.5/4.1/6-luna rejected, gpt-4o-search-preview invalid → GPT not used for web research).
+- _ask fallback chain on limits: requested → gemini-3.5-flash → gemini-3-flash-preview → gemini-2.5-flash → claude-sonnet-5-5 (limited models skipped 30 min).
+- Contact finder CONTACT_CHAIN: claude-sonnet-5-5 (best real sources) → gemini-3.1-pro → gemini-2.5-flash → claude-opus-5-5; moves to next model when no emails found (max 3), merges contacts; prospects.contacts_models records models used.

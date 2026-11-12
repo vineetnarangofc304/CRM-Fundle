@@ -58,6 +58,9 @@ async def _mx_ok(domain: str) -> bool:
     return await asyncio.to_thread(look) if domain else False
 
 
+CONTACT_CHAIN = ("anthropic:claude-sonnet-5-5", "gemini-3.1-pro-preview", "gemini-2.5-flash", "anthropic:claude-opus-5-5")
+
+
 async def find_contacts(p: dict) -> dict:
     from core import prospector as pe
     from core import brain_data as bd
@@ -74,7 +77,17 @@ async def find_contacts(p: dict) -> dict:
               '"email": str|null, "email_status": "published"|"pattern"|null, "evidence_url": str|null}]}')
     t = time.time()
     try:
-        d = pe._json(await pe._ask(pe.PRO, CONTACT_SYS, prompt), "obj") or {}
+        d, used = {}, []
+        # Try the best web researcher first; if it finds no emails, ask the next model and merge what each finds.
+        for mdl in CONTACT_CHAIN:
+            r = pe._json(await pe._ask(mdl, CONTACT_SYS, prompt), "obj") or {}
+            used.append(mdl)
+            seen = {(c.get("name") or "").strip().lower() for c in d.get("contacts") or [] if isinstance(c, dict)}
+            d["contacts"] = (d.get("contacts") or []) + [c for c in r.get("contacts") or []
+                                                         if isinstance(c, dict) and (c.get("name") or "").strip().lower() not in seen]
+            d["email_pattern"] = d.get("email_pattern") or r.get("email_pattern")
+            if any(isinstance(c, dict) and c.get("email") for c in d["contacts"]) or len(used) >= 3:
+                break
     except pe.AiCreditsOut as e:
         await db.prospects.update_one({"id": p["id"]}, {"$unset": {"contacts_status": 1}})
         await pe._log_run("contacts", pe.PRO, False, e, time.time() - t, brand=p["brand_name"])
@@ -98,8 +111,8 @@ async def find_contacts(p: dict) -> dict:
         contacts.append({"name": c["name"].strip()[:80], "role": (c.get("role") or "")[:80], "linkedin": pe._url(li),
                          "email": email, "email_status": status if email else None,
                          "domain_accepts_mail": mx if email else None, "evidence_url": pe._url(c.get("evidence_url"))})
-    upd = {"contacts": contacts, "email_pattern": d.get("email_pattern"), "contacts_status": "done", "contacts_priority": 0,
-           "contacts_at": now_utc_str(), "mx_ok": mx}
+    upd = {"contacts": contacts, "email_pattern": str(d.get("email_pattern") or "")[:300] or None, "contacts_status": "done", "contacts_priority": 0,
+           "contacts_at": now_utc_str(), "mx_ok": mx, "contacts_models": used}
     upd["fit_score"] = fit_score({**p, **upd})
     await db.prospects.update_one({"id": p["id"]}, {"$set": upd, "$unset": {"contacts_error": 1, "li_lookup_at": 1}})
     best = next((c for c in contacts if c.get("email") and c["email_status"] == "published"), None) or \
@@ -115,7 +128,7 @@ async def find_contacts(p: dict) -> dict:
                                                                       "email_lc": best["email"]}})
     if p.get("lead_id"):
         await db.leads.update_one({"id": p["lead_id"]}, {"$set": {"fit_score": upd["fit_score"]}})
-    await pe._log_run("contacts", pe.PRO, True, f"{len(contacts)} contacts, {sum(1 for c in contacts if c.get('email'))} emails",
+    await pe._log_run("contacts", " → ".join(used), True, f"{len(contacts)} contacts, {sum(1 for c in contacts if c.get('email'))} emails",
                       time.time() - t, brand=p["brand_name"])
     return {"ok": True}
 
