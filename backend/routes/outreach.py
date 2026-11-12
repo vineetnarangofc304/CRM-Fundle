@@ -74,8 +74,8 @@ class Signature(BaseModel):
 
 @router.put("/outreach/signature")
 async def save_signature(body: Signature, user: dict = Depends(require_roles("admin"))):
-    await db.settings.update_one({"key": "outreach"}, {"$set": {"signature": body.signature.strip()[:1000]}}, upsert=True)
-    return {"signature": body.signature.strip()[:1000]}
+    await db.settings.update_one({"key": "outreach"}, {"$set": {"signature": body.signature.strip()[:2000]}}, upsert=True)
+    return {"signature": body.signature.strip()[:2000]}
 
 
 @router.get("/outreach/stats")

@@ -52,7 +52,7 @@ async def list_boxes(user: dict = Depends(require_roles("admin", "manager"))):
     for b in boxes:
         b["reader"] = readers.get(b["id"])
     return {"primary": primary and {"email": primary["email"], "daily_cap": st["daily_cap"], "sent_today": sent.get(mb.PRIMARY, 0),
-                                    "reader": readers.get(mb.PRIMARY)},
+                                    "reader": readers.get(mb.PRIMARY), "signature": st.get("signature") or ""},
             "boxes": boxes, "per_inbox_cap": st["daily_cap"]}
 
 
@@ -219,9 +219,10 @@ async def test_box(bid: int, body: TestTo, user: dict = Depends(ADMIN)):
     if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[a-zA-Z]{2,}", body.to.strip()):
         raise HTTPException(status_code=400, detail="Enter a valid email to send the test to")
     cfg = {**b, "method": "smtp", "from_email": b["smtp_user"]}
-    res = await ol.send_with_config(cfg, body.to.strip(), "Fundle.ai CRM — inbox test",
-                                    f"<p>Test email from <b>{b['smtp_user']}</b> via Fundle.ai CRM. This inbox is ready for outreach.</p>",
-                                    html=True)
+    sig = b.get("signature") or (await oc.get_settings()).get("signature") or ""
+    res = await ol.send_with_config(cfg, body.to.strip(), "Fundle.ai CRM — inbox test", oc._with_signature(
+        f"<p>Test email from <b>{b['smtp_user']}</b> via Fundle.ai CRM. This inbox is ready for outreach.</p>", {"signature": sig}),
+        html=True)
     upd = {"verified": bool(res.get("ok")), "last_error": res.get("error")}
     if res.get("ok") and not b.get("verified_at"):
         upd["verified_at"] = now_utc_str()

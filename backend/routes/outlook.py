@@ -130,7 +130,9 @@ class TestEmail(BaseModel):
 async def outlook_send_test(body: TestEmail, user: dict = Depends(require_roles("admin"))):
     if not await ol.is_connected():
         raise HTTPException(status_code=400, detail="Outlook is not set up yet")
-    res = await ol.send_email(body.to.strip(), body.subject, body.body, html=True)
+    from core import outreach as oc
+    sig = (await db.settings.find_one({"key": "outreach"}) or {}).get("signature") or ""
+    res = await ol.send_email(body.to.strip(), body.subject, oc._with_signature(body.body, {"signature": sig}), html=True)
     is_smtp = (await ol.get_config()).get("method") == "smtp"
     if is_smtp:
         await db.settings.update_one({"key": "outlook"}, {"$set": {"smtp_verified": bool(res.get("ok"))}})

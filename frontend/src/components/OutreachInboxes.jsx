@@ -91,6 +91,24 @@ function BoxRow({ b, reload, onEdit }) {
   );
 }
 
+function PrimarySignature({ sig, isAdmin }) {
+  const [v, setV] = useState(sig || "");
+  const [busy, setBusy] = useState(false);
+  useEffect(() => setV(sig || ""), [sig]);
+  const save = async () => {
+    setBusy(true);
+    try { await API.put("/outreach/signature", { signature: v }); toast.success("Main inbox signature saved — used on every email and test from it"); }
+    catch (e) { toast.error(apiErr(e)); } finally { setBusy(false); }
+  };
+  return (
+    <div className="rounded-lg border border-slate-100 p-2 text-xs" data-testid="primary-signature">
+      <div className="mb-1 font-semibold text-slate-500">Signature for the main inbox</div>
+      <textarea data-testid="primary-signature-input" rows={5} disabled={!isAdmin} className="crm-input w-full" value={v} onChange={(e) => setV(e.target.value)} placeholder={"Regards,\nYour name\nTitle | Fundle.AI"} />
+      {isAdmin && <button data-testid="primary-signature-save" onClick={save} disabled={busy} className="crm-btn-primary mt-1 !py-1 text-xs">{busy ? "Saving…" : "Save signature"}</button>}
+    </div>
+  );
+}
+
 export function OutreachInboxes({ isAdmin }) {
   const [d, setD] = useState(null);
   const [edit, setEdit] = useState(null);
@@ -114,6 +132,7 @@ export function OutreachInboxes({ isAdmin }) {
       <p className="text-xs text-slate-500">Outreach emails take turns across these inboxes, each with its own daily limit. A brand always hears from the same inbox. New inboxes warm up from 30 to 200 a day over 2 weeks. Office 365 inboxes need Authenticated SMTP switched on. “Read replies” needs the Microsoft app above with the <b>Mail.Read</b> permission; replies stop the auto emails to that brand, and bounces trigger a search for a new contact.</p>
       {d.primary ? <div className="flex items-center gap-2 rounded-lg border border-slate-100 p-2 text-xs" data-testid="mailbox-primary"><EnvelopeSimple size={16} className="text-slate-400" /><b className="text-slate-700">{d.primary.email}</b><span className="font-bold text-emerald-600">Main inbox</span><span className="text-slate-500">{d.primary.sent_today}/{d.primary.daily_cap} today</span><span className="ml-auto"><ReadReplies bid={0} reader={d.primary.reader} /></span></div>
         : <div className="text-xs text-amber-600">Main inbox not connected — set up Outlook or Gmail on this page.</div>}
+      {d.primary && <PrimarySignature sig={d.primary.signature} isAdmin={isAdmin} />}
       {d.boxes.map((b) => <BoxRow key={b.id} b={b} reload={load} onEdit={setEdit} />)}
       {edit && <BoxForm b={edit} onDone={() => { setEdit(null); load(); }} />}
       {isAdmin && <ReadAppSetup />}
