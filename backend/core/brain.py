@@ -382,12 +382,20 @@ def _reason_ok(reason: str, said: str) -> bool:
     if len(r) < 4 or re.match(r"^(the )?user\b|^as (requested|asked)|^per (the )?user", r) or re.search(r"explicitly asked|user (requested|asked|wants)", r):
         return False
     words = {w for w in re.findall(r"[a-z0-9]{4,}", r) if w not in STOP}
-    return not words or any(w in said for w in words)
+    return not words or sum(w in said for w in words) * 2 >= len(words)
+
+
+def _user_reason(said_msgs: list):
+    for t in reversed(said_msgs):
+        m = re.search(r"(?:reason\s*[:\-–]|because|since|so that)\s*(.+)", t, re.I | re.S)
+        if m:
+            return m.group(1).strip().split("\n")[0][:300]
+    return None
 
 
 GATES = {"send_email_campaign": r"\bsend\b|\bblast\b|\bshoot\b|go ahead|\byes\b|approve|\bok(ay)?\b|email (this|it|them) to",
          "send_single_email": r"\bsend\b|go ahead|\byes\b|approve|\bok(ay)?\b",
-         "run_job": r"\brun\b|start|now|sync|check|trigger|kick|go ahead|yes"}
+         "run_job": r"\b(run|start|now|sync|check|trigger|kick|yes)\b|go ahead"}
 
 
 async def run_turn(ctx: dict, history: list, text: str):
@@ -396,7 +404,9 @@ async def run_turn(ctx: dict, history: list, text: str):
     chat = LlmChat(api_key=os.environ["EMERGENT_LLM_KEY"], session_id=f"brain-{ctx['session_id']}-{datetime.now().timestamp()}",
                    system_message=SYSTEM.replace("{today}", datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")),
                    initial_messages=history).with_model(*MODEL).with_tools([v[1] for v in TOOLS.values()], tool_choice="auto")
-    said = " ".join([m["content"] for m in history if m.get("role") == "user"][-6:] + [text]).lower()
+    said_msgs = [re.sub(r"\[Attached file[^\]]*\]", "", m) for m in [m["content"] for m in history if m.get("role") == "user"][-6:] + [text]]
+    said = " ".join(said_msgs).lower()
+    given = _user_reason(said_msgs)
     latest = text.lower()
     msg = UserMessage(text=text)
     for _ in range(15):
@@ -418,6 +428,8 @@ async def run_turn(ctx: dict, history: list, text: str):
                 if not fn:
                     raise ValueError("Unknown tool")
                 r = str(args.get("reason") or "").strip()
+                if given and tc.name not in READ_ONLY:
+                    args["reason"] = r = given  # the user's own words win over the model's paraphrase
                 if tc.name not in READ_ONLY and not (tc.name == "manage_contact_sources" and args.get("action") == "list") and not _reason_ok(r, said):
                     raise ValueError("No real reason from the user — ask the user WHY they want this change, then retry using their words")
                 if tc.name in GATES and not re.search(GATES[tc.name], latest):

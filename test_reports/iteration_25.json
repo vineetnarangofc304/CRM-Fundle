@@ -1,0 +1,36 @@
+{
+  "summary": "Retested the iteration_24 HIGH issue: the Brain sending a campaign or running a job on its own after an import. It is FIXED. Pytest: 45/45 pass (iter22, iter23, iter24, plus the new test_fundle_brain_iter25.py, which checks _reason_ok, GATES, SYSTEM rule 4, the title logic and the tool labels). There were 6 live LLM turns. Session 34 rebuilt the iter24 scenario. Turn 1 (brands.csv, 'Add these brands and start emailing them — reason: trade show list'): it called read_uploaded_file and import_brands_from_file (added 0 / already_in_crm 2), then drafted an email in plain text and asked 'Shall I send it?' without calling send. Turn 2 (emails.csv, 'These are verified emails…, reason: got them from the brands directly'): it did NOT call send_email_campaign or run_job. However, the import was blocked because the Brain wrote its own reason, 'User provided verified emails obtained directly from the brands.', which _reason_ok rejects. The Brain then asked the user WHY again, even though the user had already given a reason. In turn 3 the user said 'I already told you…' and it imported (updated_contacts 2), again with no send or job. Session 35 (draft flow): 'Send a short hello email to grocery brands whose name starts with TEST_ …, reason: grocery push' produced a plain-text draft and 'Shall I send it from the main inbox?' with no tool write. After 'yes send it' it called get_system_overview, saw that the main inbox is not connected and that TEST_Zesty Grocers has no contact, and declined instead of queueing. A follow-up to TEST_Urban Kurti was also declined because no inbox is connected. So the queue-on-approval path was NOT exercised live; only the gate regex was unit-tested. No new outreach docs were created (max id stays 790, 0 active kind 'brain' docs). settings.prospecting.enabled stayed false. In the UI, the new upload session title is the user's text ('Add these brands and start em…'). Tool chips show friendly labels (Read the file / Imported brands / Imported verified emails). Test sessions 34 and 35 were deleted.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "core/brain.py _reason_ok / run_turn (false positive)", "issue": "Turn 2 said 'reason: got them from the brands directly'. The model passed reason 'User provided verified emails obtained directly from the brands.', and the ^user\\b rule rejected it. The error text tells the model to 'ask the user WHY', so it asked the user again even though they had already answered. This is bad UX and makes the user repeat themselves. Fix: when the user's text contains 'reason:' (or 'because'), extract that phrase and pass it as the reason automatically. Or change the error to 'Use the user's exact words: <extracted reason>' so the model retries in the same turn instead of asking."},
+      {"endpoint": "core/brain.py _reason_ok (weak on the permissive side)", "issue": "A reason is accepted if ANY single 4+ letter non-stop word appears in the last 6 user messages. That text includes the '[Attached file … columns: …]' note, so generic words like 'emails', 'brands', 'verified' and 'start' pass. An invented reason such as 'Start emailing these brands using verified emails' (from iter24) would still pass. The GATES regex is now the real protection for sends and jobs, but other write tools (update_records, save_settings, save_email_template) depend only on this weak check. Consider requiring most of the meaningful words to match, or matching against the extracted 'reason:' phrase."},
+      {"endpoint": "core/brain.py GATES run_job regex", "issue": "r'\\brun\\b|start|now|sync|check|trigger|kick|go ahead|yes' has no word boundaries on start/now/check/yes. It matches 'know', 'known', 'snow', 'checked', 'restart', 'eyes'. In turn 1, 'start emailing them' already allows run_job. Add \\b around each word."},
+      {"endpoint": "Brain prompt / prospects schema", "issue": "The LLM repeatedly queried prospects with the field 'brand' instead of 'brand_name' (count 0), which wastes tool calls before it falls back. Consider stating in SYSTEM MAP that prospects use brand_name, not brand (outreach uses brand)."},
+      {"endpoint": "iter24 carry-over (not retested)", "issue": "Still open from iter24: in t_import_contacts the free-mail / substring domain-regex fallback, and the synchronous pandas parsing / per-row DB round-trips."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": ["/app/backend/tests/test_fundle_brain_iter25.py", "/app/backend/tests/test_fundle_brain_iter24.py", "/app/backend/tests/test_fundle_brain_iter23.py", "/app/backend/tests/test_fundle_brain_iter22.py", "/app/backend/tests/brain_say.py", "/app/backend/tests/brain_state.py", "/app/test_reports/pytest/pytest_iter25.xml"],
+  "action_items": [
+    "Stop the reason-guard false positive: auto-extract the user's 'reason: …' phrase (or return it in the error) so the Brain doesn't ask a user who already gave a reason",
+    "Add \\b word boundaries to the GATES run_job regex (start|now|check|yes)",
+    "Optionally tighten _reason_ok, which currently passes on any single shared word",
+    "Mention in SYSTEM that prospects use brand_name, not brand"
+  ],
+  "critical_code_review_comments": [
+    "GATES only checks the latest message, which is correct. Combined with SYSTEM rule 4 this stopped the unprompted send/run_job behaviour seen in iter24.",
+    "prioritize_contact_search now returns matched_count, and contacts_only_mode is forced to false unless the user said 'contacts only' / 'stop adding' etc. This was verified by code review only; no live LLM turn was run for it.",
+    "The routes/brain.py title regex works: the new upload session got the user's text as its title."
+  ],
+  "updated_files": ["/app/backend/tests/test_fundle_brain_iter25.py", "/app/backend/tests/brain_say.py", "/app/backend/tests/brain_state.py"],
+  "success_rate": {"backend": "100% pytest (45/45); live LLM: HIGH issue fixed, 1 reason-guard false positive", "frontend": "100%"},
+  "seed_data_creation": "No new data. The existing TEST_Zesty Grocers (2830), TEST_Urban Kurti (2831) and TEST_New Bakes (2832) from iter24 were re-used; the contact import re-wrote the same values. Brain sessions 34 and 35 were soft-deleted.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "The main inbox is NOT connected, so the Brain declines to queue campaigns. To test queueing on approval, use a brand with contacts and accept that it may refuse. Use tests/brain_upload_cli.py <sid|new> <file> 'msg' and tests/brain_say.py <sid> 'msg' for live turns, and tests/brain_state.py [sid] to check outreach and audit. Max outreach id is 790. Keep settings.prospecting.enabled=false."
+}
