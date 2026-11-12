@@ -5,7 +5,8 @@ import { API, apiErr } from "../lib/api";
 
 const esc = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 const fmt = (s) => esc(s || "").replace(/\*\*(.+?)\*\*/g, "<b>$1</b>").replace(/`([^`]+)`/g, "<code class='rounded bg-slate-100 px-1'>$1</code>")
-  .split("\n").map((l) => (/^\s*[-•*] /.test(l) ? `<li class="ml-4 list-disc">${l.replace(/^\s*[-•*] /, "")}</li>` : l ? `<p>${l}</p>` : "")).join("");
+  .split("\n").filter((l) => !/^\s*\|?\s*:?-{3,}/.test(l)).map((l) => l.replace(/^#{1,6}\s*(.*)$/, "<b>$1</b>").replace(/^\s*\|(.*)\|\s*$/, (_, r) => r.split("|").map((c) => c.trim()).join(" · ")))
+  .map((l) => (/^\s*[-•*] /.test(l) ? `<li class="ml-4 list-disc">${l.replace(/^\s*[-•*] /, "")}</li>` : l ? `<p>${l}</p>` : "")).join("");
 const TOOL_LABEL = { get_system_overview: "Checked system status", find_records: "Looked up records", aggregate_records: "Ran analysis", update_records: "Updated records", save_settings: "Changed settings", save_email_template: "Saved email template", send_email_campaign: "Queued emails", stop_emails: "Stopped emails", prioritize_contact_search: "Queued contact search", run_job: "Started a job", send_single_email: "Sent email", request_developer_change: "Emailed Vineet a change request" };
 const EXAMPLES = ["Send this email to all women fashion brands from Abhinav's inbox: …", "Change the hourly limit from 25 to 60 — reason: inboxes are warmed up", "Stop adding brands and search contacts for grocery brands with up to 5 stores first", "How many intro emails went out today, and how many bounced?"];
 
@@ -98,6 +99,7 @@ export default function FundleBrain() {
         body: JSON.stringify({ message: q }),
       });
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || `Error ${res.status}`);
+      loadList();
       const reader = res.body.getReader(); const dec = new TextDecoder(); let buf = "";
       for (;;) {
         const { value, done } = await reader.read(); if (done) break;

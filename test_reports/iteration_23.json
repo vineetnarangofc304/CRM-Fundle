@@ -1,0 +1,39 @@
+{
+  "summary": "Retested the Fundle Brain fixes. Pytest: 20/20 pass (the 9 iter22 regression tests plus 11 new no-LLM tests in test_fundle_brain_iter23.py). Ran 6 live LLM turns (4 via CLI, 2 via UI). All checks of the 7 requested items passed: (1) find_records on mailboxes returned smtp_password_enc='***', and update/unset of _enc, token and secret fields raises an error. (2) The category breakdown came back with its labels (_id='Kids' Wear & Toys', count 93 ...); ObjectId _id is still dropped. (3) Overview has main_inbox {id:0}. from_inbox='main' queued 2 'brain' emails with force_sender=0 (outreach #789 and #790). The Brain then stopped them (status 'stopped'). An empty filter match raises an error. (4) prioritize_contact_search skips brands with emails by default and re-queues them only with include_brands_with_emails=true. The next_contacts_job priority pass uses $gte 1. (5) The escalation returned logged:true with a clear note, the model told the user it was saved, and the UI chip is amber 'Change request saved (email not sent)'. (6) The delete icon is visible at opacity 0.4 and a confirm dialog appears (dismiss keeps the chat, accept deletes it). The header subtitle is now slate-500. The session title updates, but only once the streamed reply finishes. (7) Regression: 'change hourly limit to 30' with no reason got the reply 'Why do you want...' and no change was made. Each change wrote an audit row with the user's reason. Sessions persist. A caller without the brain permission gets 403.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "core/brain.py t_contacts no-email filter", "issue": "The filter {'contacts.email': {'$in': [None, '']}} has two edge-case gaps. (a) It does NOT match contacts: [] (an empty array), so brands researched with zero contacts are skipped silently. A TEST_ prospect with contacts=[] got queued=0. contacts.py can store []; there are 0 such docs today. (b) It DOES match brands where one contact has an email and another doesn't (1 such brand today), so those are re-queued for paid research. Fix: use {'$nor': [{'contacts': {'$elemMatch': {'email': {'$nin': [None, '']}}}}]}."},
+      {"endpoint": "get_system_overview counts.prospects_with_email", "issue": "{'contacts.email': {'$nin': [None, '']}} returns 131. The correct count with $elemMatch is 132: a brand with mixed contacts is not counted. Use $elemMatch."},
+      {"endpoint": "get_system_overview main_inbox", "issue": "main_inbox.email is null when the main inbox isn't connected (preview). The model then said the 'email address isn't available'. Pinning still works via 'main'. Consider adding connected:false so the model can warn that pinned emails won't send."},
+      {"endpoint": "_secret substring match", "issue": "Any key containing 'token' is masked, so harmless fields like max_tokens or tokens_used would also show as ***. Acceptable, just be aware."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "Sidebar session title", "issue": "The title only updates after the whole streamed reply finishes, because loadList() runs after the stream. During long multi-tool turns the sidebar shows 'New chat' for the full turn. It is set on the backend before streaming starts, so call loadList() right after the POST returns, or set the title locally.", "selector": "[data-testid^='brain-session-']", "priority": "LOW"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "/brain assistant bubble", "issues": ["The model often answers with markdown tables and ### headings. fmt() only handles **bold**, `code` and '-' bullets, so raw '| a | b |', '|---|' and '###' lines show up (seen on the category breakdown). Either render headings and tables, or tell the model in SYSTEM to avoid tables and headings."]}
+    ]
+  },
+  "test_report_links": ["/app/backend/tests/test_fundle_brain_iter22.py", "/app/backend/tests/test_fundle_brain_iter23.py", "/app/backend/tests/brain_chat_cli.py", "/app/test_reports/pytest/pytest_iter23.xml"],
+  "action_items": [
+    "Use the $elemMatch/$nor no-email filter in prioritize_contact_search and $elemMatch in the overview email count",
+    "Refresh the sidebar title right after sending, not after the stream ends",
+    "Render markdown tables/headings in Brain replies, or tell the model not to use them"
+  ],
+  "critical_code_review_comments": [
+    "aggregate_records still allows $lookup/$unionWith/$graphLookup into collections outside READ_COLS (from iter22, not fixed). Output is scrubbed by key name only.",
+    "t_send dedupes on to + subject_raw, including stopped emails. Re-sending the same subject after a stop is treated as a duplicate (probably intended, but undocumented).",
+    "mb.pick(prefer=0) returns None when the main inbox isn't in the pool (not connected). Pinned brain emails then wait forever with no error shown to the user."
+  ],
+  "updated_files": ["/app/backend/tests/test_fundle_brain_iter22.py (scrub test: now expects non-ObjectId _id to be kept)", "/app/backend/tests/test_fundle_brain_iter23.py (new)"],
+  "success_rate": {"backend": "100% (20/20 pytest; all live LLM checks passed)", "frontend": "95% (all requested UI fixes work; the title refresh is late)"},
+  "seed_data_creation": "Temporary TEST_ prospects 990000001/990000002 are created and deleted by id inside the test. Brain sessions 12-17 were created and then soft-deleted. brain_request #5 (mine) was deleted by id. The pytest escalation request is deleted by id. Outreach #789/#790 (TEST_brain iter23 hello, force_sender 0) were queued to real Reliance Smart and More Supermarket contacts, then stopped right away (status stopped, never sent). Audit rows 11-13 remain on purpose.",
+  "test_credentials": "Admin vineetnarangofc@gmail.com / Fundle@cf928c (from /app/memory/test_credentials.md)",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Run pytest with '-n 0' (the pytest.ini xdist args break when paths are passed): cd /app/backend && export $(grep REACT_APP_BACKEND_URL /app/frontend/.env) && python -m pytest tests/test_fundle_brain_iter22.py tests/test_fundle_brain_iter23.py -n 0. Inserted prospects need unique country+brand_key (unique index). hourly_cap is still 25 (never changed). 0 brain emails are queued. 132 template emails are approved (pre-existing, not mine). Prospecting: enabled=false, phase=contacts (pre-existing). No extra mailboxes are active (128 are soft-deleted TEST ones). The main inbox is not connected in preview."
+}

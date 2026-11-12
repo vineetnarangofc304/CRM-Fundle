@@ -95,7 +95,7 @@ class TestToolGuards:
     def test_scrub_hides_secrets(self):
         from core import brain
         out = brain._scrub({"_id": 1, "smtp_password": "x", "a": [{"access_token": "t", "ok": 1}], "tokens": {"a": 1}})
-        assert "_id" not in out and out["smtp_password"] == "***" and out["a"][0]["access_token"] == "***" and out["tokens"] == "***"
+        assert out["_id"] == 1 and out["smtp_password"] == "***" and out["a"][0]["access_token"] == "***" and out["tokens"] == "***"
 
     def test_where_rejected(self):
         from core import brain

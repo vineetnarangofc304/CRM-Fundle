@@ -110,3 +110,9 @@ Gmail OAuth (GOOGLE_CLIENT_ID/SECRET, GMAIL_REDIRECT_URI), Meta CAPI (dataset id
 
 ## 2026-11-12 — Hourly sending limit
 - No daily limit / warm-up for sending. Each inbox (main + extra) sends max settings.outreach.hourly_cap (default 25, 1–100) per rolling hour, spread over the 4 runs/hour (≤7 per run). UI shows "X/25 this hour". iteration_21: 100%.
+
+## 2026-11-12 — Fundle Brain (operator agent)
+- /brain page (sidebar card "Fundle Brain", perm "brain"; admins always, others via Admin → Users permissions). ChatGPT-style sessions (brain_sessions, brain_messages), SSE streaming, tool chips, Audit log view (brain_audit: user, tool, args, reason, result).
+- core/brain.py: GPT-6-Luna (openai gpt-6-luna) tool calling. Tools: get_system_overview, find_records, aggregate_records, update_records ($set/unset on prospects/leads/outreach/email_templates/mailboxes/settings, ≤5000, secrets blocked/masked), save_settings (outreach/prospecting/linkedin), save_email_template, send_email_campaign (kind "brain", force_sender pins inbox; from_inbox "main" = main), stop_emails, prioritize_contact_search, run_job, send_single_email, request_developer_change (brain_requests + email to vineet.narang@fundle.ai).
+- Acts immediately but every write needs the user's own reason (server rejects missing/invented reasons). Can't change app code/screens — escalates.
+- Tested: iteration_22, iteration_23 (20/20 pytest, live LLM flows pass) + follow-up minor fixes.

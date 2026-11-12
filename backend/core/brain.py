@@ -71,12 +71,12 @@ async def t_overview(ctx, a):
     except Exception:
         pass
     main = await ol_main()
-    return {"main_inbox": {"id": 0, "email": main, "how_to_pin": "from_inbox='main' or this email"},
+    return {"main_inbox": {"id": 0, "email": main, "connected": bool(main), "how_to_pin": "from_inbox='main' or this email"},
             "outreach_settings": {k: v for k, v in st.items() if k != "pitch"}, "prospecting_settings": await pe.get_settings(),
             "linkedin_settings": await li.get_settings(), "inboxes_extra": _scrub(boxes), "senders_now": pool,
             "templates": _scrub(tpls),
             "counts": {"prospects": await db.prospects.estimated_document_count(),
-                       "prospects_with_email": await db.prospects.count_documents({"contacts.email": {"$nin": [None, ""]}}),
+                       "prospects_with_email": await db.prospects.count_documents({"contacts": {"$elemMatch": {"email": {"$nin": [None, ""]}}}}),
                        "outreach_queued": await db.outreach.count_documents({"status": {"$in": ["approved", "pending_approval"]}}),
                        "outreach_sent": await db.outreach.count_documents({"status": "sent"}),
                        "leads": await db.leads.estimated_document_count()},
@@ -250,7 +250,7 @@ async def t_contacts(ctx, a):
     _check(f)
     q = [f, {"contacts_status": {"$ne": "running"}}]
     if not a.get("include_brands_with_emails"):
-        q.append({"contacts.email": {"$in": [None, ""]}})
+        q.append({"$nor": [{"contacts": {"$elemMatch": {"email": {"$nin": [None, ""]}}}}]})
     r = await db.prospects.update_many({"$and": q},
                                        {"$set": {"contacts_priority": int(a.get("priority") or 5)}, "$unset": {"contacts_status": 1}})
     if a.get("contacts_only_mode"):
@@ -354,7 +354,7 @@ RULES
 2. Before bulk changes, check scope with find_records/aggregate_records (counts), then do it, then report exactly what changed (numbers, names). Prefer specific filters; regex with $options "i" for categories/names.
 3. Write emails in clean HTML (<p>, <ul><li>, <b>). Don't add a signature — the sending inbox adds its own.
 4. If something truly can't be done with your tools (new screens, new code features, integrations), call request_developer_change with a clear summary so Vineet is emailed, and tell the user.
-5. Never reveal passwords or tokens. Be concise, use short bullet points, and answer analytics questions with real numbers from the tools.
+5. Never reveal passwords or tokens. Format replies with short paragraphs and "- " bullet points and **bold** only — no markdown tables or # headings. Be concise, and answer analytics questions with real numbers from the tools.
 Today: {today}."""
 
 
