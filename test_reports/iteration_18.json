@@ -1,0 +1,40 @@
+{
+  "summary": "Tested iteration 18: the 4 store-count intro templates, template audience, the one-intro rule in run_auto, per-inbox signatures, the email-format checker and LinkedIn being off. Backend: new tests/test_intro_v2_iter18.py has 18 tests (live API plus unit tests on a throw-away DB). 17 pass; the 1 failure is a real minor bug (the no-domain path leaves fmt_running set). Related suites (email_templates, mailboxes, outreach): 80 pass after I updated 2 old tests that still expected 'Intro email' to be auto. Live DB check: 132 approved intro emails queued (66: 119, 67: 3, 68: 10, 65: 0). Every one is in the right store-count bucket, no brand has more than one intro, and 0 brands are still eligible, so the next run creates 0. 0 for D2C is because none of the 435 D2C prospects has an email yet. The unit test covers routing at the edges: 100 goes to 100+, 99 and 11 go to 11-99, 10/1/0/missing/null go to 1-10, D2C with 500 stores goes to D2C, brands that replied or already got the old intro are skipped, a second run makes 0, and no AI is called. Frontend (Playwright, desktop): everything requested works. No LinkedIn tab. The email-format status line and 'Check formats now' button show. The auto bar lists the 4 intros with audience labels. The audience badges for 65-68 show and template 1 shows MANUAL. Editing template 67 shows tpl-audience = stores_11_99 with ai_tailor unticked; Save sends audience in the PUT (toast: 3 queued emails updated). The signature card shows. The Admin add-inbox form has the mailbox-signature textarea. The prospect page has the prospect-check-format button. The lead page shows the lead-contacts block (4 decision makers for Raymond).",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "core/email_format.check_brand (no website domain path)", "issue": "Returns early with $set only and never unsets fmt_running. The prospect stays marked as running until the stale cleanup in ef.run() (1 h). In that time POST /prospecting/prospects/{pid}/check-format returns 409 and the UI button stays 'Checking format…'. Fix: add '$unset': {'fmt_running': 1} to that update_one."},
+      {"endpoint": "POST /api/prospecting/prospects/{pid}/check-format", "issue": "The LLM quota is currently used up (Gemini 429 RESOURCE_EXHAUSTED, raised as AiCreditsOut). The background task clears fmt_running but writes no fmt_checked_at or status and raises an unhandled task exception. The user gets a 'about a minute' success toast and then nothing changes, with no error shown. Data is not corrupted. Suggest storing an error state that the UI can show."},
+      {"endpoint": "POST /api/prospecting/prospects/{pid}/use-template", "issue": "Manual click-to-send does not check the one-intro rule. A user can queue a second intro (for example 'Intro email' or another bucket's intro) for a brand that already has one queued. The prospect page shows all 5 intro templates as buttons for every contact. This may be intended for manual sends; consider warning or hiding the other intros."},
+      {"endpoint": "run_auto / AUDIENCES", "issue": "If an admin changes an intro template's audience to 'all' (Every brand), it drops out of intro_ids, which only covers non-'all' audiences or kind 'intro'. It would then send to every brand that already got an intro, which breaks the one-intro rule. Consider basing intro_ids on kind (intro*) instead of audience, or blocking 'all' for intro_* kinds."},
+      {"endpoint": "AUDIENCES (store_count)", "issue": "Routing only works for numeric or null store_count. A string value (e.g. '150') matches no bucket, so the brand never gets an intro. The live DB has only int or null today (1708 int, 514 null), so this is a guard for future imports."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Outreach header", "issues": ["Subtitle still says 'AI tailors your email templates for each contact', but the auto intros are now sent as written (ai_tailor false)."]},
+      {"screen": "Outreach -> Emails & review", "issues": ["The channel filter still offers a 'LinkedIn' option although the LinkedIn feature is switched off."]}
+    ]
+  },
+  "test_report_links": ["/app/backend/tests/test_intro_v2_iter18.py", "/app/backend/tests/test_email_templates.py", "/app/test_reports/pytest/pytest_iter18.xml"],
+  "action_items": [
+    "core/email_format.py check_brand: unset fmt_running in the 'no website domain' early return",
+    "Surface AI quota/credit errors from the email-format check (check-format and run) to the UI instead of failing silently; the LLM key is currently returning 429 RESOURCE_EXHAUSTED",
+    "Make intro_ids in run_auto independent of the audience field (e.g. kind starting with 'intro'), so changing an intro's audience to 'all' can't cause double intros",
+    "Optional: warn or block a manual use-template intro when the brand already has an intro queued or sent",
+    "Optional: update the Outreach subtitle copy and remove the LinkedIn channel filter option"
+  ],
+  "critical_code_review_comments": [
+    "email_format.check_brand no-domain branch leaves the fmt_running lock in place (test_check_brand_no_domain_clears_running fails)",
+    "_with_signature puts the inbox signature into the HTML without escaping. Only admins can set it, so the risk is low, but '<' or '&' in a signature will render oddly",
+    "PUT /admin/mailboxes and PUT /outreach/templates use model defaults (signature='', audience='all'). Any client that leaves these fields out will silently reset them. The current frontend sends both fields."
+  ],
+  "updated_files": ["/app/backend/tests/test_intro_v2_iter18.py (new)", "/app/backend/tests/test_email_templates.py (test_list_has_starters expects Intro email=manual; test_run_auto rewritten for intro v2)"],
+  "success_rate": {"backend": "94% (17/18 new; 80/80 related suites)", "frontend": "100%"},
+  "seed_data_creation": "Created and deleted by id: one TEST_aud template and one test_xxxx@example.com mailbox (both soft-deleted). The main signature was set to a test value and restored to the original (empty). Template 67 was re-saved through the UI with its content unchanged, which only bumps updated_at. One live check-format was triggered on prospect 1 (Raymond); it failed on AI quota and changed no data.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Run with REACT_APP_BACKEND_URL exported and '-n 0' (pytest.ini adds xdist flags). test_intro_v2_iter18.py::TestFormatAndLinkedin::test_check_format_one_brand_and_409 makes ONE live AI call. Do NOT call POST /api/outreach/email-format/run live: it starts up to 30 AI checks. Do not run test_big_upload_50k.py, test_bulk_import.py or test_won_date_deals.py. The LLM quota was exhausted (429) at test time. Intro template ids 65-68; old intro id 1 is manual."
+}

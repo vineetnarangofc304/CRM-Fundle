@@ -169,6 +169,11 @@ async def use_template(pid: int, body: UseTpl, user: dict = Depends(STAFF)):
     cs = p.get("contacts") or []
     if not 0 <= body.contact_index < len(cs) or not cs[body.contact_index].get("email"):
         raise HTTPException(status_code=400, detail="This contact has no email yet")
+    intro = (t.get("audience") or "all") != "all" or str(t.get("kind", "")).startswith("intro")
+    if intro and await db.outreach.find_one({"prospect_id": pid, "kind": "template", "status": {"$nin": ["stopped", "failed", "bounced"]},
+                                             "template_id": {"$in": [x["id"] async for x in db.email_templates.find(
+                                                 {"$or": [{"audience": {"$nin": [None, "all"]}}, {"kind": {"$regex": "^intro"}}]}, {"id": 1})]}}):
+        raise HTTPException(status_code=409, detail="This brand already has an intro email — pick a follow-up template instead")
     doc = await et.create_message(t, p, cs[body.contact_index], "pending_approval", user["name"])
     return {"id": doc["id"], "subject": doc["subject"]}
 

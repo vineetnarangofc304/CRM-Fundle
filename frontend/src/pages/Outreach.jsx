@@ -175,7 +175,7 @@ export default function Outreach() {
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="flex items-center gap-2 font-display text-3xl font-extrabold text-slate-900"><PaperPlaneTilt size={28} className="text-[#1A73E8]" /> Outreach</h1>
-          <p className="text-sm text-slate-500" data-testid="outreach-mode-text">AI tailors your email templates for each contact. {s.auto_send ? `Auto templates send on their own (max ${s.daily_cap}/day per inbox${s.cc ? `, CC ${s.cc}` : ""}); manual ones are click-to-send from each brand page.` : "Nothing is sent until you approve it."}</p>
+          <p className="text-sm text-slate-500" data-testid="outreach-mode-text">The store-count intro emails go out as written, with each brand and first name filled in. {s.auto_send ? `Auto templates send on their own (max ${s.daily_cap}/day per inbox${s.cc ? `, CC ${s.cc}` : ""}); manual ones are click-to-send from each brand page.` : "Nothing is sent until you approve it."}</p>
         </div>
         <button data-testid="outreach-run-now" onClick={runNow} className="crm-btn-primary !py-1.5 text-xs"><Play size={14} /> Run now</button>
       </div>
@@ -194,7 +194,7 @@ export default function Outreach() {
           <button key={k} data-testid={`outreach-tab-${k}`} onClick={() => { setTab(k); setSel([]); }} className={`rounded-full px-3 py-1.5 text-xs font-bold transition-colors ${tab === k ? "bg-[#1A73E8] text-white" : "bg-white text-slate-600 hover:bg-slate-100"}`}>{l} · {count(k)}</button>
         ))}
         <select data-testid="outreach-channel" className="crm-select !w-36 !py-1 text-xs" value={channel} onChange={(e) => setChannel(e.target.value)}>
-          <option value="">All channels</option><option value="email">Email</option><option value="linkedin">LinkedIn</option>
+          <option value="">All channels</option><option value="email">Email</option>
         </select>
         {sel.length > 0 && <button data-testid="outreach-bulk-approve" onClick={bulk} className="crm-btn-primary ml-auto !py-1.5 text-xs"><CheckCircle size={14} /> Finalise & send {sel.length}</button>}
       </div>

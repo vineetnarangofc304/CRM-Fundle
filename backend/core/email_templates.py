@@ -220,12 +220,13 @@ async def run_auto(limit: int) -> int:
     tpls = await db.email_templates.find({"mode": "auto", "active": True, "is_deleted": {"$ne": True}}, {"_id": 0}).to_list(50)
     # A brand gets only one intro: any audience-specific template (or the old generic intro) counts.
     intro_ids = [t["id"] async for t in db.email_templates.find(
-        {"$or": [{"audience": {"$in": [k for k in AUDIENCES if k != "all"]}}, {"kind": "intro"}]}, {"id": 1})]
+        {"$or": [{"audience": {"$in": [k for k in AUDIENCES if k != "all"]}}, {"kind": {"$regex": "^intro"}}]}, {"id": 1})]
     for t in tpls:
         if made >= limit:
             break
         aud = t.get("audience") or "all"
-        q = {"tpl_sent": {"$nin": intro_ids} if aud != "all" else {"$ne": t["id"]}, "replied": {"$ne": True},
+        is_intro = t["id"] in intro_ids
+        q = {"tpl_sent": {"$nin": intro_ids} if is_intro else {"$ne": t["id"]}, "replied": {"$ne": True},
              "contacts": {"$elemMatch": {"email": {"$nin": [None, ""]}}}}
         f = AUDIENCES.get(aud, {})
         cands = await db.prospects.find({"$and": [q, f]} if f else q, {"_id": 0}

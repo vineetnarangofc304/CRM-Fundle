@@ -45,7 +45,8 @@ async def check_brand(p: dict) -> dict:
     dom = ct._domain(p)
     upd = {"fmt_checked_at": now_utc_str()}
     if not dom:
-        await db.prospects.update_one({"id": p["id"]}, {"$set": {**upd, "email_format": {"pattern": None, "note": "no website domain"}}})
+        await db.prospects.update_one({"id": p["id"]}, {"$set": {**upd, "email_format": {"pattern": None, "note": "no website domain", "checked_at": now_utc_str()}},
+                                                     "$unset": {"fmt_running": 1}})
         return {"ok": False}
     prompt = (f"Brand: \"{p['brand_name']}\" ({p.get('category')}, {p.get('country')}). Email domain: {dom}.\n"
               f"Known people: {[c['name'] for c in p.get('contacts') or []][:6]}\n"
@@ -57,7 +58,8 @@ async def check_brand(p: dict) -> dict:
     try:
         d = pe._json(await pe._ask(pe.PRO, FORMAT_SYS, prompt), "obj") or {}
     except pe.AiCreditsOut:
-        await db.prospects.update_one({"id": p["id"]}, {"$unset": {"fmt_running": 1}})
+        await db.prospects.update_one({"id": p["id"]}, {"$set": {"email_format.error": "AI credits ran out — will retry", "email_format.checked_at": now_utc_str()},
+                                                        "$unset": {"fmt_running": 1}})
         raise
     except Exception as e:
         await db.prospects.update_one({"id": p["id"]}, {"$set": upd, "$unset": {"fmt_running": 1}})

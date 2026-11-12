@@ -100,7 +100,7 @@ class TestTemplatesAPI:
         r = admin.get(f"{BASE_URL}/api/outreach/templates")
         assert r.status_code == 200
         by = {t["name"]: t for t in r.json()}
-        exp = {"Intro email": "auto", "Marketplace emailer": "manual", "Loyalty emailer": "manual",
+        exp = {"Intro email": "manual", "Marketplace emailer": "manual", "Loyalty emailer": "manual",
                "MBO emailer": "manual", "SIS emailer": "manual"}
         for n, mode in exp.items():
             assert n in by and by[n]["mode"] == mode
@@ -317,10 +317,12 @@ class TestCore:
         assert d["status"] == "approved" and "Attachment unavailable" in d["error"]
 
     def test_run_auto(self):
+        # iter18: generic intro is manual; the 4 store-count intro templates (ai_tailor False) are auto
         run(et.seed_starters())
-        tpls = run(self.db.email_templates.find({}, {"_id": 0}).to_list(10))
-        assert len(tpls) == 5 and [t["name"] for t in tpls if t["mode"] == "auto"] == ["Intro email"]
-        intro = next(t for t in tpls if t["mode"] == "auto")
+        run(et.seed_intro_v2())
+        tpls = run(self.db.email_templates.find({}, {"_id": 0}).to_list(20))
+        assert len(tpls) == 9 and sorted(t["kind"] for t in tpls if t["mode"] == "auto") == ["intro_100", "intro_11_99", "intro_1_10", "intro_d2c"]
+        intro = next(t for t in tpls if t["kind"] == "intro_1_10")
         run(self.db.prospects.insert_many([
             {"id": 1, "brand_name": "TEST_A", "category": "c", "country": "IN", "fit_score": 90, "contacts": [{"name": "Ann Lee", "email": "ann@a.com"}]},
             {"id": 2, "brand_name": "TEST_B", "fit_score": 50, "contacts": [{"name": "Bo", "email": None}]},
@@ -332,7 +334,7 @@ class TestCore:
         assert sorted(m["prospect_id"] for m in msgs) == [1, 4]
         m1 = next(m for m in msgs if m["prospect_id"] == 1)
         assert m1["status"] == "approved" and m1["scheduled_at"] and m1["kind"] == "template"
-        assert m1["template_name"] == "Intro email" and "Ann" in m1["body"] and "TEST_A" in m1["subject"]
+        assert m1["template_name"] == intro["name"] and "Ann" in m1["body"] and "TEST_A" in m1["subject"]
         assert intro["id"] in run(self.db.prospects.find_one({"id": 1}))["tpl_sent"]
         assert run(et.run_auto(10)) == 0, "same template must not be sent twice"
 

@@ -12,6 +12,8 @@ from core.security import require_roles
 from core import contacts as ct, outreach as oc, email_format as ef
 from routes.prospecting import _spawn
 
+import logging
+logger = logging.getLogger(__name__)
 router = APIRouter(tags=["outreach"])
 STAFF = require_roles("admin", "manager")
 
@@ -192,7 +194,12 @@ async def check_format_now(pid: int, user: dict = Depends(STAFF)):
                                                {"$set": {"fmt_running": oc._now()}}, projection={"_id": 0})
     if not p:
         raise HTTPException(status_code=409, detail="Format check already running or prospect not found")
-    _spawn(ef.check_brand(p))
+    async def go():
+        try:
+            await ef.check_brand(p)
+        except Exception as e:
+            logger.warning(f"format check {pid}: {e}")
+    _spawn(go())
     return {"ok": True}
 
 
