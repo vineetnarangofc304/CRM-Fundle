@@ -77,7 +77,9 @@ async def update_template(tid: int, body: Tpl, user: dict = Depends(STAFF)):
                                             {"$set": {**await _clean(body), "updated_by": user["name"]}})
     if not r.matched_count:
         raise HTTPException(status_code=404, detail="Template not found")
-    return await db.email_templates.find_one({"id": tid}, {"_id": 0})
+    queued = await db.outreach.count_documents({"template_id": tid, "status": {"$in": ["approved", "pending_approval"]},
+                                                "edited_by": {"$exists": False}})
+    return {**await db.email_templates.find_one({"id": tid}, {"_id": 0}), "queued_updated": queued}
 
 
 @router.delete("/outreach/templates/{tid}")

@@ -6,7 +6,7 @@ import { API, apiErr } from "../lib/api";
 import { useAuth } from "../context/AuthContext";
 import { EmailTemplates } from "../components/EmailTemplates";
 
-const TABS = [["pending_approval", "Needs review"], ["approved", "Approved / scheduled"], ["sent", "Sent"], ["failed", "Failed"], ["stopped", "Stopped"], ["rejected", "Rejected"]];
+const TABS = [["pending_approval", "Needs review"], ["approved", "Approved / scheduled"], ["sent", "Sent"], ["bounced", "Bounced"], ["failed", "Failed"], ["stopped", "Stopped"], ["rejected", "Rejected"]];
 
 function SettingsPanel({ s, isAdmin, reload }) {
   const [f, setF] = useState(s);
@@ -60,6 +60,8 @@ function MessageCard({ m, reload, selected, onSelect }) {
         {m.scheduled_at && m.status === "approved" && <span className="text-slate-400">sends {m.scheduled_at} UTC</span>}
         {m.status === "approved" && !m.scheduled_at && m.channel === "email" && <span className="text-slate-400">sends after previous step</span>}
         {m.sent_at && <span className="text-emerald-600">sent {m.sent_at}{m.sent_from ? ` from ${m.sent_from}` : ""}</span>}
+        {m.replied_at && <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-700" data-testid={`outreach-replied-${m.id}`}>REPLIED {m.replied_at}</span>}
+        {m.bounced_at && <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-700" data-testid={`outreach-bounced-${m.id}`}>BOUNCED {m.bounced_at}</span>}
         {m.error && <span className="text-rose-600">{m.error}</span>}
       </div>
       {edit ? (
@@ -140,8 +142,8 @@ export default function Outreach() {
       {s.last_run?.at && <p className="text-[11px] text-slate-400">Last run {s.last_run.at} UTC · drafted {s.last_run.stats?.drafted ?? 0} · sent {s.last_run.stats?.sent ?? 0} · via {s.mail_provider}</p>}
       <SettingsPanel s={s} isAdmin={user.role === "admin"} reload={load} />
       <div className="flex gap-1 border-b border-slate-200" data-testid="outreach-view-tabs">
-        {[["messages", "Emails & review"], ["templates", "Email templates"]].map(([k, l]) => (
-          <button key={k} data-testid={`outreach-view-${k}`} onClick={() => setView(k)} className={`-mb-px border-b-2 px-4 py-2 text-sm font-bold transition-colors ${view === k ? "border-[#1A73E8] text-[#1557B0]" : "border-transparent text-slate-500 hover:text-slate-700"}`}>{l}</button>
+        {[["messages", "Emails & review"], ["sent", "Sent emails"], ["templates", "Email templates & auto emailer"]].map(([k, l]) => (
+          <button key={k} data-testid={`outreach-view-${k}`} onClick={() => { if (k === "sent") { setTab("sent"); setView("messages"); } else { setView(k); if (k === "messages" && tab === "sent") setTab("pending_approval"); } }} className={`-mb-px border-b-2 px-4 py-2 text-sm font-bold transition-colors ${(k === "sent" ? view === "messages" && tab === "sent" : k === "messages" ? view === "messages" && tab !== "sent" : view === k) ? "border-[#1A73E8] text-[#1557B0]" : "border-transparent text-slate-500 hover:text-slate-700"}`}>{l}{k === "sent" && stats.email?.sent ? ` (${stats.email.sent})` : ""}</button>
         ))}
       </div>
       {view === "templates" ? <EmailTemplates /> : <>

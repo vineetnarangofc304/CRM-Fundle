@@ -18,7 +18,7 @@ DEFAULT_PITCH = ("Fundle.ai builds an AI-powered customer loyalty platform for r
                  "Quick to launch across all stores, integrates with POS and e-commerce.")
 DEFAULTS = {"enabled": True, "min_score": 0, "daily_cap": 200, "drafts_per_run": 30, "gaps": [3, 7],
             "auto_send": True, "cc": "", "ai_sequence": False,
-            "pitch": DEFAULT_PITCH, "signature": "Team Fundle.ai\nhttps://fundle.ai", "sender_name": "Fundle.ai"}
+            "pitch": DEFAULT_PITCH, "signature": "", "sender_name": "Fundle.ai"}
 DRAFT_SYS = ("You write short, specific, human B2B outreach for an Indian/GCC/UK audience. No hype, no emojis, "
              "no fake claims or invented stats. Reference the brand's real context. Reply with JSON only.")
 
@@ -33,7 +33,8 @@ def _now():
 
 
 def pick_contact(p: dict):
-    cs = [c for c in (p.get("contacts") or []) if c.get("email")]
+    bounced = {e.lower() for e in p.get("bounced_emails") or []}
+    cs = [c for c in (p.get("contacts") or []) if c.get("email") and c["email"].lower() not in bounced]
     mk = [c for c in cs if any(w in (c.get("role") or "").lower() for w in ("market", "cmo", "crm", "loyal", "customer", "digital"))]
     return (mk or cs or [None])[0]
 
@@ -88,8 +89,29 @@ def clean_html(html: str) -> str:
 
 
 def _with_signature(body: str, st: dict) -> str:
-    sig = "<br>".join(st["signature"].splitlines())
-    return f"{body}<p style='color:#475569'>{sig}</p>"
+    sig = "<br>".join((st.get("signature") or "").strip().splitlines())
+    return f"{body}<p style='color:#475569'>{sig}</p>" if sig else body
+
+
+async def _refresh_from_template(m: dict):
+    """Queued template emails pick up the latest template text (unless someone edited that email by hand)."""
+    from core import email_templates as et
+    if m.get("kind") != "template" or m.get("edited_by"):
+        return m
+    t = await db.email_templates.find_one({"id": m["template_id"]}, {"_id": 0})
+    if not t or t.get("is_deleted") or not t.get("active"):
+        if m.get("created_by") == "Auto-send":
+            await db.outreach.update_one({"id": m["id"]}, {"$set": {"status": "stopped", "stop_reason": "Template removed or switched off"}})
+            return None
+        return m
+    if t.get("updated_at") == m.get("tpl_version"):
+        return m
+    p = await db.prospects.find_one({"id": m["prospect_id"]}, {"_id": 0}) or {"brand_name": m.get("brand")}
+    subject, body = await et.tailor(t, p, {"name": m.get("contact_name"), "role": m.get("contact_role"), "email": m.get("to")})
+    upd = {"subject": subject, "body": body, "attachments": t.get("attachments") or [], "video_links": t.get("video_links") or [],
+           "template_name": t["name"], "tpl_version": t.get("updated_at")}
+    await db.outreach.update_one({"id": m["id"]}, {"$set": upd})
+    return {**m, **upd}
 
 
 async def _send_one(m: dict, st: dict, pool: list | None = None, force: bool = False) -> bool:
@@ -97,6 +119,9 @@ async def _send_one(m: dict, st: dict, pool: list | None = None, force: bool = F
     from core import email_templates as et
     if pool is None:
         pool = await mb.senders(st, _now()[:10])
+    m = await _refresh_from_template(m)
+    if m is None:
+        return False
     sender = await mb.pick(m.get("prospect_id"), pool, force)
     if not sender:
         await db.outreach.update_one({"id": m["id"]}, {"$set": {"status": "approved"}})
@@ -110,6 +135,7 @@ async def _send_one(m: dict, st: dict, pool: list | None = None, force: bool = F
         res = await mb.send(sender, m["to"], m["subject"], body, cc=st.get("cc") or None, attachments=files)
     if not res.get("ok"):
         sender["remaining"] = 0
+        await db.outreach.update_one({"id": m["id"]}, {"$set": {"failed_via": sender["id"], "failed_at": _now()}})
         if sender["id"] != 0 and any(x in (res.get("error") or "") for x in ("rejected the mailbox", "SMTP sending turned off")):
             await db.mailboxes.update_one({"id": sender["id"]}, {"$set": {"verified": False, "last_error": res.get("error")}})
         tries = m.get("send_attempts", 0) + 1
@@ -191,10 +217,20 @@ async def _migrate_v4():
     await db.settings.insert_one({"key": "outreach_v4", "done": True})
 
 
+async def _migrate_v5():
+    if await db.settings.find_one({"key": "outreach_v5"}):
+        return
+    st = await db.settings.find_one({"key": "outreach"}) or {}
+    if (st.get("signature") or "").strip().startswith("Team Fundle"):
+        await db.settings.update_one({"key": "outreach"}, {"$set": {"signature": ""}})
+    await db.settings.insert_one({"key": "outreach_v5", "done": True})
+
+
 async def run_outreach(trigger="cron") -> dict:
     await _migrate_v2()
     await _migrate_v3()
     await _migrate_v4()
+    await _migrate_v5()
     st = await get_settings()
     stats = {"drafted": 0, "sent": 0, "failed": 0}
     if not st["enabled"]:
@@ -236,6 +272,11 @@ async def _run_outreach(st, stats, trigger) -> dict:
         stats["auto_approved"] = await auto_approve()
     if await mailer.is_connected():
         from core import mailboxes as mb
+        from core import inbox_sync
+        try:
+            stats["inbox"] = await inbox_sync.sync_all()
+        except Exception as e:
+            logger.warning(f"inbox sync failed: {e}")
         stats["auto_template"] = await et.run_auto(st["drafts_per_run"])
         pool = await mb.senders(st, _now()[:10])
         while any(s["remaining"] > 0 for s in pool):

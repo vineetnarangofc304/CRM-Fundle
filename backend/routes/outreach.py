@@ -37,12 +37,13 @@ class OutreachSettings(BaseModel):
     cc: str = ""
     gaps: List[int] = [3, 7]
     pitch: str = oc.DEFAULT_PITCH
-    signature: str = "Team Fundle.ai"
+    signature: str = ""
 
 
 @router.get("/outreach/settings")
 async def get_settings(user: dict = Depends(STAFF)):
     from core import mailer
+    await oc._migrate_v5()
     last = await db.settings.find_one({"key": "outreach_last"}, {"_id": 0, "key": 0}) or {}
     return {**await oc.get_settings(), "mail_connected": await mailer.is_connected(),
             "mail_provider": await mailer.active_provider(), "last_run": last}

@@ -128,7 +128,7 @@ async def create_message(t: dict, p: dict, c: dict, status: str, by: str) -> dic
     subject, body = await tailor(t, p, c)
     now = _now()
     doc = {"id": await next_id("outreach"), "seq_id": await next_id("outreach_seq"), "channel": "email", "step": 1,
-           "kind": "template", "template_id": t["id"], "template_name": t["name"], "prospect_id": p["id"],
+           "kind": "template", "template_id": t["id"], "template_name": t["name"], "tpl_version": t.get("updated_at"), "prospect_id": p["id"],
            "lead_id": p.get("lead_id"), "brand": p["brand_name"], "category": p.get("category"),
            "fit_score": p.get("fit_score"), "contact_name": c.get("name"), "contact_role": c.get("role"),
            "to": c.get("email"), "email_status": c.get("email_status"), "linkedin": c.get("linkedin"),
@@ -149,7 +149,7 @@ async def run_auto(limit: int) -> int:
     for t in tpls:
         if made >= limit:
             break
-        cands = await db.prospects.find({"tpl_sent": {"$ne": t["id"]},
+        cands = await db.prospects.find({"tpl_sent": {"$ne": t["id"]}, "replied": {"$ne": True},
                                          "contacts": {"$elemMatch": {"email": {"$nin": [None, ""]}}}}, {"_id": 0}
                                         ).sort("fit_score", -1).limit(limit - made).to_list(limit)
         for p in cands:

@@ -84,11 +84,12 @@ async def find_contacts(p: dict) -> dict:
         return {"ok": False}
     mx = await _mx_ok(dom)
     contacts = []
-    for c in (d.get("contacts") or [])[:4]:
+    bounced = {e.lower() for e in p.get("bounced_emails") or []}
+    for c in (d.get("contacts") or [])[:6]:
         if not isinstance(c, dict) or not (c.get("name") or "").strip():
             continue
         email = (c.get("email") or "").strip().lower()
-        if not re.fullmatch(r"[a-z0-9._%+'-]+@[a-z0-9.-]+\.[a-z]{2,}", email):
+        if not re.fullmatch(r"[a-z0-9._%+'-]+@[a-z0-9.-]+\.[a-z]{2,}", email) or email in bounced:
             email = None
         status = c.get("email_status") if c.get("email_status") in ("published", "pattern") else ("pattern" if email else None)
         li = c.get("linkedin") if isinstance(c.get("linkedin"), str) and "linkedin.com/" in c.get("linkedin") else None

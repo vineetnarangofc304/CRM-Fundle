@@ -56,7 +56,11 @@ function Editor({ t, onDone }) {
     catch (e) { toast.error(apiErr(e)); } finally { setAi(false); }
   };
   const save = async () => {
-    try { if (t.id) await API.put(`/outreach/templates/${t.id}`, f); else await API.post("/outreach/templates", f); toast.success("Template saved"); onDone(); }
+    try {
+      if (t.id) { const { data } = await API.put(`/outreach/templates/${t.id}`, f); toast.success(data.queued_updated ? `Template saved — ${data.queued_updated} queued emails will use the new text` : "Template saved"); }
+      else { await API.post("/outreach/templates", f); toast.success("Template saved"); }
+      onDone();
+    }
     catch (e) { toast.error(apiErr(e)); }
   };
   return (
@@ -91,6 +95,41 @@ function Editor({ t, onDone }) {
   );
 }
 
+function SignatureCard() {
+  const [s, setS] = useState(null);
+  const [sig, setSig] = useState("");
+  useEffect(() => { API.get("/outreach/settings").then(({ data }) => { setS(data); setSig(data.signature || ""); }).catch(() => {}); }, []);
+  if (!s) return null;
+  const save = async () => {
+    const { mail_connected, mail_provider, last_run, ...rest } = s;
+    try { await API.put("/outreach/settings", { ...rest, signature: sig }); toast.success("Signature saved — every email now uses it"); }
+    catch (e) { toast.error(apiErr(e)); }
+  };
+  return (
+    <div className="crm-card space-y-2 p-4" data-testid="tpl-signature-card">
+      <div className="text-sm font-extrabold text-slate-800">Email signature <span className="text-xs font-normal text-slate-400">— added to the end of every email (leave empty for none)</span></div>
+      <textarea data-testid="tpl-signature" rows={4} className="crm-input w-full text-sm" placeholder={"Abhinav Khanna\nPartnerships, Fundle.ai\n+91 …"} value={sig} onChange={(e) => setSig(e.target.value)} />
+      <button data-testid="tpl-signature-save" onClick={save} className="crm-btn-primary !py-1.5 text-xs"><FloppyDisk size={14} /> Save signature</button>
+    </div>
+  );
+}
+
+function AutoEmailerBar({ items, onEdit }) {
+  const autos = items.filter((t) => t.mode === "auto" && t.active);
+  return (
+    <div className="crm-card border-l-4 border-emerald-500 p-4" data-testid="tpl-auto-bar">
+      <div className="mb-2 text-sm font-extrabold text-slate-800">Auto emailer <span className="text-xs font-normal text-slate-500">— goes out on its own to every brand with an email</span></div>
+      {autos.length === 0 && <div className="text-xs text-slate-500">No template is set to Auto. Edit any template and set Sending to “Auto”.</div>}
+      {autos.map((t) => (
+        <div key={t.id} className="flex flex-wrap items-center gap-3 rounded-lg bg-emerald-50/60 p-2">
+          <div className="min-w-0 flex-1"><div className="font-bold text-slate-800">{t.name}</div><div className="truncate text-xs text-slate-600">{t.subject}</div></div>
+          <button data-testid={`tpl-auto-edit-${t.id}`} onClick={() => onEdit(t)} className="crm-btn-primary !py-1.5 text-xs">Edit auto emailer</button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export function EmailTemplates() {
   const [items, setItems] = useState([]);
   const [edit, setEdit] = useState(null);
@@ -100,6 +139,8 @@ export function EmailTemplates() {
   if (edit) return <Editor t={edit} onDone={() => { setEdit(null); load(); }} />;
   return (
     <div className="space-y-3" data-testid="tpl-list">
+      <AutoEmailerBar items={items} onEdit={setEdit} />
+      <SignatureCard />
       <div className="flex items-center justify-between">
         <p className="text-xs text-slate-500">Auto templates go to every brand with an email (within the daily limit). Manual ones appear next to each contact on the brand page.</p>
         <button data-testid="tpl-new" onClick={() => setEdit({})} className="crm-btn-primary !py-1.5 text-xs"><Plus size={14} /> New template</button>
