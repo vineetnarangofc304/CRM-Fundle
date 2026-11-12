@@ -288,5 +288,10 @@ async def _run_outreach(st, stats, trigger) -> dict:
             ok = await _send_one(m, st, pool)
             key = "stopped" if ok is None else "sent" if ok else "failed"
             stats[key] = stats.get(key, 0) + 1
+    from core import linkedin as li
+    try:
+        stats["linkedin"] = await li.build_queue(trigger)
+    except Exception as e:
+        logger.warning(f"linkedin queue failed: {e}")
     await db.settings.update_one({"key": "outreach_last"}, {"$set": {"at": now_utc_str(), "stats": stats, "trigger": trigger}}, upsert=True)
     return stats
