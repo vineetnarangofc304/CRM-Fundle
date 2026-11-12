@@ -1,0 +1,49 @@
+{
+  "summary": "Tested the iteration 17 bounce/lead features and the iteration_16 fixes. Backend: added tests/test_mark_bounced_iter17.py with 19 tests (API + unit tests on a throw-away DB), and 18 pass. Related suites (reply_bounce_warmup, email_templates, outreach, mailboxes, night_window, prospecting*): 224 passed, 28 skipped. The 1 failure is a real issue: mark-bounced uses prefix/website matching even when the exact brand is found, so unrelated brands get marked bounced. Frontend (Playwright, desktop): the bounce panel open/input/submit/result works, the Templates signature save PUTs /api/outreach/signature (200), and Admin → Email shows read-app-setup with the read-callback redirect URI and Mail.Read. FOUND AND FIXED A DATA-SAFETY BUG IN THE TESTS: the iter16 unit tests did not patch prospector.db. Because find_contacts/create_message now call pe.upsert_lead, running them wrote a fake lead id=1 'X' into the REAL leads collection and changed the REAL prospect id=1 (Raymond) lead_id from 704104 to 1. I restored Raymond.lead_id=704104, deleted the fake lead, and patched the tests.",
+  "backend_issues": {
+    "critical": [
+      {"endpoint": "POST /api/outreach/mark-bounced", "issue": "Matching is too loose. It always ORs exact brand_key, brand_key prefix and website-substring, with limit 5, even when an exact match exists. Read-only checks on preview data: 'Max' matches Maxima Watches, PowerMax Fitness, Omaxe Malls, Max Fashion and KazarMax. 'Lee' (3 chars) matches Sleepy Owl, Sleepwell, The Sleep Company, Sleepyhead and SleepyCat. 'Raymond' also matches Park Avenue, ColorPlus and Raymond Home. 'Nykaa' also matches Twenty Dresses. Each wrong match has its queued emails stopped, its contacts put on the bounced list, and tpl_sent wiped, so the auto emailer will send the same templates to them again. With a pasted list of 140 brands this will hit many unrelated brands.", "priority": "HIGH"}
+    ],
+    "minor": [
+      {"endpoint": "POST /api/outreach/mark-bounced", "issue": "Keys shorter than 3 characters are dropped silently. They appear in neither matched nor not_found, so the user never learns they were ignored. Return them in an 'ignored' list."},
+      {"endpoint": "POST /api/outreach/mark-bounced", "issue": "It clears lead.email_from but leaves email_lc stale. find_contacts sets both."},
+      {"endpoint": "core.contacts.next_contacts_job", "issue": "The priority sort only applies inside each status loop. A bounced brand with status 'discovered' waits behind every un-searched 'enriched' brand. A bounced brand with status 'failed' or 'enriching' is never searched again, even though contacts_priority=1."},
+      {"endpoint": "core.prospector.upsert_lead (now called on every enrich, contact search and create_message)", "issue": "When lead_id exists, it $sets company_name, contact_name, email_from (=prospect.contact_email), phone, city and designation on every AI activity. This overwrites edits the sales team made on the lead. In find_contacts it can also set email_from back to contact_email before the new-best-email check runs."},
+      {"endpoint": "PUT /api/admin/mailboxes/read-app", "issue": "It writes to the same settings.outlook doc as the Outlook send card, and a blank tenant_id becomes None. The two forms share tenant/client fields, so saving one with stale values overwrites the other."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Outreach → Mark brands as bounced", "issues": ["The result line doesn't mention ignored short names. Splitting on ',' also breaks brand names that contain commas."]}
+    ]
+  },
+  "test_report_links": ["/app/backend/tests/test_mark_bounced_iter17.py", "/app/test_reports/pytest/pytest_iter17.xml"],
+  "action_items": [
+    "HIGH: In mark_bounced, use exact brand_key first. Fall back to prefix or website only when there is no exact match, and match the website on the domain label (e.g. regex ^(https?://)?(www\\.)?key\\.), not a substring. Require at least 4-5 characters for fuzzy matching, or return ambiguous matches for the user to confirm instead of marking them. The test test_exact_match_also_marks_unrelated_prefix_brands should pass after this.",
+    "Return ignored (too-short) names from mark-bounced and show them in outreach-bounce-result.",
+    "Clear email_lc together with email_from in mark_bounced.",
+    "next_contacts_job: query contacts_priority=1 first, across any status (or reset the status), so bounced brands are searched right away.",
+    "Stop upsert_lead from overwriting existing lead fields on every AI activity. Only fill empty fields, or update only prospect_* fields.",
+    "Keep these test-safety rules: unit tests must patch prospector.db and log_message (fixed in test_reply_bounce_warmup.py and test_email_templates.py)."
+  ],
+  "critical_code_review_comments": [
+    "mark_bounced only reads 'sent' outreach (to_list(50)). Earlier 'bounced' messages' 'to' addresses are not added again, which is fine. 'failed' messages are not stopped.",
+    "upsert_lead raises KeyError if a prospect lacks category or country (p['category'], p['country']). Real data has both, but any caller passing a partial prospect returns 500.",
+    "routes/email_templates.py send_now: the 409 for a removed template only happens for created_by=='Auto-send'. For a manual template email whose template was deleted, the email still sends with the old text (by design, but worth confirming).",
+    "Legacy suites test_fundle_crm, test_saas_deals, test_bulk_import, test_won_date_deals and test_big_upload_50k used the old admin@fundle.ai login, which now returns 401. I updated them to vineetnarangofc@gmail.com."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_mark_bounced_iter17.py (new)",
+    "/app/backend/tests/test_reply_bounce_warmup.py (patch pe.db, ct/pe log_message; send_one returns None when stopped; add category/country to prospect fixtures)",
+    "/app/backend/tests/test_email_templates.py (patch prospector/utils db + next_id in TestCore; cleanup deletes TEST_ leads that create_message now creates; category/country in fixtures)",
+    "/app/backend/tests/test_fundle_crm.py, test_saas_deals.py, test_won_date_deals.py, test_bulk_import.py, test_big_upload_50k.py (admin email)"
+  ],
+  "success_rate": {"backend": "95% (18/19 new; 224/225 across the outreach/prospecting suites)", "frontend": "100% of the requested UI flows"},
+  "seed_data_creation": "None kept. Only TEST_ prospects, outreach, leads and messages (status 'testing', replied=True) were created and then deleted by id. Restored data the old tests had broken: prospect id=1 (Raymond) lead_id put back to 704104, and the fake lead id=1 'X' deleted. Deleted 7 TEST_ leads plus their 14 messages that my first regression run had created (TEST_TplBrand, TEST_Lead Acme, TEST_SaaS*, TEST_Webhook SaaS). Outreach signature (''), settings.outlook (absent) and prospecting enabled=false are unchanged.",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Run with REACT_APP_BACKEND_URL exported. Do NOT run test_big_upload_50k.py (it imports 50k real leads with no cleanup) or test_bulk_import.py / test_won_date_deals.py (they rely on mongosh cleanup scripts) unless asked. test_fundle_crm::test_catalogs_seed, TestKpiFlow::test_kpi_counts and the test_saas_deals starter-tag/KPI tests fail because of leftover TEST_ milestone/catalog data and changed seeded stages. They are unrelated to outreach. Any unit test that calls enrich, find_contacts, create_message or upsert_lead must monkeypatch prospector.db (and utils.db / log_message), otherwise it writes to the real DB. test_exact_match_also_marks_unrelated_prefix_brands is expected to fail until the matching fix.",
+  "rca of the issue": "Test-side data corruption: the iteration 17 code makes find_contacts and create_message call prospector.upsert_lead. The iter16 tdb fixture patched db in oc/mb/cu/et/ib/ct/ol but not pe. So upsert_lead inserted into the real leads collection with id=1 (next_id came from the patched cu.db counter) and $set lead_id=1 on the real prospect id=1. Fixed by patching pe.db and log_message, and the data was restored. Product issue: mark_bounced ORs exact, prefix and website-substring regexes with no precedence. Repro: insert prospects 'TEST_FpX' and 'TEST_FpX Watches Pvt', then POST mark-bounced ['TEST_FpX']: both are matched."
+}

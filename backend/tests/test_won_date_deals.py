@@ -15,7 +15,7 @@ from dotenv import load_dotenv
 
 load_dotenv("/app/backend/.env")
 BASE_URL = os.environ.get("REACT_APP_BACKEND_URL").rstrip("/")
-ADMIN = {"email": "admin@fundle.ai", "password": "Fundle@cf928c"}
+ADMIN = {"email": "vineetnarangofc@gmail.com", "password": "Fundle@cf928c"}
 DB = MongoClient(os.environ["MONGO_URL"])[os.environ["DB_NAME"]]
 IST = timezone(timedelta(hours=5, minutes=30))
 NOW = datetime.now(IST)

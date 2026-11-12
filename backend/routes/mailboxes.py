@@ -104,7 +104,9 @@ async def save_read_app(body: ReadApp, user: dict = Depends(ADMIN)):
     """Microsoft app (Mail.Read) used to read replies; doesn't change how the main inbox sends."""
     if not body.client_id.strip():
         raise HTTPException(status_code=400, detail="Application (client) ID is required")
-    upd = {"tenant_id": body.tenant_id.strip() or None, "client_id": body.client_id.strip()}
+    upd = {"client_id": body.client_id.strip()}
+    if body.tenant_id.strip():
+        upd["tenant_id"] = body.tenant_id.strip()
     if (body.client_secret or "").strip():
         upd["client_secret_enc"] = ol.enc(body.client_secret.strip())
     await db.settings.update_one({"key": "outlook"}, {"$set": upd}, upsert=True)

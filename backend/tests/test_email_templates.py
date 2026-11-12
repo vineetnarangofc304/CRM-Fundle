@@ -67,6 +67,12 @@ def created():
     if c["file"]:
         run(d.outreach_files.update_many({"id": {"$in": c["file"]}}, {"$set": {"is_deleted": True}}))
     if c["prospect"]:
+        # create_message now creates the lead for the prospect: delete that TEST_ lead + its log by id too
+        lids = [p["lead_id"] for p in run(d.prospects.find({"id": {"$in": c["prospect"]}, "lead_id": {"$exists": True}},
+                                                             {"lead_id": 1}).to_list(50))]
+        if lids:
+            run(d.leads.delete_many({"id": {"$in": lids}, "name": {"$regex": "^TEST_"}}))
+            run(d.messages.delete_many({"lead_id": {"$in": lids}}))
         run(d.prospects.delete_many({"id": {"$in": c["prospect"]}}))
 
 
@@ -249,6 +255,10 @@ class TestCore:
             ctr["n"] += 1
             return ctr["n"]
         monkeypatch.setattr(et, "next_id", nid)
+        from core import prospector as _pe, utils as _cu
+        monkeypatch.setattr(_pe, "db", d)  # create_message -> upsert_lead must never touch the real DB
+        monkeypatch.setattr(_cu, "db", d)
+        monkeypatch.setattr(_pe, "next_id", nid)
 
         async def no_ai(*a, **k):
             raise RuntimeError("Budget exceeded")
@@ -312,11 +322,11 @@ class TestCore:
         assert len(tpls) == 5 and [t["name"] for t in tpls if t["mode"] == "auto"] == ["Intro email"]
         intro = next(t for t in tpls if t["mode"] == "auto")
         run(self.db.prospects.insert_many([
-            {"id": 1, "brand_name": "TEST_A", "fit_score": 90, "contacts": [{"name": "Ann Lee", "email": "ann@a.com"}]},
+            {"id": 1, "brand_name": "TEST_A", "category": "c", "country": "IN", "fit_score": 90, "contacts": [{"name": "Ann Lee", "email": "ann@a.com"}]},
             {"id": 2, "brand_name": "TEST_B", "fit_score": 50, "contacts": [{"name": "Bo", "email": None}]},
             {"id": 3, "brand_name": "TEST_C", "fit_score": 70, "contacts": [{"name": "Cy", "email": "c@c.com"}],
              "tpl_sent": [intro["id"]]},
-            {"id": 4, "brand_name": "TEST_D", "fit_score": 10, "contacts": [{"name": "N", "email": ""}, {"name": "Di", "email": "d@d.com"}]}]))
+            {"id": 4, "brand_name": "TEST_D", "category": "c", "country": "IN", "fit_score": 10, "contacts": [{"name": "N", "email": ""}, {"name": "Di", "email": "d@d.com"}]}]))
         assert run(et.run_auto(10)) == 2
         msgs = run(self.db.outreach.find({}, {"_id": 0}).to_list(10))
         assert sorted(m["prospect_id"] for m in msgs) == [1, 4]
@@ -328,7 +338,7 @@ class TestCore:
 
     def test_run_auto_limit_and_inactive(self):
         run(et.seed_starters())
-        run(self.db.prospects.insert_many([{"id": i, "brand_name": f"TEST_{i}", "fit_score": i,
+        run(self.db.prospects.insert_many([{"id": i, "brand_name": f"TEST_{i}", "category": "c", "country": "IN", "fit_score": i,
                                             "contacts": [{"name": "X", "email": f"x{i}@e.com"}]} for i in range(1, 6)]))
         assert run(et.run_auto(2)) == 2
         assert run(et.run_auto(0)) == 0

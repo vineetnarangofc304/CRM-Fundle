@@ -9,7 +9,7 @@ import requests
 from openpyxl import Workbook, load_workbook
 
 BASE_URL = os.environ.get("REACT_APP_BACKEND_URL").rstrip("/")
-ADMIN = {"email": "admin@fundle.ai", "password": "Fundle@cf928c"}
+ADMIN = {"email": "vineetnarangofc@gmail.com", "password": "Fundle@cf928c"}
 STATE = {}
 
 

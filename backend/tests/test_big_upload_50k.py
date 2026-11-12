@@ -19,7 +19,7 @@ N, DUPS = 50000, 999  # i%50==0 rows (except i=0) reuse previous phone
 @pytest.fixture(scope="module")
 def admin():
     s = requests.Session()
-    r = s.post(f"{BASE_URL}/api/auth/login", json={"email": "admin@fundle.ai", "password": "Fundle@cf928c"})
+    r = s.post(f"{BASE_URL}/api/auth/login", json={"email": "vineetnarangofc@gmail.com", "password": "Fundle@cf928c"})
     s.headers.update({"Authorization": f"Bearer {r.json()['access_token']}"})
     return s
 

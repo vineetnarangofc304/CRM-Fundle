@@ -204,14 +204,20 @@ async def mark_bounced(body: BounceList, user: dict = Depends(STAFF)):
     """Brands whose emails bounced: mark their current emails invalid, find new contacts first, auto-resend."""
     from core import prospector as pe
     from core.utils import log_message
-    now, matched, missing = oc._now(), [], []
+    now, matched, missing, ignored, ambiguous = oc._now(), [], [], [], []
     for raw in {b.strip() for b in body.brands if b.strip()}:
         key = pe.brand_key(raw)
         if len(key) < 3:
+            ignored.append(raw)
             continue
-        ps = await db.prospects.find({"$or": [{"brand_key": key}, {"brand_key": {"$regex": f"^{re.escape(key)}"}},
-                                              {"website": {"$regex": re.escape(key), "$options": "i"}}]},
-                                     {"_id": 0}).limit(5).to_list(5)
+        ps = await db.prospects.find({"brand_key": key}, {"_id": 0}).limit(3).to_list(3)
+        if not ps and len(key) >= 5:
+            ps = await db.prospects.find({"$or": [{"brand_key": {"$regex": f"^{re.escape(key)}"}},
+                                                  {"website": {"$regex": rf"(//|\.|^)(www\.)?{re.escape(key)}\.", "$options": "i"}}]},
+                                         {"_id": 0}).limit(3).to_list(3)
+            if len(ps) > 1:
+                ambiguous.append(f"{raw} ({', '.join(p['brand_name'] for p in ps)})")
+                continue
         if not ps:
             missing.append(raw)
             continue
@@ -225,12 +231,12 @@ async def mark_bounced(body: BounceList, user: dict = Depends(STAFF)):
                 "$addToSet": {"bounced_emails": {"$each": sorted(emails)}}, "$set": {"tpl_sent": [], "contacts_priority": 1},
                 "$unset": {"contacts_status": 1, "contacts_retry_rounds": 1}})
             lid = p.get("lead_id") or await pe.upsert_lead(p)
-            await db.leads.update_one({"id": lid, "email_from": {"$in": list(emails)}}, {"$set": {"email_from": None}})
+            await db.leads.update_one({"id": lid, "email_from": {"$in": list(emails)}}, {"$set": {"email_from": None, "email_lc": None}})
             await log_message(lid, f"⚠️ Emails bounced ({', '.join(sorted(emails)) or 'no email on file'}) — marked invalid by "
                                    f"{user['name']}. AI is finding a new contact; the auto emailer will resend.",
                               author={"id": 0, "name": "Outreach Agent"})
             matched.append(p["brand_name"])
-    return {"matched": matched, "not_found": missing}
+    return {"matched": matched, "not_found": missing, "ignored": ignored, "ambiguous": ambiguous}
 
 
 class FinalizeIds(BaseModel):

@@ -39,13 +39,13 @@ def tdb(monkeypatch):
     cli = run(mk())
     name = f"{os.environ['DB_NAME']}_t1_{uuid.uuid4().hex[:8]}"
     d = cli[name]
-    for mod in (oc, mb, cu, et, ib, ct, ol):
+    for mod in (oc, mb, cu, et, ib, ct, ol, pe):  # pe too: upsert_lead must never touch the real DB
         monkeypatch.setattr(mod, "db", d)
     logs = []
 
     async def log(lead_id, body, author=None, **k):
         logs.append((lead_id, body))
-    for mod in (oc, ib):
+    for mod in (oc, ib, ct, pe):
         monkeypatch.setattr(mod, "log_message", log)
     d.logs = logs
     yield d
@@ -182,7 +182,7 @@ class TestRefresh:
             return {"ok": True}
         monkeypatch.setattr(mb, "send", fake_send)
         pool = [{"id": 0, "email": "main@x.com", "remaining": 5, "cfg": None}]
-        assert run(oc._send_one(m, oc.DEFAULTS, pool)) is False
+        assert run(oc._send_one(m, oc.DEFAULTS, pool)) is None  # None = stopped (template removed)
         db_m = run(tdb.outreach.find_one({"id": 1}))
         assert db_m["status"] == "stopped" and db_m["stop_reason"] and not sent
 
@@ -348,8 +348,8 @@ class TestContactsAuto:
         async def go():
             await tdb.email_templates.insert_one(_tpl())
             await tdb.prospects.insert_many([
-                {"id": 1, "brand_name": "R", "replied": True, "fit_score": 90, "contacts": [{"name": "A", "email": "a@r.com"}]},
-                {"id": 2, "brand_name": "N", "fit_score": 10, "contacts": [{"name": "B", "email": "b@n.com"}]}])
+                {"id": 1, "brand_name": "R", "category": "c", "country": "IN", "replied": True, "fit_score": 90, "contacts": [{"name": "A", "email": "a@r.com"}]},
+                {"id": 2, "brand_name": "N", "category": "c", "country": "IN", "fit_score": 10, "contacts": [{"name": "B", "email": "b@n.com"}]}])
             n = await et.run_auto(10)
             return n, await tdb.outreach.distinct("prospect_id")
         n, pids = run(go())

@@ -202,6 +202,8 @@ async def upsert_lead(p: dict, user=None):
     if fields.get("phone"):
         fields["phone_digits"] = re.sub(r"\D", "", fields["phone"])[-10:]
     if p.get("lead_id"):
+        lead = await db.leads.find_one({"id": p["lead_id"]}, {"_id": 0}) or {}
+        fields = {k: v for k, v in fields.items() if v and not lead.get(k)}  # fill blanks only; never overwrite team edits
         await db.leads.update_one({"id": p["lead_id"]}, {"$set": {**fields, "write_date": now_utc_str(),
                                                                   **{k: v for k, v in search_norm(fields).items() if v}}})
         return p["lead_id"]

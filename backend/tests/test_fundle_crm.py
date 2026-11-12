@@ -5,7 +5,7 @@ import pytest
 import requests
 
 BASE_URL = os.environ.get("REACT_APP_BACKEND_URL").rstrip("/")
-ADMIN = {"email": "admin@fundle.ai", "password": "Fundle@cf928c"}
+ADMIN = {"email": "vineetnarangofc@gmail.com", "password": "Fundle@cf928c"}
 FORBIDDEN = ["tiftech", "homeivf", "fertility", "ivf", "opd", "patient", "spouse", "doctor", "treatment", "clinic"]
 
 

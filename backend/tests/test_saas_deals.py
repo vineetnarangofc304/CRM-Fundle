@@ -12,7 +12,7 @@ CREATED = []
 @pytest.fixture(scope="module")
 def client():
     s = requests.Session()
-    r = s.post(f"{BASE_URL}/api/auth/login", json={"email": "admin@fundle.ai", "password": "Fundle@cf928c"})
+    r = s.post(f"{BASE_URL}/api/auth/login", json={"email": "vineetnarangofc@gmail.com", "password": "Fundle@cf928c"})
     if r.status_code != 200:
         pytest.skip("login failed")
     s.headers.update({"Authorization": f"Bearer {r.json()['access_token']}"})

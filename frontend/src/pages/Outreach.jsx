@@ -42,7 +42,7 @@ function BouncePanel({ reload }) {
   const [txt, setTxt] = useState("");
   const [res, setRes] = useState(null);
   const go = async () => {
-    try { const { data } = await API.post("/outreach/mark-bounced", { brands: txt.split(/\n|,/) }); setRes(data); toast.success(`${data.matched.length} brands marked — AI is finding new contacts`); reload(); }
+    try { const { data } = await API.post("/outreach/mark-bounced", { brands: txt.split("\n") }); setRes(data); toast.success(`${data.matched.length} brands marked — AI is finding new contacts`); reload(); }
     catch (e) { toast.error(apiErr(e)); }
   };
   if (!open) return <button data-testid="outreach-bounce-open" onClick={() => setOpen(true)} className="crm-btn-secondary !py-1.5 text-xs">Mark brands as bounced</button>;
@@ -54,7 +54,10 @@ function BouncePanel({ reload }) {
         <button data-testid="outreach-bounce-submit" onClick={go} className="crm-btn-primary !py-1.5 text-xs">Mark invalid & find new emails</button>
         <button onClick={() => { setOpen(false); setRes(null); }} className="crm-btn-secondary !py-1.5 text-xs">Close</button>
       </div>
-      {res && <div className="text-xs text-slate-600" data-testid="outreach-bounce-result"><b>{res.matched.length}</b> matched{res.not_found.length > 0 && <> · not found: {res.not_found.join(", ")}</>}</div>}
+      {res && <div className="space-y-0.5 text-xs text-slate-600" data-testid="outreach-bounce-result"><div><b>{res.matched.length}</b> marked</div>
+        {res.not_found.length > 0 && <div>Not found: {res.not_found.join(" · ")}</div>}
+        {res.ambiguous?.length > 0 && <div className="text-amber-600">Several matches, type the exact name: {res.ambiguous.join(" · ")}</div>}
+        {res.ignored?.length > 0 && <div className="text-slate-400">Too short, ignored: {res.ignored.join(" · ")}</div>}</div>}
     </div>
   );
 }
