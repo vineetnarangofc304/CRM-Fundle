@@ -184,7 +184,7 @@ async def send_now(mid: int, user: dict = Depends(STAFF)):
         {"$set": {"status": "sending", "approved_by": user["name"], "approved_at": oc._now()}}, projection={"_id": 0})
     if not m:
         raise HTTPException(status_code=409, detail="Message already sent, sending or stopped")
-    ok = await oc._send_one(m, await oc.get_settings())
+    ok = await oc._send_one(m, await oc.get_settings(), force=True)
     if not ok:
         err = (await db.outreach.find_one({"id": mid}, {"error": 1}) or {}).get("error")
         raise HTTPException(status_code=502, detail=f"Send failed: {err or 'unknown error'}")

@@ -137,15 +137,28 @@ async def _smtp_send(cfg, to, subject, body, html, cc=None, attachments=None):
 async def send_email(to: str, subject: str, body: str, html: bool = False, cc: str | None = None,
                      attachments: list | None = None) -> dict:
     cfg = await get_config()
+    if cfg.get("method") != "smtp":
+        try:
+            return await _graph_send(cfg, to, subject, body, html, cc, attachments)
+        except Exception as e:
+            return {"ok": False, "error": _friendly(e)}
+    return await send_with_config(cfg, to, subject, body, html, cc, attachments)
+
+
+async def send_with_config(cfg: dict, to: str, subject: str, body: str, html: bool = False, cc: str | None = None,
+                           attachments: list | None = None) -> dict:
+    """SMTP send with an explicit mailbox config (used for extra outreach inboxes)."""
     try:
-        if cfg.get("method") == "smtp":
-            return await _smtp_send(cfg, to, subject, body, html, cc, attachments)
-        return await _graph_send(cfg, to, subject, body, html, cc, attachments)
+        return await _smtp_send(cfg, to, subject, body, html, cc, attachments)
     except Exception as e:
-        msg = str(e)
-        if "SmtpClientAuthentication is disabled" in msg:
-            msg = ("Microsoft 365 has SMTP sending turned off for your organisation. Use 'Sign in with Microsoft' "
-                   "instead, or ask your M365 admin to enable Authenticated SMTP for this mailbox.")
-        elif "535" in msg:
-            msg = "Microsoft rejected the mailbox/password. Check them (use an app password if MFA is on)."
-        return {"ok": False, "error": msg[:300]}
+        return {"ok": False, "error": _friendly(e)}
+
+
+def _friendly(e) -> str:
+    msg = str(e)
+    if "SmtpClientAuthentication is disabled" in msg:
+        msg = ("Microsoft 365 has SMTP sending turned off for your organisation. Use 'Sign in with Microsoft' "
+               "instead, or ask your M365 admin to enable Authenticated SMTP for this mailbox.")
+    elif "535" in msg:
+        msg = "Microsoft rejected the mailbox/password. Check them (use an app password if MFA is on)."
+    return msg[:300]

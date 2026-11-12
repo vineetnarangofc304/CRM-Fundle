@@ -16,7 +16,7 @@ DEFAULT_PITCH = ("Fundle.ai builds an AI-powered customer loyalty platform for r
                  "omnichannel points & rewards across stores and online, WhatsApp-first member engagement, "
                  "AI-driven personalised offers, and analytics that lift repeat purchase and customer lifetime value. "
                  "Quick to launch across all stores, integrates with POS and e-commerce.")
-DEFAULTS = {"enabled": True, "min_score": 0, "daily_cap": 100, "drafts_per_run": 30, "gaps": [3, 7],
+DEFAULTS = {"enabled": True, "min_score": 0, "daily_cap": 200, "drafts_per_run": 30, "gaps": [3, 7],
             "auto_send": True, "cc": "", "ai_sequence": False,
             "pitch": DEFAULT_PITCH, "signature": "Team Fundle.ai\nhttps://fundle.ai", "sender_name": "Fundle.ai"}
 DRAFT_SYS = ("You write short, specific, human B2B outreach for an Indian/GCC/UK audience. No hype, no emojis, "
@@ -92,16 +92,22 @@ def _with_signature(body: str, st: dict) -> str:
     return f"{body}<p style='color:#475569'>{sig}</p>"
 
 
-async def _send_one(m: dict, st: dict) -> bool:
-    from core import mailer
+async def _send_one(m: dict, st: dict, pool: list | None = None, force: bool = False) -> bool:
+    from core import mailboxes as mb
     from core import email_templates as et
+    if pool is None:
+        pool = await mb.senders(st, _now()[:10])
+    sender = await mb.pick(m.get("prospect_id"), pool, force)
+    if not sender:
+        await db.outreach.update_one({"id": m["id"]}, {"$set": {"status": "approved"}})
+        return False
     try:
         files = await et.load_attachments(m.get("attachments"))
     except Exception as e:
         files, res = None, {"ok": False, "error": f"Attachment unavailable: {str(e)[:150]}"}
     if files is not None:
         body = _with_signature(m["body"] + et.video_block(m.get("video_links")), st)
-        res = await mailer.send_email(m["to"], m["subject"], body, html=True, cc=st.get("cc") or None, attachments=files)
+        res = await mb.send(sender, m["to"], m["subject"], body, cc=st.get("cc") or None, attachments=files)
     if not res.get("ok"):
         tries = m.get("send_attempts", 0) + 1
         retry = (datetime.now(timezone.utc) + timedelta(hours=1)).strftime("%Y-%m-%d %H:%M:%S")
@@ -114,7 +120,9 @@ async def _send_one(m: dict, st: dict) -> bool:
                                           {"$set": {"status": "stopped", "stop_reason": f"Email {m['step']} failed to send"}})
         return False
     now = _now()
-    await db.outreach.update_one({"id": m["id"]}, {"$set": {"status": "sent", "sent_at": now}, "$unset": {"error": 1}})
+    sender["remaining"] -= 1
+    await db.outreach.update_one({"id": m["id"]}, {"$set": {"status": "sent", "sent_at": now, "sent_via": sender["id"],
+                                                            "sent_from": sender["email"]}, "$unset": {"error": 1}})
     gaps = st["gaps"]
     if m["step"] < 3:
         await db.outreach.update_one({"seq_id": m["seq_id"], "channel": "email", "step": m["step"] + 1}, {"$set": {
@@ -122,7 +130,7 @@ async def _send_one(m: dict, st: dict) -> bool:
     if m.get("lead_id"):
         what = f"“{m['template_name']}” email" if m.get("template_name") else f"Outreach email {m['step']}/3"
         extra = "".join(f" · 📎 {a['filename']}" for a in m.get("attachments") or []) + (" · 🎬 video link" if m.get("video_links") else "")
-        await log_message(m["lead_id"], f"📧 {what} sent to {m['contact_name']} &lt;{m['to']}&gt;: <b>{m['subject']}</b>{extra}",
+        await log_message(m["lead_id"], f"📧 {what} sent to {m['contact_name']} &lt;{m['to']}&gt; from {sender['email']}: <b>{m['subject']}</b>{extra}",
                           author={"id": 0, "name": m.get("approved_by") or "Outreach Agent"})
     return True
 
@@ -173,9 +181,17 @@ async def _migrate_v3():
     await db.settings.insert_one({"key": "outreach_v3", "done": True})
 
 
+async def _migrate_v4():
+    if await db.settings.find_one({"key": "outreach_v4"}):
+        return
+    await db.settings.update_one({"key": "outreach"}, {"$set": {"daily_cap": 200}}, upsert=True)
+    await db.settings.insert_one({"key": "outreach_v4", "done": True})
+
+
 async def run_outreach(trigger="cron") -> dict:
     await _migrate_v2()
     await _migrate_v3()
+    await _migrate_v4()
     st = await get_settings()
     stats = {"drafted": 0, "sent": 0, "failed": 0}
     if not st["enabled"]:
@@ -216,15 +232,15 @@ async def _run_outreach(st, stats, trigger) -> dict:
     if st["auto_send"]:
         stats["auto_approved"] = await auto_approve()
     if await mailer.is_connected():
+        from core import mailboxes as mb
         stats["auto_template"] = await et.run_auto(st["drafts_per_run"])
-        day = _now()[:10]
-        sent_today = await db.outreach.count_documents({"status": "sent", "channel": "email", "sent_at": {"$gte": day}})
-        for _ in range(max(0, st["daily_cap"] - sent_today)):
+        pool = await mb.senders(st, _now()[:10])
+        while any(s["remaining"] > 0 for s in pool):
             m = await db.outreach.find_one_and_update(
                 {"status": "approved", "channel": "email", "scheduled_at": {"$ne": None, "$lte": _now()}},
                 {"$set": {"status": "sending"}}, sort=[("scheduled_at", 1)], projection={"_id": 0})
             if not m:
                 break
-            stats["sent" if await _send_one(m, st) else "failed"] += 1
+            stats["sent" if await _send_one(m, st, pool) else "failed"] += 1
     await db.settings.update_one({"key": "outreach_last"}, {"$set": {"at": now_utc_str(), "stats": stats, "trigger": trigger}}, upsert=True)
     return stats

@@ -7,6 +7,7 @@ import { useAuth, useCatalogs, useCatalogMaps } from "../context/AuthContext";
 import { Spinner, TagChip } from "../components/Bits";
 import { MetaCapiTab } from "../components/MetaCapiTab";
 import { EmailProviderPicker, OutlookCard } from "../components/OutlookEmail";
+import { OutreachInboxes } from "../components/OutreachInboxes";
 
 const TABS = ["Users", "Tags", "Dropdowns", "KPI Settings", "Custom Fields", "Webhooks", "Automations", "Assignment", "Attendance", "Telephony", "Facebook", "Meta CAPI", "WhatsApp", "Email", "Duplicates", "System Health"];
 
@@ -1773,6 +1774,7 @@ function EmailTab({ isAdmin }) {
     <div className="space-y-4" data-testid="email-tab">
       <EmailProviderPicker isAdmin={isAdmin} refreshKey={k} />
       <OutlookCard isAdmin={isAdmin} onChanged={() => setK((x) => x + 1)} />
+      <OutreachInboxes key={k} isAdmin={isAdmin} />
       <GmailCard isAdmin={isAdmin} />
     </div>
   );
