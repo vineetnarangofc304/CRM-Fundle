@@ -113,6 +113,16 @@ async def chat(sid: int, b: Say, user: dict = Depends(brain_user)):
     return StreamingResponse(gen(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
+@router.get("/exports/{eid}")
+async def export_file(eid: int, user: dict = Depends(brain_user)):
+    from fastapi.responses import Response
+    e = await db.brain_exports.find_one({"id": eid}, {"_id": 0})
+    if not e or (e["user_id"] != user["id"] and user.get("role") != "admin"):
+        raise HTTPException(status_code=404, detail="Export not found")
+    return Response("\ufeff" + e["csv"], media_type="text/csv",
+                    headers={"Content-Disposition": f'attachment; filename="{e["filename"]}"'})
+
+
 @router.post("/sessions/{sid}/upload")
 async def upload(sid: int, file: UploadFile = File(...), user: dict = Depends(brain_user)):
     await _session(sid, user)

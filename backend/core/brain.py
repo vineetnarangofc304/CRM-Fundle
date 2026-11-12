@@ -107,6 +107,56 @@ async def t_aggregate(ctx, a):
     return {"rows": _scrub(rows)}
 
 
+def _cell(row: dict, col: str):
+    v = row
+    for k in col.split("."):
+        v = v.get(k) if isinstance(v, dict) else None
+    if isinstance(v, list):
+        return "; ".join(" ".join(str(x.get(f)) for f in ("name", "role", "email") if x.get(f)) if isinstance(x, dict) else str(x) for x in v)
+    return "" if v is None else str(v)
+
+
+async def t_export(ctx, a):
+    import csv
+    import io
+    col = a["collection"]
+    if col not in READ_COLS:
+        raise ValueError(f"Unknown collection {col}")
+    f = a.get("filter") or {}
+    _check(f)
+    cols = [c for c in (a.get("columns") or []) if not any(_secret(x) for x in c.split("."))]
+    if not cols:
+        cols = ["brand_name", "category", "segment", "country", "city", "store_count", "website", "fit_score", "contacts"] \
+            if col == "prospects" else None
+    per_contact = bool(a.get("one_row_per_contact")) and col == "prospects"
+    cur = db[col].find(f, {"_id": 0})
+    if a.get("sort"):
+        cur = cur.sort(list(a["sort"].items()))
+    rows = await cur.limit(50000).to_list(50000)
+    if cols is None:
+        cols = sorted({k for r in rows[:200] for k in r if not _secret(k)})
+    if per_contact:
+        base = [c for c in cols if c != "contacts"]
+        cols = base + ["contact_name", "contact_role", "contact_email", "email_status", "contact_linkedin"]
+        flat = []
+        for r in rows:
+            for c in r.get("contacts") or [{}]:
+                flat.append({**{k: _cell(r, k) for k in base}, "contact_name": c.get("name"), "contact_role": c.get("role"),
+                             "contact_email": c.get("email"), "email_status": c.get("email_status"), "contact_linkedin": c.get("linkedin")})
+        rows = flat
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(cols)
+    for r in rows:
+        w.writerow([_cell(r, c) for c in cols])
+    name = re.sub(r"[^\w\-]+", "_", re.sub(r"\.csv$", "", a.get("file_name") or f"{col}_export", flags=re.I)).strip("_")[:60] + ".csv"
+    eid = await next_id("brain_export")
+    await db.brain_exports.insert_one({"id": eid, "session_id": ctx["session_id"], "user_id": ctx["user"]["id"], "filename": name,
+                                       "rows": len(rows), "csv": buf.getvalue(), "at": now_utc_str()})
+    return {"export_id": eid, "filename": name, "rows": len(rows), "columns": cols,
+            "note": "A Download CSV button is shown to the user under your reply."}
+
+
 async def t_update(ctx, a):
     col = a["collection"]
     if col not in WRITE_COLS:
@@ -391,6 +441,9 @@ TOOLS = {
                                  {"collection": STR, "filter": OBJ, "projection": OBJ, "sort": {"type": "object", "description": "e.g. {\"fit_score\": -1}"}, "limit": INT}, ["collection"], False)),
     "aggregate_records": (t_aggregate, _fn("aggregate_records", "Run a read-only MongoDB aggregation pipeline (for counts/breakdowns/analytics).",
                                            {"collection": STR, "pipeline": {"type": "array", "items": OBJ}}, ["collection", "pipeline"], False)),
+    "export_csv": (t_export, _fn("export_csv", "Create a downloadable CSV file (up to 50,000 rows) of records matching a MongoDB filter — use whenever the user asks for a CSV/Excel/export/list download. A Download button appears in the chat. columns = field names (dotted ok; 'contacts' becomes name role email list). one_row_per_contact for contact lists.",
+                                 {"collection": STR, "filter": OBJ, "columns": {"type": "array", "items": STR}, "sort": OBJ,
+                                  "one_row_per_contact": BOOL, "file_name": STR}, ["collection"], False)),
     "update_records": (t_update, _fn("update_records", f"Change fields on records matching a filter (prospects, leads, outreach, email_templates, mailboxes, settings). $set / unset only, max {MAX_WRITE} records. Use for repairs, data fixes, inbox signature/sender_name/active, etc.",
                                      {"collection": STR, "filter": OBJ, "set": OBJ, "unset": {"type": "array", "items": STR}}, ["collection", "filter"])),
     "save_settings": (t_settings, _fn("save_settings", "Change engine settings. outreach: enabled, auto_send, hourly_cap, cc, drafts_per_run, signature (main inbox), sender_name, min_score, gaps, ai_sequence, daily_cap, pitch. prospecting: enabled, countries, phase (auto|discovery|enrichment|contacts), concurrency, create_leads, daily_cap (new brands/day, 0=unlimited). linkedin: enabled, daily_connects, daily_messages.",
@@ -426,7 +479,7 @@ TOOLS.update({
     "manage_contact_sources": (bd.t_sources, _fn("manage_contact_sources", "List, add or remove websites/LinkedIn pages the AI contact search must use when looking for decision makers (trade media, directories, association member lists...).",
                                                  {"action": {"type": "string", "enum": ["list", "add", "remove"]}, "name": STR, "url": STR, "notes": STR}, ["action"])),
 })
-READ_ONLY = {"get_system_overview", "find_records", "aggregate_records", "read_uploaded_file", "inbox_activity"}
+READ_ONLY = {"get_system_overview", "find_records", "export_csv", "aggregate_records", "read_uploaded_file", "inbox_activity"}
 ACTION_TOOLS = {"send_single_email", "send_email_campaign", "send_queued_emails_now", "stop_emails", "run_job"}
 
 SYSTEM = """You are Fundle Brain, the operator of the Fundle.ai CRM (B2B sales CRM selling AI loyalty/retail software to brands in India/GCC/UK). You act on the live system through tools — you do not just advise.
@@ -437,6 +490,7 @@ SYSTEM MAP
 - outreach: each email. Fields: id, seq_id, kind (template|brain), template_id, template_name, step, prospect_id, lead_id, brand, to, subject, status (pending_approval|approved|sending|sent|failed|stopped|bounced), scheduled_at, sent_at, sent_via (inbox id), force_sender, replied_at.
 - email_templates: id, name, subject, body (HTML), mode (auto|manual), audience, step, wait_days, ai_tailor, active. Auto intros: one intro per brand chosen by audience (d2c segment; stores_100 = 100+; stores_11_99; stores_1_10 incl unknown). Follow-ups step 2/3 go wait_days after the intro to the same person if no reply.
 - To email a specific brand/contact now: find the contact, use the brand's matching intro template text (email_templates by audience, fill {{first_name}}/{{brand}}) unless the user gave text, and call send_single_email (or send_queued_emails_now if an intro is already queued for that brand). Report the real result (sent from which inbox, or the exact error).
+- CSV / Excel / export / "give me a list" requests: ALWAYS call export_csv (never say you can't make files). Then tell the user the row count and to tap Download CSV.
 - Mailbox questions (what was sent, replies, bounces, errors per inbox): use inbox_activity.
 - Inboxes: call get_system_overview first to see main_inbox and inboxes_extra; to send from the main inbox use from_inbox "main".
 - mailboxes: extra sending inboxes (id, smtp_user email, sender_name, signature, active, verified). Main inbox = id 0 (its signature = outreach setting `signature`). Each inbox sends max hourly_cap per hour (default 50), spread over runs every 15 min. Ask "from Hardik's email" -> find the mailbox whose smtp_user/sender_name matches.

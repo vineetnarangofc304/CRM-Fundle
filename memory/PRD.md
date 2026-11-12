@@ -139,3 +139,4 @@ Gmail OAuth (GOOGLE_CLIENT_ID/SECRET, GMAIL_REDIRECT_URI), Meta CAPI (dataset id
 - Migration outreach_v6: LinkedIn drafts (pending/approved/failed) -> stopped 'Switched to email outreach'; linkedin.enabled=False; outreach hourly_cap=50, auto_send on.
 - Default hourly cap per inbox now 50.
 - Pending: production SMTP timeout check (deployer debug requested).
+- Fundle Brain export_csv tool: any collection+filter -> CSV (<=50k rows) stored in brain_exports; GET /api/brain/exports/{id}; Download CSV button in chat.

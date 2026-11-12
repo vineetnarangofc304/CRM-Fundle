@@ -1,14 +1,30 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
-import { Brain, Plus, Trash, PaperPlaneRight, Paperclip, X, Wrench, CheckCircle, WarningCircle, ClockCounterClockwise, ChatsCircle } from "@phosphor-icons/react";
+import { Brain, Plus, Trash, PaperPlaneRight, Paperclip, X, Wrench, CheckCircle, WarningCircle, ClockCounterClockwise, ChatsCircle, DownloadSimple } from "@phosphor-icons/react";
 import { API, apiErr } from "../lib/api";
 
 const esc = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 const fmt = (s) => esc(s || "").replace(/\*\*(.+?)\*\*/g, "<b>$1</b>").replace(/`([^`]+)`/g, "<code class='rounded bg-slate-100 px-1'>$1</code>")
   .split("\n").filter((l) => !/^\s*\|?\s*:?-{3,}/.test(l)).map((l) => l.replace(/^#{1,6}\s*(.*)$/, "<b>$1</b>").replace(/^\s*\|(.*)\|\s*$/, (_, r) => r.split("|").map((c) => c.trim()).join(" · ")))
   .map((l) => (/^\s*[-•*] /.test(l) ? `<li class="ml-4 list-disc">${l.replace(/^\s*[-•*] /, "")}</li>` : l ? `<p>${l}</p>` : "")).join("");
-const TOOL_LABEL = { get_system_overview: "Checked system status", find_records: "Looked up records", aggregate_records: "Ran analysis", update_records: "Updated records", save_settings: "Changed settings", save_email_template: "Saved email template", send_email_campaign: "Queued emails", stop_emails: "Stopped emails", prioritize_contact_search: "Queued contact search", run_job: "Started a job", send_single_email: "Sent email", send_queued_emails_now: "Sent queued emails", inbox_activity: "Checked mailboxes", request_developer_change: "Emailed Vineet a change request", read_uploaded_file: "Read the file", import_brands_from_file: "Imported brands", import_contact_emails_from_file: "Imported verified emails", manage_contact_sources: "Updated contact sources" };
+const TOOL_LABEL = { get_system_overview: "Checked system status", find_records: "Looked up records", export_csv: "Created CSV file", aggregate_records: "Ran analysis", update_records: "Updated records", save_settings: "Changed settings", save_email_template: "Saved email template", send_email_campaign: "Queued emails", stop_emails: "Stopped emails", prioritize_contact_search: "Queued contact search", run_job: "Started a job", send_single_email: "Sent email", send_queued_emails_now: "Sent queued emails", inbox_activity: "Checked mailboxes", request_developer_change: "Emailed Vineet a change request", read_uploaded_file: "Read the file", import_brands_from_file: "Imported brands", import_contact_emails_from_file: "Imported verified emails", manage_contact_sources: "Updated contact sources" };
 const EXAMPLES = ["Attach an Excel of brands → 'Add these brands and start emailing them'", "Also use https://www.example.com/team pages to find contacts — reason: more decision makers", "Send this email to all women fashion brands from Abhinav's inbox: …", "Change the hourly limit from 25 to 60 — reason: inboxes are warmed up", "Stop adding brands and search contacts for grocery brands with up to 5 stores first", "How many intro emails went out today, and how many bounced?"];
+
+function ExportButton({ t }) {
+  const id = (t.summary || "").match(/"export_id": (\d+)/)?.[1];
+  const name = (t.summary || "").match(/"filename": "([^"]+)"/)?.[1] || "export.csv";
+  const rows = (t.summary || "").match(/"rows": (\d+)/)?.[1];
+  if (!t.ok || !id) return null;
+  const dl = async () => {
+    try {
+      const r = await API.get(`/brain/exports/${id}`, { responseType: "blob" });
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(r.data); a.download = name; a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+    } catch (e) { toast.error(apiErr(e)); }
+  };
+  return <button onClick={dl} data-testid={`brain-export-download-${id}`} className="crm-btn-primary !py-1.5 text-xs"><DownloadSimple size={14} /> Download CSV{rows ? ` (${rows} rows)` : ""}</button>;
+}
 
 function ToolChip({ t }) {
   const warn = t.ok && /"emailed": false/.test(t.summary || "");
@@ -26,6 +42,7 @@ function Bubble({ m }) {
       <div className={`max-w-[80%] rounded-2xl px-4 py-3 text-sm leading-relaxed ${me ? "bg-[#0B1F3A] text-white" : "border border-slate-100 bg-white text-slate-700 shadow-sm"}`}>
         {!!m.tools?.length && <div className="mb-2 flex flex-wrap gap-1">{m.tools.map((t, i) => <ToolChip key={i} t={t} />)}</div>}
         {me ? <div className="whitespace-pre-wrap">{m.content}</div> : <div className="space-y-1" dangerouslySetInnerHTML={{ __html: fmt(m.content) || "<p class='text-slate-400'>Thinking…</p>" }} />}
+        {m.tools?.some((t) => t.name === "export_csv") && <div className="mt-2 flex flex-wrap gap-2">{m.tools.filter((t) => t.name === "export_csv").map((t, i) => <ExportButton key={i} t={t} />)}</div>}
       </div>
     </div>
   );
