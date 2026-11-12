@@ -367,7 +367,9 @@ async def _lane(deadline, settings, stats):
             if not await _step(settings, stats):
                 return
         except AiCreditsOut:
-            return
+            if time.time() + 90 > deadline:
+                return
+            await asyncio.sleep(60)
         except Exception:
             logger.exception("prospecting lane step failed")
             await asyncio.sleep(5)

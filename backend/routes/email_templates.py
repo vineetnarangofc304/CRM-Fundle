@@ -31,6 +31,7 @@ class Tpl(BaseModel):
     subject: str
     body: str
     mode: str = "manual"
+    ai_tailor: bool = True
     active: bool = True
     attachments: List[Attachment] = []
     video_links: List[str] = []

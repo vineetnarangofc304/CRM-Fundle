@@ -3,7 +3,7 @@ import { toast } from "sonner";
 import { Sparkle, Paperclip, VideoCamera, Plus, Trash, FloppyDisk, X } from "@phosphor-icons/react";
 import { API, apiErr } from "../lib/api";
 
-const EMPTY = { name: "", subject: "", body: "<p>Hi {{first_name}},</p>\n<p></p>", mode: "manual", active: true, attachments: [], video_links: [] };
+const EMPTY = { name: "", subject: "", body: "<p>Hi {{first_name}},</p>\n<p></p>", mode: "manual", ai_tailor: true, active: true, attachments: [], video_links: [] };
 const kb = (n) => `${Math.max(1, Math.round((n || 0) / 1024))} KB`;
 
 function Attachments({ f, setF }) {
@@ -69,6 +69,9 @@ function Editor({ t, onDone }) {
           </select></label>
         <label className="flex items-end gap-2 pb-2 text-xs font-semibold text-slate-600"><input data-testid="tpl-active" type="checkbox" checked={f.active} onChange={(e) => setF({ ...f, active: e.target.checked })} /> Active</label>
       </div>
+      <label className="flex items-center gap-2 text-xs font-semibold text-slate-600"><input data-testid="tpl-ai-tailor" type="checkbox" checked={f.ai_tailor !== false} onChange={(e) => setF({ ...f, ai_tailor: e.target.checked })} />
+        AI personalises each email (adds one line about the brand). Untick to send exactly what you write here, with only {"{{first_name}}"} / {"{{brand}}"} filled in.</label>
+
       <div className="flex flex-wrap gap-2">
         <input data-testid="tpl-ai-brief" className="crm-input min-w-[240px] flex-1 text-xs" placeholder="Tell AI what this email should say (optional)" value={brief} onChange={(e) => setBrief(e.target.value)} />
         <button data-testid="tpl-ai-suggest" onClick={suggest} disabled={ai} className="crm-btn-secondary !py-1 text-xs"><Sparkle size={14} /> {ai ? "Writing…" : f.subject ? "AI improve" : "AI suggest draft"}</button>
@@ -106,7 +109,8 @@ export function EmailTemplates() {
           <div key={t.id} className="crm-card flex flex-col gap-2 p-4" data-testid={`tpl-card-${t.id}`}>
             <div className="flex items-center gap-2">
               <span className="font-bold text-slate-800">{t.name}</span>
-              <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${t.mode === "auto" ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-600"}`} data-testid={`tpl-mode-badge-${t.id}`}>{t.mode === "auto" ? "AUTO" : "MANUAL"}</span>
+              <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${t.mode === "auto" ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-600"}`} data-testid={`tpl-mode-badge-${t.id}`}>{t.mode === "auto" ? "AUTO EMAILER" : "MANUAL"}</span>
+              <span className="text-[10px] font-semibold text-slate-400">{t.ai_tailor === false ? "sent as written" : "AI-personalised"}</span>
               {!t.active && <span className="rounded-full bg-rose-50 px-2 py-0.5 text-[10px] font-bold text-rose-600">OFF</span>}
             </div>
             <div className="text-xs font-semibold text-slate-600">{t.subject}</div>

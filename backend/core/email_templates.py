@@ -75,6 +75,8 @@ async def tailor(t: dict, p: dict, c: dict) -> tuple[str, str]:
     """AI-personalised subject/body; falls back to plain placeholder merge if AI is unavailable."""
     from core.outreach import clean_html
     subj, body = merge(t["subject"], p, c), merge(t["body"], p, c)
+    if t.get("ai_tailor") is False:
+        return subj[:200], clean_html(body)[:6000]
     prompt = (f"Recipient: {c.get('name')} ({c.get('role') or 'leader'}) at {p.get('brand_name')} — {p.get('category')}, "
               f"{p.get('country')}. About the company: {(p.get('description') or '')[:600]}\n\n"
               f"Template subject: {subj}\nTemplate body (HTML):\n{body}\n\n"
