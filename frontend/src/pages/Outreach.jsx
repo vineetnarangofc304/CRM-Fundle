@@ -63,6 +63,21 @@ function BouncePanel({ reload }) {
   );
 }
 
+function FormatStatus() {
+  const [d, setD] = useState(null);
+  const load = () => API.get("/outreach/email-format").then(({ data }) => setD(data)).catch(() => {});
+  useEffect(() => { load(); }, []);
+  const run = async () => { try { await API.post("/outreach/email-format/run"); toast.success("Email format check started — 30 brands per run"); setTimeout(load, 60000); } catch (e) { toast.error(apiErr(e)); } };
+  if (!d) return null;
+  const e = d.emails || {};
+  return (
+    <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500" data-testid="email-format-status">
+      <span>Email format check: <b>{d.checked}</b> brands checked · <b className="text-sky-700">{d.confirmed}</b> formats confirmed · emails: {e.published || 0} published, {e.confirmed_format || 0} confirmed format, {e.pattern || 0} guessed</span>
+      <button data-testid="email-format-run" onClick={run} className="crm-btn-secondary !py-1 text-xs">Check formats now</button>
+    </div>
+  );
+}
+
 function MessageCard({ m, reload, selected, onSelect }) {
   const [edit, setEdit] = useState(false);
   const [d, setD] = useState({ subject: m.subject, body: m.body, to: m.to });
@@ -82,7 +97,7 @@ function MessageCard({ m, reload, selected, onSelect }) {
         <span className="text-slate-400">{m.category}</span>
         {m.fit_score != null && <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-700">Fit {m.fit_score}</span>}
         <span className="text-slate-500">→ {m.contact_name}{m.contact_role ? ` (${m.contact_role})` : ""}</span>
-        {!li && <span className="text-slate-500">{m.to}{m.email_status === "pattern" && <span className="ml-1 rounded bg-amber-50 px-1 text-[9px] font-bold text-amber-700">GUESSED EMAIL</span>}</span>}
+        {!li && <span className="text-slate-500">{m.to}{m.email_status === "pattern" && <span className="ml-1 rounded bg-amber-50 px-1 text-[9px] font-bold text-amber-700">GUESSED EMAIL</span>}{m.email_status === "confirmed_format" && <span className="ml-1 rounded bg-sky-50 px-1 text-[9px] font-bold text-sky-700">FORMAT CONFIRMED</span>}</span>}
         {m.scheduled_at && m.status === "approved" && <span className="text-slate-400">sends {m.scheduled_at} UTC</span>}
         {m.status === "approved" && !m.scheduled_at && m.channel === "email" && <span className="text-slate-400">sends after previous step</span>}
         {m.sent_at && <span className="text-emerald-600">sent {m.sent_at}{m.sent_from ? ` from ${m.sent_from}` : ""}</span>}
@@ -168,12 +183,12 @@ export default function Outreach() {
       {s.last_run?.at && <p className="text-[11px] text-slate-400">Last run {s.last_run.at} UTC · drafted {s.last_run.stats?.drafted ?? 0} · sent {s.last_run.stats?.sent ?? 0} · via {s.mail_provider}</p>}
       <SettingsPanel s={s} isAdmin={user.role === "admin"} reload={load} />
       <div className="flex gap-1 border-b border-slate-200" data-testid="outreach-view-tabs">
-        {[["messages", "Emails & review"], ["sent", "Sent emails"], ["templates", "Email templates & auto emailer"], ["linkedin", "LinkedIn"]].map(([k, l]) => (
+        {[["messages", "Emails & review"], ["sent", "Sent emails"], ["templates", "Email templates & auto emailer"]].map(([k, l]) => (
           <button key={k} data-testid={`outreach-view-${k}`} onClick={() => { if (k === "sent") { setTab("sent"); setView("messages"); } else { setView(k); if (k === "messages" && tab === "sent") setTab("pending_approval"); } }} className={`-mb-px border-b-2 px-4 py-2 text-sm font-bold transition-colors ${(k === "sent" ? view === "messages" && tab === "sent" : k === "messages" ? view === "messages" && tab !== "sent" : view === k) ? "border-[#1A73E8] text-[#1557B0]" : "border-transparent text-slate-500 hover:text-slate-700"}`}>{l}{k === "sent" && stats.email?.sent ? ` (${stats.email.sent})` : ""}</button>
         ))}
       </div>
       {view === "linkedin" ? <LinkedInQueue isAdmin={user.role === "admin"} /> : view === "templates" ? <EmailTemplates /> : <>
-      <div className="flex flex-wrap items-center gap-2"><BouncePanel reload={load} /></div>
+      <div className="flex flex-wrap items-center gap-2"><BouncePanel reload={load} /><FormatStatus /></div>
       <div className="flex flex-wrap items-center gap-2">
         {TABS.map(([k, l]) => (
           <button key={k} data-testid={`outreach-tab-${k}`} onClick={() => { setTab(k); setSel([]); }} className={`rounded-full px-3 py-1.5 text-xs font-bold transition-colors ${tab === k ? "bg-[#1A73E8] text-white" : "bg-white text-slate-600 hover:bg-slate-100"}`}>{l} · {count(k)}</button>

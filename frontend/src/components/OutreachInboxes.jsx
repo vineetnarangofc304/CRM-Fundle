@@ -3,7 +3,7 @@ import { toast } from "sonner";
 import { EnvelopeSimple, Plus, Trash, CheckCircle, WarningCircle } from "@phosphor-icons/react";
 import { API, apiErr } from "../lib/api";
 
-const BLANK = { smtp_user: "", smtp_password: "", sender_name: "Fundle.ai", smtp_host: "smtp.office365.com", smtp_port: 587, daily_cap: 200, active: true };
+const BLANK = { smtp_user: "", smtp_password: "", sender_name: "Fundle.ai", smtp_host: "smtp.office365.com", smtp_port: 587, daily_cap: 200, active: true, signature: "" };
 
 function BoxForm({ b, onDone }) {
   const [f, setF] = useState({ ...BLANK, ...b, smtp_password: "" });
@@ -23,6 +23,7 @@ function BoxForm({ b, onDone }) {
       <label className="font-semibold text-slate-500">SMTP server{inp("smtp_host")}</label>
       <label className="font-semibold text-slate-500">Port{inp("smtp_port", { type: "number" })}</label>
       <label className="font-semibold text-slate-500">Emails per day{inp("daily_cap", { type: "number", min: 1, max: 1000 })}</label>
+      <label className="font-semibold text-slate-500 sm:col-span-3">Signature for emails from this inbox<textarea data-testid="mailbox-signature" rows={5} className="crm-input mt-1 w-full" placeholder={"Regards,\nYour name\nTitle | Fundle.AI\nM: …"} value={f.signature || ""} onChange={(e) => setF({ ...f, signature: e.target.value })} /></label>
       <label className="flex items-center gap-2 font-semibold text-slate-600"><input data-testid="mailbox-active" type="checkbox" checked={f.active} onChange={(e) => setF({ ...f, active: e.target.checked })} /> Use for outreach</label>
       <div className="flex gap-2 sm:col-span-2 sm:justify-end">
         <button data-testid="mailbox-save" onClick={save} className="crm-btn-primary !py-1.5 text-xs">Save inbox</button>

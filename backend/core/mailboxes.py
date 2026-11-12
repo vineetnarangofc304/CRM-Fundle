@@ -33,9 +33,11 @@ async def senders(st: dict, day: str) -> list:
     if await mailer.is_connected():
         cfg = await ol.get_config()
         out.append({"id": PRIMARY, "email": cfg.get("email") or cfg.get("smtp_user") or "Primary inbox",
-                    "remaining": st["daily_cap"] - sent.get(PRIMARY, 0), "cfg": None})
+                    "remaining": st["daily_cap"] - sent.get(PRIMARY, 0), "cfg": None,
+                    "signature": st.get("signature") or ""})
     async for b in db.mailboxes.find({"active": True, "verified": True, "is_deleted": {"$ne": True}}, {"_id": 0}):
         out.append({"id": b["id"], "email": b["smtp_user"], "remaining": warm_cap(b, day) - sent.get(b["id"], 0),
+                    "signature": b.get("signature") or "",
                     "cfg": {**b, "method": "smtp", "from_email": b.get("from_email") or b["smtp_user"]}})
     return out
 

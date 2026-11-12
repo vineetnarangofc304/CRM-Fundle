@@ -32,6 +32,7 @@ class Tpl(BaseModel):
     body: str
     mode: str = "manual"
     ai_tailor: bool = True
+    audience: str = "all"
     active: bool = True
     attachments: List[Attachment] = []
     video_links: List[str] = []
@@ -40,6 +41,8 @@ class Tpl(BaseModel):
 async def _clean(body: Tpl) -> dict:
     if body.mode not in ("auto", "manual"):
         raise HTTPException(status_code=400, detail="Mode must be auto or manual")
+    if body.audience not in et.AUDIENCES:
+        raise HTTPException(status_code=400, detail="Unknown audience")
     if not body.name.strip() or not body.subject.strip() or not body.body.strip():
         raise HTTPException(status_code=400, detail="Name, subject and body are required")
     links = [v.strip() for v in body.video_links if v.strip()]
@@ -59,6 +62,7 @@ async def _clean(body: Tpl) -> dict:
 @router.get("/outreach/templates")
 async def list_templates(user: dict = Depends(STAFF)):
     await et.seed_starters()
+    await et.seed_intro_v2()
     return await db.email_templates.find({"is_deleted": {"$ne": True}}, {"_id": 0}).sort("id", 1).to_list(200)
 
 

@@ -13,6 +13,7 @@ import { useAuth, useCatalogMaps, useCatalogs } from "../context/AuthContext";
 import { useNavGuard } from "../context/NavGuardContext";
 import { TagChip, Spinner, EmptyState } from "../components/Bits";
 import { waMeta } from "../lib/waStatus";
+import { LeadContacts } from "../components/LeadContacts";
 
 export default function LeadDetail() {
   const { id } = useParams();
@@ -336,6 +337,7 @@ export default function LeadDetail() {
                 {lead.ceo_linkedin && <a href={lead.ceo_linkedin} target="_blank" rel="noreferrer" className="text-[#0A66C2]" data-testid="lead-ceo-linkedin">CEO LinkedIn</a>}
                 {lead.company_website && <a href={lead.company_website} target="_blank" rel="noreferrer" className="text-[#1557B0]">Website</a>}
               </div>
+              {["admin", "manager"].includes(user?.role) && <LeadContacts leadId={lead.id} />}
             </div>
           )}
 

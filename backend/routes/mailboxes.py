@@ -22,6 +22,7 @@ class Box(BaseModel):
     smtp_port: int = 587
     daily_cap: int = 200
     active: bool = True
+    signature: str = ""
 
 
 def _public(b: dict) -> dict:
@@ -171,6 +172,7 @@ async def add_box(body: Box, user: dict = Depends(ADMIN)):
     doc = {"id": await next_id("mailbox"), "smtp_user": email, "smtp_password_enc": ol.enc(body.smtp_password.strip()),
            "sender_name": body.sender_name.strip() or "Fundle.ai", "smtp_host": body.smtp_host.strip(),
            "smtp_port": body.smtp_port, "daily_cap": body.daily_cap, "active": body.active, "verified": False,
+           "signature": body.signature.strip()[:2000],
            "is_deleted": False, "created_at": now_utc_str(), "created_by": user["name"]}
     await db.mailboxes.insert_one(dict(doc))
     return _public(doc)
@@ -184,7 +186,7 @@ async def edit_box(bid: int, body: Box, user: dict = Depends(ADMIN)):
         raise HTTPException(status_code=404, detail="Inbox not found")
     upd = {"sender_name": body.sender_name.strip() or "Fundle.ai", "smtp_host": body.smtp_host.strip(),
            "smtp_port": body.smtp_port, "daily_cap": body.daily_cap, "active": body.active,
-           "smtp_user": body.smtp_user.strip().lower(), "updated_at": now_utc_str()}
+           "smtp_user": body.smtp_user.strip().lower(), "updated_at": now_utc_str(), "signature": body.signature.strip()[:2000]}
     if upd["smtp_user"] != cur["smtp_user"] and await db.mailboxes.find_one(
             {"smtp_user": upd["smtp_user"], "is_deleted": {"$ne": True}, "id": {"$ne": bid}}):
         raise HTTPException(status_code=409, detail="This inbox is already added")

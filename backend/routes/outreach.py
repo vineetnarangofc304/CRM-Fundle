@@ -9,7 +9,7 @@ from pydantic import BaseModel
 
 from core.db import db
 from core.security import require_roles
-from core import contacts as ct, outreach as oc
+from core import contacts as ct, outreach as oc, email_format as ef
 from routes.prospecting import _spawn
 
 router = APIRouter(tags=["outreach"])
@@ -24,6 +24,7 @@ async def cron_outreach(request: Request):
     if not secret or not auth.startswith("Bearer ") or not hmac.compare_digest(auth[7:], secret):
         raise HTTPException(status_code=401, detail="Unauthorized")
     _spawn(oc.run_outreach("cron"))
+    _spawn(ef.run("cron"))
     return {"ok": True, "queued": True}
 
 
@@ -182,6 +183,31 @@ async def mark_sent(mid: int, user: dict = Depends(STAFF)):
 @router.post("/outreach/run")
 async def run_now(user: dict = Depends(STAFF)):
     _spawn(oc.run_outreach(f"manual:{user['name']}"))
+    return {"ok": True}
+
+
+@router.post("/prospecting/prospects/{pid}/check-format")
+async def check_format_now(pid: int, user: dict = Depends(STAFF)):
+    p = await db.prospects.find_one_and_update({"id": pid, "fmt_running": {"$exists": False}},
+                                               {"$set": {"fmt_running": oc._now()}}, projection={"_id": 0})
+    if not p:
+        raise HTTPException(status_code=409, detail="Format check already running or prospect not found")
+    _spawn(ef.check_brand(p))
+    return {"ok": True}
+
+
+@router.get("/outreach/email-format")
+async def email_format_status(user: dict = Depends(STAFF)):
+    last = await db.settings.find_one({"key": "email_format_last"}, {"_id": 0, "key": 0}) or {}
+    rows = await db.prospects.aggregate([{"$unwind": "$contacts"}, {"$group": {"_id": "$contacts.email_status", "n": {"$sum": 1}}}]).to_list(10)
+    return {"last_run": last, "checked": await db.prospects.count_documents({"fmt_checked_at": {"$exists": True}}),
+            "confirmed": await db.prospects.count_documents({"email_format.confirmed": True}),
+            "emails": {str(r["_id"]): r["n"] for r in rows}}
+
+
+@router.post("/outreach/email-format/run")
+async def email_format_run(user: dict = Depends(STAFF)):
+    _spawn(ef.run(f"manual:{user['name']}"))
     return {"ok": True}
 
 

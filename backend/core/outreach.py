@@ -131,7 +131,7 @@ async def _send_one(m: dict, st: dict, pool: list | None = None, force: bool = F
     except Exception as e:
         files, res = None, {"ok": False, "error": f"Attachment unavailable: {str(e)[:150]}"}
     if files is not None:
-        body = _with_signature(m["body"] + et.video_block(m.get("video_links")), st)
+        body = _with_signature(m["body"] + et.video_block(m.get("video_links")), sender)
         res = await mb.send(sender, m["to"], m["subject"], body, cc=st.get("cc") or None, attachments=files)
     if not res.get("ok"):
         sender["remaining"] = 0

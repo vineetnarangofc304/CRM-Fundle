@@ -125,6 +125,13 @@ async def save_settings(b: Settings, user: dict = Depends(require_roles("admin")
     return await li.get_settings()
 
 
+@router.get("/lead/{lead_id}/contacts")
+async def lead_contacts(lead_id: int, user: dict = Depends(STAFF)):
+    p = await db.prospects.find_one({"lead_id": lead_id}, {"_id": 0, "contacts": 1, "li_lookup_at": 1})
+    cs = [{k: c.get(k) for k in ("name", "role", "linkedin", "email")} for c in (p or {}).get("contacts") or []]
+    return {"contacts": cs, "searched": bool((p or {}).get("li_lookup_at"))}
+
+
 @router.post("/run")
 async def run_now(user: dict = Depends(STAFF)):
     _spawn(li.build_queue(f"manual:{user['name']}"))

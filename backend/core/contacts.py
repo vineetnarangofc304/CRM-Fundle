@@ -99,7 +99,7 @@ async def find_contacts(p: dict) -> dict:
     upd = {"contacts": contacts, "email_pattern": d.get("email_pattern"), "contacts_status": "done", "contacts_priority": 0,
            "contacts_at": now_utc_str(), "mx_ok": mx}
     upd["fit_score"] = fit_score({**p, **upd})
-    await db.prospects.update_one({"id": p["id"]}, {"$set": upd, "$unset": {"contacts_error": 1}})
+    await db.prospects.update_one({"id": p["id"]}, {"$set": upd, "$unset": {"contacts_error": 1, "li_lookup_at": 1}})
     best = next((c for c in contacts if c.get("email") and c["email_status"] == "published"), None) or \
         next((c for c in contacts if c.get("email")), None)
     p = {**p, **upd}

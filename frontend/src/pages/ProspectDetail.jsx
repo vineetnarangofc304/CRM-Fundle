@@ -18,6 +18,7 @@ const ext = (url, label) => url ? <a href={url} target="_blank" rel="noreferrer"
 const EMAIL_BADGE = {
   published: ["FOUND PUBLISHED", "bg-emerald-50 text-emerald-700"],
   pattern: ["GUESSED FROM PATTERN", "bg-amber-50 text-amber-700"],
+  confirmed_format: ["FORMAT CONFIRMED", "bg-sky-50 text-sky-700"],
 };
 
 function ContactsCard({ p, reload }) {
@@ -27,6 +28,7 @@ function ContactsCard({ p, reload }) {
   const loadHist = useCallback(() => API.get(`/prospecting/prospects/${p.id}/emails`).then(({ data }) => setHist(data)).catch(() => {}), [p.id]);
   useEffect(() => { API.get("/outreach/templates").then(({ data }) => setTpls(data.filter((t) => t.active))).catch(() => {}); loadHist(); }, [loadHist]);
   const find = async () => { try { await API.post(`/prospecting/prospects/${p.id}/contacts`); toast.success("Email finder started — about a minute"); setTimeout(reload, 45000); } catch (e) { toast.error(apiErr(e)); } };
+  const checkFmt = async () => { try { await API.post(`/prospecting/prospects/${p.id}/check-format`); toast.success("Searching Google for real emails — about a minute"); setTimeout(reload, 60000); } catch (e) { toast.error(apiErr(e)); } };
   const applyTpl = async (i, t) => {
     setBusy(`${i}-${t.id}`);
     try { await API.post(`/prospecting/prospects/${p.id}/use-template`, { template_id: t.id, contact_index: i }); toast.success(`“${t.name}” tailored — review & send it in Outreach → Needs review`); loadHist(); }
@@ -41,8 +43,10 @@ function ContactsCard({ p, reload }) {
         {p.fit_score != null && <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-700" data-testid="prospect-fit-score">Loyalty fit {p.fit_score}/100</span>}
         {p.email_pattern && <span className="text-[11px] text-slate-500">Email format: <b>{p.email_pattern}</b></span>}
         {p.mx_ok === false && <span className="text-[11px] text-rose-600">Domain has no mail server</span>}
+        {p.email_format?.checked_at && <span className="text-[11px] text-slate-500" data-testid="prospect-format-status" title={(p.email_format.examples || []).map((x) => x.email).join(", ")}>{p.email_format.confirmed ? <>Format <b className="text-sky-700">confirmed</b> from {p.email_format.examples.length} published email(s)</> : "Format not confirmed (no published examples)"} · checked {p.email_format.checked_at}</span>}
         <div className="ml-auto flex gap-2">
           {p.outreach_seq && <Link to="/outreach" className="text-xs font-bold text-[#1557B0]" data-testid="prospect-outreach-link">Outreach: {p.outreach_status?.replace("_", " ")} →</Link>}
+          <button data-testid="prospect-check-format" onClick={checkFmt} disabled={!!p.fmt_running} className="crm-btn-secondary !py-1 text-xs">{p.fmt_running ? "Checking format…" : "Check email format"}</button>
           <button data-testid="prospect-find-emails" onClick={find} disabled={p.contacts_status === "running"} className="crm-btn-secondary !py-1 text-xs">{p.contacts_status === "running" ? "Searching…" : cs.length ? "Search again" : "Find emails"}</button>
         </div>
       </div>
@@ -56,7 +60,7 @@ function ContactsCard({ p, reload }) {
                     <div key={h.id} className="text-[10px] font-normal text-slate-500">{h.template_name || `Email ${h.step}/3`} · <b className={h.status === "sent" ? "text-emerald-600" : "text-amber-600"}>{h.status.replace("_", " ")}</b>{h.sent_at ? ` ${h.sent_at}` : ""}</div>))}</div>}
                 </td>
                 <td className="text-xs">{c.email ? <>{c.email} {EMAIL_BADGE[c.email_status] && <span className={`ml-1 rounded px-1 text-[9px] font-bold ${EMAIL_BADGE[c.email_status][1]}`}>{EMAIL_BADGE[c.email_status][0]}</span>}</> : <span className="text-slate-300">no email found</span>}</td>
-                <td>{c.linkedin && <a href={c.linkedin} target="_blank" rel="noreferrer" className="text-[#0A66C2]"><LinkedinLogo size={16} weight="fill" /></a>}</td>
+                <td>{c.linkedin && <a data-testid={`prospect-contact-linkedin-${i}`} href={c.linkedin} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 whitespace-nowrap rounded-full bg-[#0A66C2]/10 px-2 py-0.5 text-[11px] font-bold text-[#0A66C2] transition-colors hover:bg-[#0A66C2]/20"><LinkedinLogo size={14} weight="fill" /> Open LinkedIn</a>}</td>
                 <td className="text-right">{c.email && <div className="flex flex-wrap justify-end gap-1">{tpls.map((t) => (
                   <button key={t.id} data-testid={`prospect-tpl-${i}-${t.id}`} disabled={!!busy} onClick={() => applyTpl(i, t)} title={`AI tailors “${t.name}” for ${c.name}, then you review & send`} className="rounded-full border border-[#1A73E8]/30 px-2 py-0.5 text-[10px] font-bold text-[#1557B0] transition-colors hover:bg-[#1A73E8]/10 disabled:opacity-50">{busy === `${i}-${t.id}` ? "Tailoring…" : t.name}</button>))}</div>}</td>
               </tr>

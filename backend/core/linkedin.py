@@ -1,4 +1,5 @@
 """LinkedIn one-click queue: AI finds profiles + writes notes/messages; a person presses Send on LinkedIn."""
+import asyncio
 import logging
 import time
 from datetime import datetime, timedelta, timezone
@@ -7,11 +8,12 @@ from core.db import db
 from core.utils import log_message, next_id, now_utc_str
 
 logger = logging.getLogger(__name__)
-DEFAULTS = {"enabled": True, "daily_connects": 20, "daily_messages": 50, "drafts_per_run": 10, "lookups_per_run": 5}
+DEFAULTS = {"enabled": False, "daily_connects": 20, "daily_messages": 50, "drafts_per_run": 10, "lookups_per_run": 25}
 WRITE_SYS = ("You write short, warm, specific LinkedIn messages for B2B outreach to Indian/GCC/UK retail leaders. "
              "No hype, no emojis, no invented facts. Reply with plain text only — no quotes, no subject line.")
-LOOKUP_SYS = ("You find public LinkedIn profile URLs using Google Search (site:linkedin.com/in). Only return URLs you "
-              "actually found for that exact person at that company. Reply with JSON only.")
+LOOKUP_SYS = ("You find public LinkedIn profile URLs. For each person run a Google search like: \"<full name>\" \"<company>\" "
+              "linkedin, and read the linkedin.com/in/... URL from the results (the slug usually contains their name). "
+              "Only return a URL for that exact person at that company, else null. Reply with JSON only.")
 AI = {"id": 0, "name": "LinkedIn Agent"}
 
 
@@ -102,38 +104,54 @@ async def new_message(t: dict, body: str, **extra) -> dict:
 async def find_profiles(limit: int) -> int:
     """Fill in missing LinkedIn profile URLs for already-found decision makers."""
     from core import prospector as pe
+    retry = (datetime.now(timezone.utc) - timedelta(days=14)).strftime("%Y-%m-%d %H:%M:%S")
     ps = await db.prospects.find({"contacts.0": {"$exists": True}, "contacts.linkedin": {"$in": [None, ""]},
-                                  "li_lookup_at": {"$exists": False}}, {"_id": 0}
+                                  "$or": [{"li_lookup_at": {"$exists": False}}, {"li_lookup_at": {"$lt": retry}}]}, {"_id": 0}
                                  ).sort([("fit_score", -1)]).limit(limit).to_list(limit)
-    found = 0
-    for p in ps:
-        await db.prospects.update_one({"id": p["id"]}, {"$set": {"li_lookup_at": now_utc_str()}})
-        names = [c["name"] for c in p["contacts"] if not c.get("linkedin")]
-        prompt = (f"Company: \"{p['brand_name']}\" ({p.get('category')}, {p.get('country')}). People: {names}. "
-                  'Return JSON: {"profiles": [{"name": str, "linkedin": str|null}]}')
-        t = time.time()
-        try:
-            d = pe._json(await pe._ask(pe.FLASH, LOOKUP_SYS, prompt), "obj") or {}
-        except Exception as e:
-            await pe._log_run("linkedin", pe.FLASH, False, e, time.time() - t, brand=p["brand_name"])
-            if isinstance(e, pe.AiCreditsOut):
-                await db.prospects.update_one({"id": p["id"]}, {"$unset": {"li_lookup_at": 1}})
-                break
-            continue
-        urls = {str(x.get("name", "")).strip().lower(): x.get("linkedin") for x in d.get("profiles") or [] if isinstance(x, dict)}
-        cs, n = p["contacts"], 0
-        for c in cs:
-            u = urls.get(c["name"].lower())
-            if not c.get("linkedin") and isinstance(u, str) and "linkedin.com/in/" in u:
-                c["linkedin"], n = pe._url(u), n + 1
-        if n:
+    if not ps:
+        return 0
+    await db.prospects.update_many({"id": {"$in": [p["id"] for p in ps]}}, {"$set": {"li_lookup_at": now_utc_str()}})
+    sem, out = asyncio.Semaphore(5), {"n": 0, "stop": False}
+
+    async def one(p):
+        async with sem:
+            if out["stop"]:
+                return await db.prospects.update_one({"id": p["id"]}, {"$unset": {"li_lookup_at": 1}})
+            cs = p["contacts"]
+            for c in cs:
+                if not c.get("linkedin") and p.get("ceo_linkedin") and c["name"].lower() == (p.get("ceo_name") or "").lower():
+                    c["linkedin"] = p["ceo_linkedin"]
+            names = [c["name"] for c in cs if not c.get("linkedin")]
+            people = [f"{c['name']} — {c.get('role') or 'leader'}" for c in cs if not c.get("linkedin")]
+            urls, t = {}, time.time()
+            if names:
+                prompt = (f"Company: \"{p['brand_name']}\" ({p.get('category')}, {p.get('country')}). People (name — role): {people}. "
+                          'Return JSON with each name exactly as given (without the role): '
+                          '{"profiles": [{"name": str, "linkedin": str|null}]}')
+                try:
+                    d = pe._json(await pe._ask(pe.FLASH, LOOKUP_SYS, prompt), "obj") or {}
+                    urls = {str(x.get("name", "")).strip().lower(): x.get("linkedin") for x in d.get("profiles") or [] if isinstance(x, dict)}
+                except Exception as e:
+                    await pe._log_run("linkedin", pe.FLASH, False, e, time.time() - t, brand=p["brand_name"])
+                    if isinstance(e, pe.AiCreditsOut):
+                        out["stop"] = True
+                        await db.prospects.update_one({"id": p["id"]}, {"$unset": {"li_lookup_at": 1}})
+                        return
+            new = []
+            for c in cs:
+                u = urls.get(c["name"].lower())
+                if not c.get("linkedin") and isinstance(u, str) and "linkedin.com/in/" in u:
+                    c["linkedin"] = pe._url(u)
+                if c.get("linkedin") and c["name"] in names:
+                    new.append(c["name"])
             await db.prospects.update_one({"id": p["id"]}, {"$set": {"contacts": cs}})
-            found += n
-            if p.get("lead_id"):
-                await log_message(p["lead_id"], f"🔗 LinkedIn profiles found: " + ", ".join(
-                    f"{c['name']}" for c in cs if c.get("linkedin")), author=AI)
-        await pe._log_run("linkedin", pe.FLASH, True, f"{n} LinkedIn profiles", time.time() - t, brand=p["brand_name"])
-    return found
+            out["n"] += len(new)
+            if new and p.get("lead_id"):
+                await log_message(p["lead_id"], "🔗 LinkedIn profiles found: " + ", ".join(new), author=AI)
+            await pe._log_run("linkedin", pe.FLASH, True, f"{len(new)} LinkedIn profiles", time.time() - t, brand=p["brand_name"])
+
+    await asyncio.gather(*(one(p) for p in ps))
+    return out["n"]
 
 
 async def build_queue(trigger="cron") -> dict:

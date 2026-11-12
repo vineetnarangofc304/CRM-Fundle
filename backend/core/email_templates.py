@@ -49,6 +49,59 @@ STARTERS = [
              "reconciliation and AI insights on what's driving each location.</p>"
              "<p>Open to a quick 20-minute call to see it on your SIS data?</p>"},
 ]
+_H = "<p>Dear {{first_name}}:</p>"
+_ASK = "<p>Would you be open to a 25-minute live demo and discussion this week or early next week?</p>"
+ABHINAV_SIG = ("Regards,\nAbhinav Khanna\nCBO | Fundle.AI\nM: 9910530372\nhttps://fundle.ai\n"
+               "LinkedIn: https://www.linkedin.com/in/abhinav-khanna-54683959/")
+AUDIENCES = {
+    "all": {},
+    "d2c": {"segment": "D2C / E-commerce"},
+    "stores_100": {"segment": {"$ne": "D2C / E-commerce"}, "store_count": {"$gte": 100}},
+    "stores_11_99": {"segment": {"$ne": "D2C / E-commerce"}, "store_count": {"$gte": 11, "$lt": 100}},
+    "stores_1_10": {"segment": {"$ne": "D2C / E-commerce"}, "$or": [{"store_count": {"$lt": 11}}, {"store_count": None}]},
+}
+INTRO_V2 = [
+    {"kind": "intro_d2c", "audience": "d2c", "name": "Intro — D2C brands",
+     "subject": "{{brand}} x Fundle.AI | D2C AI Loyalty & Marketplace Reconciliation Demo",
+     "body": _H + "<p>I’m reaching out from Fundle.AI. We help D2C brands automate website-led loyalty, reward every shopper, "
+             "and drive repeat purchases through referrals, gift vouchers, lifecycle marketing, and omnichannel rewards.</p>"
+             "<p>Our Agentic AI capabilities also automate SEO, social media content creation, website customer support through "
+             "AI chatbots, and marketplace reconciliation—augmenting your existing business processes.</p>"
+             "<p>Would you be open to a 25-minute demo and discussion this week or early next?</p>"
+             "<p>I will wait to hear back from you to take this initiative forward.</p>"},
+    {"kind": "intro_100", "audience": "stores_100", "name": "Intro — 100+ stores",
+     "subject": "{{brand}} x Fundle.AI | Unified Enterprise AI, Loyalty & Retail OS Demo Meeting",
+     "body": _H + "<p>I’m reaching out from Fundle.AI. Our AI-powered Retail OS unifies CRM, loyalty, campaigns, customer service, "
+             "and online-offline touchpoints on one platform, eliminating data silos and enabling end-to-end automation.</p>"
+             "<p>Fundle Brain converts analytics into conversational intelligence, while our AI-powered CEO Cockpit identifies "
+             "business gaps and recommends actions to drive incremental growth.</p><p>Key capabilities include:</p><ul>"
+             "<li><b>Enterprise Loyalty &amp; CLM:</b> Omnichannel online-to-offline/offline-to-online earn-and-burn rewards, NPS and "
+             "feedback, Digital Invoice, Choose Your Reward, Referrals, Gift vouchers, lifecycle marketing. Employee Discount.</li>"
+             "<li><b>AI Calling &amp; Lead Management</b> and embedded DPDP Consent Management.</li>"
+             "<li><b>Agentic AI:</b> SEO, social media, and AgenticAI Website customer support.</li>"
+             "<li><b>Marketplace Reconciliation</b> for sales, settlements, inventory, and returns.</li>"
+             "<li><b>MBO/SIS Sales Automation</b> for secondary sales, store performance, replenishment, and discount compliance.</li>"
+             "</ul>" + _ASK},
+    {"kind": "intro_11_99", "audience": "stores_11_99", "name": "Intro — 11 to 99 stores",
+     "subject": "{{brand}} x Fundle.AI | AI-Powered Loyalty & Omnichannel Growth Demo Meeting",
+     "body": _H + "<p>I’m reaching out from Fundle.AI. We help retail brands automate loyalty by integrating with their POS and "
+             "online commerce platforms to enable seamless online-to-offline and offline-to-online (O2O) earn-and-burn rewards.</p>"
+             "<p>Our AI-powered platform enables you to:</p><ul>"
+             "<li><b>Automate Loyalty &amp; Rewards:</b> Points, referrals, gift vouchers, and personalised rewards.</li>"
+             "<li><b>Track Performance in Real Time:</b> Live analytics and reports to understand customer behaviour and business performance.</li>"
+             "<li><b>Automate Customer Engagement:</b> An in-built campaign manager for SMS, WhatsApp, and RCS campaigns.</li>"
+             "<li><b>Drive Repeat Purchases:</b> Deliver targeted campaigns and personalised offers to improve retention and customer lifetime value.</li>"
+             "</ul><p>Would you be open to a 25-minute live demo and discussion this week or early next?</p>"},
+    {"kind": "intro_1_10", "audience": "stores_1_10", "name": "Intro — 1 to 10 stores (and unknown)",
+     "subject": "{{brand}} x Fundle.AI | Automate Loyalty & Grow Repeat Sales",
+     "body": _H + "<p>I’m reaching out from Fundle.AI. We help emerging retail brands launch and automate their loyalty &amp; "
+             "customer engagement without the complexity of enterprise systems.</p>"
+             "<p>Our AI-powered loyalty platform integrates with your POS to help you:</p><ul>"
+             "<li><b>Reward Every Customer:</b> Launch points, referrals, gift vouchers, and personalised rewards.</li>"
+             "<li><b>Drive Repeat Sales:</b> Run targeted SMS, WhatsApp, and RCS campaigns through an in-built campaign manager.</li>"
+             "<li><b>Track Performance:</b> Access real-time reports and customer insights to understand what drives repeat purchases.</li>"
+             "</ul>" + _ASK + "<p>I will wait to hear back from you to take this initiative forward.</p>"},
+]
 TAILOR_SYS = ("You personalise B2B email templates. Keep the template's offer, structure, links and length; "
               "fill placeholders; add at most one specific, true line about the recipient's company. "
               "No hype, no emojis, no invented stats. Reply with JSON only.")
@@ -104,6 +157,21 @@ async def seed_starters(force: bool = False) -> int:
     return n
 
 
+async def seed_intro_v2():
+    """One-time: add the 4 store-count intro emails (auto, sent as written) and retire the old generic intro."""
+    if await db.settings.find_one({"key": "tpl_intro_v2"}):
+        return
+    await db.settings.insert_one({"key": "tpl_intro_v2", "at": now_utc_str()})
+    for s in INTRO_V2:
+        if not await db.email_templates.find_one({"kind": s["kind"], "is_deleted": {"$ne": True}}):
+            await db.email_templates.insert_one({**s, "id": await next_id("email_template"), "mode": "auto", "ai_tailor": False,
+                                                 "attachments": [], "video_links": [], "active": True, "is_deleted": False,
+                                                 "created_at": now_utc_str(), "updated_at": now_utc_str()})
+    await db.email_templates.update_many({"kind": "intro"}, {"$set": {"mode": "manual", "updated_at": now_utc_str()}})
+    await db.mailboxes.update_many({"smtp_user": {"$regex": "^abhinav"}, "signature": {"$in": [None, ""]}}, {"$set": {"signature": ABHINAV_SIG}})
+    await db.mailboxes.update_many({"smtp_user": {"$regex": "^abhinav"}, "signature": {"$exists": False}}, {"$set": {"signature": ABHINAV_SIG}})
+
+
 async def load_attachments(items: list) -> list:
     out = []
     for a in items or []:
@@ -147,13 +215,20 @@ async def create_message(t: dict, p: dict, c: dict, status: str, by: str) -> dic
 async def run_auto(limit: int) -> int:
     """Auto-mode templates: queue a tailored email for every brand with an email that hasn't had that template."""
     from core.outreach import pick_contact
+    await seed_intro_v2()
     made = 0
     tpls = await db.email_templates.find({"mode": "auto", "active": True, "is_deleted": {"$ne": True}}, {"_id": 0}).to_list(50)
+    # A brand gets only one intro: any audience-specific template (or the old generic intro) counts.
+    intro_ids = [t["id"] async for t in db.email_templates.find(
+        {"$or": [{"audience": {"$in": [k for k in AUDIENCES if k != "all"]}}, {"kind": "intro"}]}, {"id": 1})]
     for t in tpls:
         if made >= limit:
             break
-        cands = await db.prospects.find({"tpl_sent": {"$ne": t["id"]}, "replied": {"$ne": True},
-                                         "contacts": {"$elemMatch": {"email": {"$nin": [None, ""]}}}}, {"_id": 0}
+        aud = t.get("audience") or "all"
+        q = {"tpl_sent": {"$nin": intro_ids} if aud != "all" else {"$ne": t["id"]}, "replied": {"$ne": True},
+             "contacts": {"$elemMatch": {"email": {"$nin": [None, ""]}}}}
+        f = AUDIENCES.get(aud, {})
+        cands = await db.prospects.find({"$and": [q, f]} if f else q, {"_id": 0}
                                         ).sort("fit_score", -1).limit(limit - made).to_list(limit)
         for p in cands:
             c = pick_contact(p)
