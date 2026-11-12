@@ -1,7 +1,7 @@
 crons:
   - name: ai-prospecting
-    description: "Runs AI prospecting every 15 min, nightly 10 PM-9 AM IST (code enforces the exact window)"
-    cron: "*/15 16-23,0-3 * * *"
+    description: "AI prospecting every 15 min, 24h: night (10 PM-9 AM IST) discovers + researches; day only researches + finds contacts"
+    cron: "*/15 * * * *"
     # Cron endpoints must ack 2xx immediately; enqueue/background the actual work.
     endpoint: "{{BASE_URL}}/api/cron/prospecting"
     method: POST
@@ -14,8 +14,8 @@ crons:
     method: POST
     enabled: true
   - name: ai-prospecting-watchdog
-    description: "Hourly night check (10 PM-9 AM IST): frees a stuck prospecting batch and restarts it if idle"
-    cron: "7 16-23,0-3 * * *"
+    description: "Hourly check: frees a stuck prospecting batch and restarts it if idle"
+    cron: "7 * * * *"
     # Cron endpoints must ack 2xx immediately; enqueue/background the actual work.
     endpoint: "{{BASE_URL}}/api/cron/prospecting-watchdog"
     method: POST

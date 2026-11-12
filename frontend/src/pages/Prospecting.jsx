@@ -32,7 +32,7 @@ function EnginePanel({ ov, isAdmin, reload }) {
       <div className="flex flex-wrap items-center gap-3">
         <span className={`flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-bold ${ov.running ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-500"}`} data-testid="prospect-engine-status">
           <span className={`h-2 w-2 rounded-full ${ov.running ? "animate-pulse bg-emerald-500" : "bg-slate-400"}`} />
-          {ov.running ? `Researching… (started ${ov.lock.started} UTC)` : !s.enabled ? "Paused" : ov.lock.ai_blocked_at ? "Waiting — AI limit, retrying" : ov.night_window ? "Idle — next batch within 15 min" : "Sleeping — runs nightly 10 PM–9 AM IST"}
+          {ov.running ? `Researching… (started ${ov.lock.started} UTC)` : !s.enabled ? "Paused" : ov.lock.ai_blocked_at ? "Waiting — AI limit, retrying" : ov.night_window ? "Idle — next batch within 15 min" : "Daytime — finding contacts & researching (new brands 10 PM–9 AM IST)"}
         </span>
         {ov.lock.last_stats && <span className="text-xs text-slate-500">Last batch: +{ov.lock.last_stats.added} brands · {ov.lock.last_stats.enriched} researched</span>}
         <span className="text-xs text-slate-500">{ov.pending_enrich.toLocaleString("en-IN")} brands waiting for deep research</span>
@@ -51,7 +51,7 @@ function EnginePanel({ ov, isAdmin, reload }) {
           </select>
           <span className="ml-3 font-bold text-slate-500">Parallel</span>
           <select data-testid="prospect-concurrency" className="crm-select !w-16 !py-1 text-xs" value={s.concurrency} onChange={(e) => save({ concurrency: Number(e.target.value) })}>
-            {[1, 2, 3, 4, 5, 6].map((n) => <option key={n} value={n}>{n}</option>)}
+            {[1, 2, 3, 4, 5, 6, 8, 10].map((n) => <option key={n} value={n}>{n}</option>)}
           </select>
           <span className="ml-3 font-bold text-slate-500">Countries</span>
           {ov.all_countries.map((c) => (

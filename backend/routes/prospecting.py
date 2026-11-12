@@ -35,7 +35,7 @@ async def cron_watchdog(request: Request):
     _cron_auth(request)
     enabled = (await pe.get_settings())["enabled"]
     res = await pe.watchdog(enabled)
-    if res["restart"] and enabled and pe.night_seconds_left() >= 60:
+    if res["restart"] and enabled:
         _spawn(pe.run_worker(840, "watchdog"))
     return {"ok": True, **res}
 
@@ -97,7 +97,7 @@ async def save_settings(body: EngineSettings, user: dict = Depends(require_roles
     countries = [c for c in body.countries if c in pe.COUNTRIES] or ["India"]
     await db.settings.update_one({"key": "prospecting"}, {"$set": {
         "enabled": body.enabled, "countries": countries, "phase": body.phase,
-        "concurrency": max(1, min(body.concurrency, 6)), "create_leads": body.create_leads}}, upsert=True)
+        "concurrency": max(1, min(body.concurrency, 10)), "create_leads": body.create_leads}}, upsert=True)
     return await pe.get_settings()
 
 

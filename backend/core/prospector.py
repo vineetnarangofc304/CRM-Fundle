@@ -377,8 +377,9 @@ async def _step(settings, stats) -> bool:
     """One unit of work; returns False when the lane should stop."""
     if not (await get_settings())["enabled"]:
         return False
+    day = settings.get("day_mode")
     disc = None
-    if settings["phase"] in ("auto", "discovery") and (settings["phase"] == "discovery" or random.random() < 0.7):
+    if not day and settings["phase"] in ("auto", "discovery") and (settings["phase"] == "discovery" or random.random() < 0.7):
         if await under_cap(settings):
             disc = await _next_discovery(settings)
     if disc:
@@ -389,9 +390,9 @@ async def _step(settings, stats) -> bool:
         finally:
             _busy_cats.discard(disc)
         return True
-    if settings["phase"] == "discovery":
+    if settings["phase"] == "discovery" and not day:
         return False
-    if random.random() < 0.5:
+    if day or random.random() < 0.5:
         from core import contacts as ct
         cj = await ct.next_contacts_job()
         if cj:
@@ -399,7 +400,7 @@ async def _step(settings, stats) -> bool:
             return True
     p = await _next_enrich()
     if not p:
-        return (settings["phase"] == "auto" and await under_cap(settings)
+        return (not day and settings["phase"] == "auto" and await under_cap(settings)
                 and bool(await _next_discovery(settings)))
     stats["enriched"] += 1 if (await enrich(p))["ok"] else 0
     return True
@@ -437,11 +438,12 @@ async def watchdog(enabled: bool = True):
 
 
 async def run_worker(max_seconds: int = 840, trigger: str = "cron"):
+    day = False
     if trigger in ("cron", "watchdog"):
         left = night_seconds_left()
-        if left < 60:
-            return {"skipped": "daytime"}
-        max_seconds = min(max_seconds, left)
+        day = left < 60
+        if not day:
+            max_seconds = min(max_seconds, left)
     now = datetime.now(timezone.utc)
     my_until = (now + timedelta(seconds=max_seconds + 120)).isoformat()
     lock = await db.settings.find_one_and_update(
@@ -454,6 +456,7 @@ async def run_worker(max_seconds: int = 840, trigger: str = "cron"):
         await db.settings.insert_one({"key": "prospect_lock", "until": my_until,
                                       "started": now_utc_str(), "trigger": trigger})
     settings = await get_settings()
+    settings["day_mode"] = day
     stats = {"added": 0, "enriched": 0, "discover_runs": 0}
     try:
         if not settings["enabled"]:
@@ -470,7 +473,7 @@ async def run_worker(max_seconds: int = 840, trigger: str = "cron"):
             await db.settings.insert_one({"key": "prospect_angles_v2", "done": True})
         await ensure_catalog("source_lead", SOURCE)
         deadline = time.time() + max_seconds
-        await asyncio.gather(*[_lane(deadline, settings, stats) for _ in range(max(1, min(settings["concurrency"], 6)))],
+        await asyncio.gather(*[_lane(deadline, settings, stats) for _ in range(max(1, min(settings["concurrency"], 10)))],
                              return_exceptions=True)
     except Exception:
         logger.exception("prospecting worker failed")
