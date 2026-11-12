@@ -50,6 +50,15 @@ def seed():
     mdb.settings.update_one({"key": "prospecting"}, {"$set": {"enabled": False}}, upsert=True)
 
 
+@pytest.fixture(autouse=True)
+def clear_limits():
+    # iter28: _ask keeps per-model 30-min limits in process memory; reset between tests
+    pe._limited.clear()
+    pe._blocked["on"] = None
+    yield
+    pe._limited.clear()
+
+
 def run(coro_fn, monkeypatch):
     async def go():
         from motor.motor_asyncio import AsyncIOMotorClient
@@ -95,7 +104,7 @@ class TestAsk:
         mdb.settings.update_one({"key": "prospect_lock"}, {"$unset": {"ai_blocked_at": 1, "ai_blocked_reason": 1}})
         with pytest.raises(pe.AiCreditsOut):
             run(lambda: pe._ask(pe.PRO, "s", "p"), monkeypatch)
-        assert calls == [pe.PRO, pe.FLASH]
+        assert calls == [pe.PRO, pe.FLASH, *pe.FALLBACK_MODELS]  # iter28: full fallback chain incl. Claude
         lk = mdb.settings.find_one({"key": "prospect_lock"})
         assert lk.get("ai_blocked_at") and "429" in lk.get("ai_blocked_reason", "")
 
@@ -108,7 +117,7 @@ class TestAsk:
         monkeypatch.setattr(pe, "_call", fake)
         with pytest.raises(pe.AiCreditsOut):
             run(lambda: pe._ask(pe.FLASH, "s", "p"), monkeypatch)
-        assert calls == [pe.FLASH]
+        assert calls == [pe.FLASH, *pe.FALLBACK_MODELS]  # iter28: flash now falls back too
 
     def test_pro_nonquota_no_fallback(self, monkeypatch):
         calls = []

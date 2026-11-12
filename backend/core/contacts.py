@@ -73,21 +73,44 @@ async def find_contacts(p: dict) -> dict:
               "announcements to confirm names and current roles; put the best source URL in evidence_url.\n"
               + bd.sources_prompt(await bd.get_sources()) +
               "Also find the company's email address FORMAT (e.g. firstname.lastname@domain) if published anywhere.\n"
-              'Return JSON: {"email_pattern": str|null, "contacts": [{"name": str, "role": str, "linkedin": str|null, '
+              'Return JSON: {"email_pattern": "short format only, e.g. firstname.lastname@domain.com"|null, "contacts": [{"name": str, "role": str, "linkedin": str|null, '
               '"email": str|null, "email_status": "published"|"pattern"|null, "evidence_url": str|null}]}')
     t = time.time()
     try:
-        d, used = {}, []
-        # Try the best web researcher first; if it finds no emails, ask the next model and merge what each finds.
+        d, used, errs = {"contacts": []}, [], []
+        # Best web researcher first; if it finds no emails (or errors), ask the next model and merge what each finds.
         for mdl in CONTACT_CHAIN:
-            r = pe._json(await pe._ask(mdl, CONTACT_SYS, prompt), "obj") or {}
-            used.append(mdl)
-            seen = {(c.get("name") or "").strip().lower() for c in d.get("contacts") or [] if isinstance(c, dict)}
-            d["contacts"] = (d.get("contacts") or []) + [c for c in r.get("contacts") or []
-                                                         if isinstance(c, dict) and (c.get("name") or "").strip().lower() not in seen]
+            meta = {}
+            try:
+                r = pe._json(await pe._ask(mdl, CONTACT_SYS, prompt, meta), "obj") or {}
+            except pe.AiCreditsOut:
+                if d["contacts"]:
+                    break  # keep what earlier models found
+                raise
+            except Exception as e:
+                errs.append(f"{mdl}: {str(e)[:120]}")
+                continue
+            got = meta.get("model", mdl)
+            if got in used:
+                continue
+            used.append(got)
+            byname = {(c.get("name") or "").strip().lower(): c for c in d["contacts"]}
+            for c in r.get("contacts") or []:
+                if not isinstance(c, dict) or not (c.get("name") or "").strip():
+                    continue
+                old = byname.get(c["name"].strip().lower())
+                if old is None:
+                    d["contacts"].append(c)
+                    byname[c["name"].strip().lower()] = c
+                else:
+                    for k in ("email", "email_status", "linkedin", "evidence_url", "role"):
+                        if not old.get(k) and c.get(k):
+                            old[k] = c[k]
             d["email_pattern"] = d.get("email_pattern") or r.get("email_pattern")
-            if any(isinstance(c, dict) and c.get("email") for c in d["contacts"]) or len(used) >= 3:
+            if any(c.get("email") for c in d["contacts"]) or len(used) >= 3:
                 break
+        if not used:
+            raise RuntimeError("All models failed: " + " | ".join(errs)[:300])
     except pe.AiCreditsOut as e:
         await db.prospects.update_one({"id": p["id"]}, {"$unset": {"contacts_status": 1}})
         await pe._log_run("contacts", pe.PRO, False, e, time.time() - t, brand=p["brand_name"])

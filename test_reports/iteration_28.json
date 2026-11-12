@@ -1,0 +1,39 @@
+{
+  "summary": "Iter28 backend-only test of the multi-model contact search. The new test file tests/test_iter28_contact_chain.py has 9 passing tests and 1 strict xfail, which documents a real bug. Mocked coverage: (1) find_contacts stops after the first model that returns an email; (2) when no email is found it asks the next model, merges by name without duplicates (case and whitespace ignored) and stops after 3 models; contacts_models is saved; email_pattern is cut to 300 characters; (3) on AiCreditsOut, contacts_status is unset (re-queued) and the error is re-raised; (4) when the Gemini models raise RateLimitError, _ask falls through to anthropic:claude-sonnet-5-5 and the 3 Gemini models are recorded in _limited for about 30 min, so a later PRO call goes straight PRO -> CLAUDE; (5) _call builds Gemini with googleSearch and Anthropic with web_search_20250305 (max_uses 8), both through send_message_with_tools. One real find_contacts call was made on 'W for Woman' (id 27). It returned ok in 121s with 4 contacts and 1 email. contacts_models = [claude-sonnet-5-5, gemini-3.1-pro-preview, gemini-2.5-flash], fit_score is 93, the lead was upserted and the prospect_lock is clean. Regression: iter27 passes 10/10 after one fallback-chain expectation was updated. test_prospecting_quota_markers passes 17/17 after an update (stale chain expectations, and _limited state leaking between tests). test_prospecting.py and test_prospecting_24h_tailor.py each have 1 old failure unrelated to this change. Prospecting stays disabled.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "core/contacts.find_contacts merge", "issue": "BUG (xfail test_duplicate_name_email_merged): if a later model returns an already-seen person WITH an email, the whole contact is dropped as a duplicate. The email is lost and the loop keeps calling the next model, so credits are wasted. Fix: when the name is already seen, fill the missing email, email_status, linkedin and evidence_url into the existing contact instead of discarding the new one."},
+      {"endpoint": "core/contacts.find_contacts", "issue": "A non-quota error from the first model (timeout, bad response, provider 5xx not matched by _call's retry regex) marks the whole search as 'failed' without trying the other CONTACT_CHAIN models (verified: calls == [claude-sonnet-5-5] only). This goes against the 'never stops; if one model fails move to the next' requirement. Fix: catch non-AiCreditsOut exceptions per model inside the loop and continue; fail only if every model errors."},
+      {"endpoint": "core/contacts.find_contacts", "issue": "Contacts gathered by earlier models are thrown away when a later model raises AiCreditsOut. Consider saving the partial results."},
+      {"endpoint": "core/contacts contacts_models", "issue": "contacts_models and the _log_run model field record the REQUESTED spec, not the model that actually answered. If _ask fell back (for example gemini-3.1-pro limited -> FLASH -> ... -> claude), the stored list is misleading. The same model can also be asked twice: e.g. step 2 falls back to gemini-2.5-flash, then step 3 is gemini-2.5-flash. Have _ask return or record the model it used."},
+      {"endpoint": "core/contacts find_contacts (real output)", "issue": "The real run's email_pattern is a long prose paragraph ('Pattern guess only... ContactOut lists...') rather than a pattern like {first}.{last}@domain. Roles are cut at 80 characters mid-sentence ('...Aditya Birla Fashion '). Tighten the prompt so email_pattern holds only the pattern string and role is a short title."},
+      {"endpoint": "core/prospector._call", "issue": "The else branch (openai) still sets web_search_options, which the universal key rejects. Any 'openai:' spec would fail with a non-quota error. Remove the branch or guard against it."},
+      {"endpoint": "tests (stale, unrelated to this change)", "issue": "test_prospecting.py::test_settings_invalid_phase expects phase 'auto', but the live settings phase is 'contacts'. test_prospecting_24h_tailor.py::TestContactsQueue::test_order expects [4,2,1], but next_contacts_job now sorts store_count ascending, giving [2,4,1]. Update the tests to match the intended behaviour."}
+    ]
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": ["/app/backend/tests/test_iter28_contact_chain.py", "/app/backend/tests/test_iter27_ai_fallback_send_errors.py", "/app/backend/tests/test_prospecting_quota_markers.py", "/app/test_reports/pytest/iter28.xml"],
+  "action_items": [
+    "In find_contacts merge, when a later model returns a duplicate name, fill that person's missing email/linkedin/evidence instead of dropping it, so the search stops once an email is known (then the xfail test will pass, so remove the xfail marker)",
+    "In find_contacts, on a non-quota error from one model, continue to the next CONTACT_CHAIN model instead of marking the search failed",
+    "Record the model that actually answered (from _ask) in contacts_models and _log_run",
+    "Tighten the prompt and parsing so email_pattern is only a pattern string and role is a short title",
+    "Update the 2 stale tests in test_prospecting.py and test_prospecting_24h_tailor.py"
+  ],
+  "critical_code_review_comments": [
+    "_ask chain = [requested, FLASH, 3-flash-preview, 2.5-flash, CLAUDE], skipping models inside their 30-min limit; if every model is limited it retries the full list. This is correct, and Claude is never added to _limited when it is the last model.",
+    "CONTACT_CHAIN[3] (claude-opus-5-5) can never be reached, because the loop stops at len(used) >= 3. It is dead config unless the cap changes.",
+    "On failure, _log_run('contacts', pe.PRO, ...) logs PRO even though the chain starts with Claude."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter28_contact_chain.py (new)",
+    "/app/backend/tests/test_iter27_ai_fallback_send_errors.py (all-limited chain now includes CLAUDE)",
+    "/app/backend/tests/test_prospecting_quota_markers.py (autouse clear of pe._limited/_blocked; chain expectations now use FALLBACK_MODELS)"
+  ],
+  "success_rate": {"backend": "95% (36/38 across the iter28, iter27 and quota_markers files plus the real call; the 2 old failures in other files are unrelated; 1 xfail documents a bug)", "frontend": "not tested"},
+  "seed_data_creation": "A TEST_Brand28 prospect (id 99999928) was created and deleted for each test. One real find_contacts call updated prospect 'W for Woman' (id 27) with contacts and upserted lead 704130, as the request asked. prospect_lock has no ai_blocked fields and prospecting is still disabled.",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Run each test file in its own process: pytest <file> -p no:xdist -o addopts='' after exporting REACT_APP_BACKEND_URL. The real call in test_iter28_contact_chain.py runs only when RUN_REAL_LLM=1; it takes about 2 min and costs credits. In preview, real runs log LiteLLM errors (probable Gemini rate limits), but Claude and gemini-2.5-flash answer. Once the duplicate-merge fix lands, remove the strict xfail on test_duplicate_name_email_merged."
+}

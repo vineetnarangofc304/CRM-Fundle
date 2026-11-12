@@ -152,13 +152,15 @@ def _is_quota(e) -> bool:
     return bool(_QUOTA_RE.search(str(e)))
 
 
-async def _ask(model: str, system: str, prompt: str) -> str:
+async def _ask(model: str, system: str, prompt: str, meta: dict | None = None) -> str:
     try:
         full = [model] + [m for m in (FLASH, *FALLBACK_MODELS) if m != model]
         chain = [m for m in full if _limited.get(m, 0) < time.time()] or full
         for i, mdl in enumerate(chain):
             try:
                 r = await _call(mdl, system, prompt)
+                if meta is not None:
+                    meta["model"] = mdl
                 break
             except Exception as e:
                 # a limit on one Gemini model shouldn't stop the engine — skip it for 30 min, try the next model

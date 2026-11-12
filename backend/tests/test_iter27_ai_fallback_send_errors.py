@@ -83,7 +83,7 @@ def test_all_limited_then_success_clears(monkeypatch):
     calls = _mock(monkeypatch, lambda m: Exception(RL))
     with pytest.raises(pe.AiCreditsOut):
         run(pe._ask(pe.FLASH, "s", "p"))
-    assert calls == [pe.FLASH, "gemini-3-flash-preview", "gemini-2.5-flash"]
+    assert calls == [pe.FLASH, "gemini-3-flash-preview", "gemini-2.5-flash", pe.CLAUDE]  # iter28: Claude added
     lk = _lock()
     assert lk.get("ai_blocked_at") and "RateLimitError" in lk.get("ai_blocked_reason", "")
     assert len(lk["ai_blocked_reason"]) <= 200
