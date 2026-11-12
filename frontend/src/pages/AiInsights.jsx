@@ -116,7 +116,7 @@ export default function AiInsights() {
         <div className="crm-card overflow-hidden p-0" data-testid="ai-brain-panel">
           <div className="flex items-center gap-2 border-b border-slate-100 bg-gradient-to-r from-[#0B1F3A]/10 to-[#1A73E8]/10 px-4 py-3">
             <Sparkle size={16} weight="fill" className="text-[#0B1F3A]" />
-            <span className="font-display text-sm font-extrabold text-slate-800">AI Brain — ask about your data</span>
+            <span className="font-display text-sm font-extrabold text-slate-800">Quick data questions (for actions use Fundle Brain)</span>
           </div>
           <div ref={scroller} className="max-h-[360px] space-y-3 overflow-y-auto px-4 py-4" data-testid="ai-chat-log">
             {chat.length === 0 && (

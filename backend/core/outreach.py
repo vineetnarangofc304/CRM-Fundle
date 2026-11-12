@@ -123,7 +123,7 @@ async def _send_one(m: dict, st: dict, pool: list | None = None, force: bool = F
     m = await _refresh_from_template(m)
     if m is None:
         return None
-    sender = await mb.pick(m.get("prospect_id"), pool, force)
+    sender = await mb.pick(m.get("prospect_id"), pool, force, m.get("force_sender"))
     if not sender:
         await db.outreach.update_one({"id": m["id"]}, {"$set": {"status": "approved"}})
         return False

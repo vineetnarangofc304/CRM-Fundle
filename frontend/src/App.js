@@ -21,6 +21,7 @@ import ScreenPop from "./pages/ScreenPop";
 import CallCenter from "./pages/CallCenter";
 import Marketing from "./pages/Marketing";
 import AiInsights from "./pages/AiInsights";
+import FundleBrain from "./pages/FundleBrain";
 import KpiOverview from "./pages/KpiOverview";
 import Prospecting from "./pages/Prospecting";
 import ProspectDetail from "./pages/ProspectDetail";
@@ -124,6 +125,7 @@ function App() {
           <Route path="/reports" element={<Guard perm="reports"><Reports /></Guard>} />
           <Route path="/kpi" element={<Guard perm="reports"><KpiOverview /></Guard>} />
           <Route path="/ai-insights" element={<Guard perm="reports"><AiInsights /></Guard>} />
+          <Route path="/brain" element={<Guard perm="brain"><FundleBrain /></Guard>} />
           <Route path="/templates" element={<Guard perm="templates"><Templates /></Guard>} />
           <Route path="/templates/whatsapp/:id" element={<Guard perm="templates"><WaTemplateDetail /></Guard>} />
           <Route path="/templates/whatsapp/:id/messages" element={<Guard perm="templates"><WaMessageList /></Guard>} />

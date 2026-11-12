@@ -1,0 +1,149 @@
+import React, { useCallback, useEffect, useRef, useState } from "react";
+import { toast } from "sonner";
+import { Brain, Plus, Trash, PaperPlaneRight, Wrench, CheckCircle, WarningCircle, ClockCounterClockwise, ChatsCircle } from "@phosphor-icons/react";
+import { API, apiErr } from "../lib/api";
+
+const esc = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+const fmt = (s) => esc(s || "").replace(/\*\*(.+?)\*\*/g, "<b>$1</b>").replace(/`([^`]+)`/g, "<code class='rounded bg-slate-100 px-1'>$1</code>")
+  .split("\n").map((l) => (/^\s*[-•*] /.test(l) ? `<li class="ml-4 list-disc">${l.replace(/^\s*[-•*] /, "")}</li>` : l ? `<p>${l}</p>` : "")).join("");
+const TOOL_LABEL = { get_system_overview: "Checked system status", find_records: "Looked up records", aggregate_records: "Ran analysis", update_records: "Updated records", save_settings: "Changed settings", save_email_template: "Saved email template", send_email_campaign: "Queued emails", stop_emails: "Stopped emails", prioritize_contact_search: "Queued contact search", run_job: "Started a job", send_single_email: "Sent email", request_developer_change: "Emailed Vineet a change request" };
+const EXAMPLES = ["Send this email to all women fashion brands from Abhinav's inbox: …", "Change the hourly limit from 25 to 60 — reason: inboxes are warmed up", "Stop adding brands and search contacts for grocery brands with up to 5 stores first", "How many intro emails went out today, and how many bounced?"];
+
+function ToolChip({ t }) {
+  return (
+    <div className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold ${t.ok === false ? "bg-rose-50 text-rose-700" : t.ok ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-500"}`} title={t.summary || ""} data-testid="brain-tool-chip">
+      {t.ok === false ? <WarningCircle size={12} /> : t.ok ? <CheckCircle size={12} /> : <Wrench size={12} className="animate-spin" />}{TOOL_LABEL[t.name] || t.name}
+    </div>
+  );
+}
+
+function Bubble({ m }) {
+  const me = m.role === "user";
+  return (
+    <div className={`flex ${me ? "justify-end" : "justify-start"}`} data-testid={`brain-msg-${m.role}`}>
+      <div className={`max-w-[80%] rounded-2xl px-4 py-3 text-sm leading-relaxed ${me ? "bg-[#0B1F3A] text-white" : "border border-slate-100 bg-white text-slate-700 shadow-sm"}`}>
+        {!!m.tools?.length && <div className="mb-2 flex flex-wrap gap-1">{m.tools.map((t, i) => <ToolChip key={i} t={t} />)}</div>}
+        {me ? <div className="whitespace-pre-wrap">{m.content}</div> : <div className="space-y-1" dangerouslySetInnerHTML={{ __html: fmt(m.content) || "<p class='text-slate-400'>Thinking…</p>" }} />}
+      </div>
+    </div>
+  );
+}
+
+function Sidebar({ list, cur, pick, add, del, audit }) {
+  return (
+    <aside className="flex w-64 shrink-0 flex-col border-r border-slate-100 bg-slate-50/60" data-testid="brain-sidebar">
+      <div className="space-y-2 p-3">
+        <button data-testid="brain-new-chat" onClick={add} className="crm-btn-primary w-full justify-center !py-2 text-xs"><Plus size={14} /> New chat</button>
+        <button data-testid="brain-audit-btn" onClick={audit} className={`crm-btn-secondary w-full justify-center !py-1.5 text-xs ${cur === "audit" ? "!bg-slate-200" : ""}`}><ClockCounterClockwise size={14} /> Audit log</button>
+      </div>
+      <div className="flex-1 space-y-0.5 overflow-y-auto px-2 pb-3">
+        {list.map((s) => (
+          <div key={s.id} className={`group flex items-center gap-1 rounded-lg px-2 py-2 text-xs transition-colors ${cur === s.id ? "bg-white font-bold text-slate-800 shadow-sm" : "text-slate-600 hover:bg-white"}`}>
+            <button data-testid={`brain-session-${s.id}`} onClick={() => pick(s.id)} className="flex min-w-0 flex-1 items-center gap-2 text-left"><ChatsCircle size={14} className="shrink-0 text-slate-400" /><span className="truncate">{s.title}</span></button>
+            <button data-testid={`brain-delete-${s.id}`} onClick={() => del(s.id)} className="opacity-0 transition-opacity group-hover:opacity-100"><Trash size={13} className="text-slate-400 hover:text-rose-600" /></button>
+          </div>
+        ))}
+        {!list.length && <p className="px-2 text-[11px] text-slate-400">No chats yet.</p>}
+      </div>
+    </aside>
+  );
+}
+
+function Audit() {
+  const [rows, setRows] = useState(null);
+  useEffect(() => { API.get("/brain/audit").then(({ data }) => setRows(data)).catch((e) => toast.error(apiErr(e))); }, []);
+  if (!rows) return <div className="p-6 text-sm text-slate-400">Loading audit log…</div>;
+  return (
+    <div className="flex-1 overflow-y-auto p-6" data-testid="brain-audit">
+      <h2 className="mb-3 text-sm font-extrabold text-slate-800">Every change Fundle Brain made</h2>
+      <table className="w-full text-xs"><thead className="text-left text-slate-400"><tr><th className="py-2">When (UTC)</th><th>Who</th><th>Action</th><th>Reason</th><th>Result</th></tr></thead>
+        <tbody>{rows.map((r) => (
+          <tr key={r.id} className="border-t border-slate-100 align-top" data-testid={`brain-audit-row-${r.id}`}>
+            <td className="whitespace-nowrap py-2 pr-3 text-slate-500">{r.at}</td><td className="pr-3">{r.user_name}</td>
+            <td className="pr-3"><span className={r.ok ? "font-semibold text-emerald-700" : "font-semibold text-rose-700"}>{TOOL_LABEL[r.tool] || r.tool}</span><div className="max-w-xs break-all text-[10px] text-slate-400">{JSON.stringify(r.args).slice(0, 200)}</div></td>
+            <td className="max-w-xs pr-3 text-slate-600">{r.reason}</td><td className="max-w-xs break-all text-[10px] text-slate-500">{r.result?.slice(0, 220)}</td>
+          </tr>))}
+          {!rows.length && <tr><td colSpan={5} className="py-8 text-center text-slate-400">No changes yet.</td></tr>}
+        </tbody></table>
+    </div>
+  );
+}
+
+export default function FundleBrain() {
+  const [list, setList] = useState([]);
+  const [cur, setCur] = useState(null);
+  const [msgs, setMsgs] = useState([]);
+  const [text, setText] = useState("");
+  const [busy, setBusy] = useState(false);
+  const end = useRef(null);
+  const loadList = useCallback(() => API.get("/brain/sessions").then(({ data }) => { setList(data); return data; }), []);
+  useEffect(() => { loadList().then((d) => d[0] && setCur(d[0].id)).catch((e) => toast.error(apiErr(e))); }, [loadList]);
+  useEffect(() => { if (typeof cur === "number") API.get(`/brain/sessions/${cur}/messages`).then(({ data }) => setMsgs(data)); else setMsgs([]); }, [cur]);
+  useEffect(() => { end.current?.scrollIntoView({ behavior: "smooth" }); }, [msgs]);
+  const add = async () => { const { data } = await API.post("/brain/sessions"); await loadList(); setCur(data.id); return data.id; };
+  const del = async (id) => { await API.delete(`/brain/sessions/${id}`); const d = await loadList(); if (cur === id) setCur(d[0]?.id ?? null); };
+
+  const send = async (override) => {
+    const q = (override ?? text).trim();
+    if (!q || busy) return;
+    const sid = typeof cur === "number" ? cur : await add();
+    setText(""); setBusy(true);
+    setMsgs((m) => [...m, { role: "user", content: q }, { role: "assistant", content: "", tools: [] }]);
+    const upd = (fn) => setMsgs((m) => { const c = [...m]; c[c.length - 1] = fn({ ...c[c.length - 1] }); return c; });
+    try {
+      const res = await fetch(`${process.env.REACT_APP_BACKEND_URL}/api/brain/sessions/${sid}/chat`, {
+        method: "POST", credentials: "include",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${localStorage.getItem("crm_token") || ""}` },
+        body: JSON.stringify({ message: q }),
+      });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || `Error ${res.status}`);
+      const reader = res.body.getReader(); const dec = new TextDecoder(); let buf = "";
+      for (;;) {
+        const { value, done } = await reader.read(); if (done) break;
+        buf += dec.decode(value, { stream: true });
+        const parts = buf.split("\n\n"); buf = parts.pop();
+        parts.forEach((p) => {
+          if (!p.startsWith("data: ")) return;
+          const ev = JSON.parse(p.slice(6));
+          if (ev.type === "text") upd((x) => ({ ...x, content: x.content + (ev.delta || "") }));
+          else if (ev.type === "tool") upd((x) => ({ ...x, tools: [...(x.tools || []), { name: ev.name }] }));
+          else if (ev.type === "tool_done") upd((x) => { const t = [...x.tools]; const i = t.map((y) => y.name).lastIndexOf(ev.name); if (i >= 0) t[i] = { ...t[i], ok: ev.ok, summary: ev.summary }; return { ...x, tools: t }; });
+          else if (ev.type === "error") upd((x) => ({ ...x, content: `${x.content}\n\n⚠️ ${ev.message}` }));
+        });
+      }
+    } catch (e) { upd((x) => ({ ...x, content: `⚠️ ${e.message}` })); }
+    setBusy(false); loadList();
+  };
+
+  return (
+    <div className="flex h-[calc(100vh-7rem)] overflow-hidden rounded-2xl border border-slate-100 bg-white" data-testid="fundle-brain-page">
+      <Sidebar list={list} cur={cur} pick={setCur} add={add} del={del} audit={() => setCur("audit")} />
+      {cur === "audit" ? <Audit /> : (
+        <div className="flex min-w-0 flex-1 flex-col">
+          <div className="flex items-center gap-2 border-b border-slate-100 px-6 py-3">
+            <Brain size={20} weight="fill" className="text-[#1A73E8]" /><span className="font-display text-sm font-extrabold text-slate-800">Fundle Brain</span>
+            <span className="text-[11px] text-slate-400">runs prospecting, outreach, templates, inboxes and data for you · every change is logged with its reason</span>
+          </div>
+          <div className="flex-1 space-y-4 overflow-y-auto bg-slate-50/40 px-6 py-5" data-testid="brain-messages">
+            {!msgs.length && (
+              <div className="mx-auto mt-10 max-w-xl text-center">
+                <Brain size={40} weight="duotone" className="mx-auto text-[#1A73E8]" />
+                <p className="mt-2 text-sm font-bold text-slate-700">Tell me what to change, send or find.</p>
+                <div className="mt-4 grid gap-2">{EXAMPLES.map((e, i) => <button key={i} data-testid={`brain-example-${i}`} onClick={() => setText(e)} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-left text-xs text-slate-600 transition-colors hover:border-[#1A73E8]">{e}</button>)}</div>
+              </div>
+            )}
+            {msgs.map((m, i) => <Bubble key={m.id || i} m={m} />)}
+            <div ref={end} />
+          </div>
+          <div className="border-t border-slate-100 p-4">
+            <div className="flex items-end gap-2">
+              <textarea data-testid="brain-input" rows={2} value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }}
+                placeholder="e.g. Send this email to all D2C brands with under 10 stores from Hardik's inbox… (Enter to send, Shift+Enter for a new line)" className="crm-input flex-1 resize-none text-sm" />
+              <button data-testid="brain-send" disabled={busy || !text.trim()} onClick={() => send()} className="crm-btn-primary !py-2.5"><PaperPlaneRight size={16} weight="fill" /> {busy ? "Working…" : "Send"}</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

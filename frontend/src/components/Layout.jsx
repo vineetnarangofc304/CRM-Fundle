@@ -85,13 +85,13 @@ export default function Layout({ children }) {
             </NavLink>
           )}
         </nav>
-        <NavLink to="/ai-insights" onClick={guardClick} data-testid="nav-ai-brain-card" className="mx-3 mb-3 block rounded-xl bg-gradient-to-br from-[#0B1F3A]/10 to-[#1A73E8]/10 p-3 transition hover:from-[#0B1F3A]/20 hover:to-[#1A73E8]/20">
+        {can("brain") && <NavLink to="/brain" onClick={guardClick} data-testid="nav-ai-brain-card" className="mx-3 mb-3 block rounded-xl bg-gradient-to-br from-[#0B1F3A]/10 to-[#1A73E8]/10 p-3 transition hover:from-[#0B1F3A]/20 hover:to-[#1A73E8]/20">
           <div className="flex items-center gap-2 text-[#0B1F3A]">
             <Sparkle size={16} weight="fill" />
-            <span className="text-xs font-bold">AI Brain</span>
+            <span className="text-xs font-bold">Fundle Brain</span>
           </div>
-          <p className="mt-1 text-[11px] text-slate-500">Ask questions & explore live insights on all your data →</p>
-        </NavLink>
+          <p className="mt-1 text-[11px] text-slate-500">Tell it what to change, send or find — it runs the CRM for you →</p>
+        </NavLink>}
         <div className="border-t border-slate-100 px-5 py-3">
           <p className="text-[10px] uppercase tracking-[0.2em] text-slate-400">{BRAND.poweredBy}</p>
         </div>

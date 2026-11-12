@@ -1,0 +1,367 @@
+"""Fundle Brain: an operator agent (GPT 6 Luna + tool calling) that can read and change the CRM's data, settings,
+templates, inboxes, prospecting and outreach. Every write requires a reason and is audit-logged."""
+import json
+import logging
+import os
+import re
+from datetime import datetime, timezone
+
+from core.db import db
+from core.utils import next_id, now_utc_str
+
+logger = logging.getLogger(__name__)
+MODEL = ("openai", "gpt-6-luna")
+DEV_EMAIL = "vineet.narang@fundle.ai"
+READ_COLS = {"prospects", "leads", "outreach", "email_templates", "mailboxes", "settings", "messages", "users",
+             "prospect_runs", "brain_audit", "linkedin_tasks", "stages", "sources"}
+WRITE_COLS = {"prospects", "leads", "outreach", "email_templates", "mailboxes", "settings"}
+SECRET = {"smtp_password", "password", "password_hash", "hashed_password", "access_token", "refresh_token", "token",
+          "client_secret", "api_key", "tokens", "secret"}
+BAD_OPS = {"$where", "$function", "$accumulator", "$out", "$merge"}
+MAX_WRITE = 5000
+
+
+def _scrub(o):
+    if isinstance(o, dict):
+        return {k: ("***" if k in SECRET else _scrub(v)) for k, v in o.items() if k != "_id"}
+    if isinstance(o, list):
+        return [_scrub(x) for x in o]
+    return o if isinstance(o, (str, int, float, bool, type(None))) else str(o)
+
+
+def _check(o):
+    if isinstance(o, dict):
+        for k, v in o.items():
+            if k in BAD_OPS:
+                raise ValueError(f"Operator {k} is not allowed")
+            _check(v)
+    elif isinstance(o, list):
+        for x in o:
+            _check(x)
+
+
+def _fields_ok(d: dict):
+    for k in d:
+        if k.split(".")[0] in SECRET or k in ("_id", "id"):
+            raise ValueError(f"Field {k} can't be changed by the Brain")
+
+
+async def _audit(ctx, tool, args, result, ok=True):
+    await db.brain_audit.insert_one({"id": await next_id("brain_audit"), "at": now_utc_str(), "user_id": ctx["user"]["id"],
+                                     "user_name": ctx["user"].get("name"), "session_id": ctx["session_id"], "tool": tool,
+                                     "reason": args.get("reason"), "args": _scrub({k: v for k, v in args.items() if k != "reason"}),
+                                     "ok": ok, "result": str(result)[:1500]})
+
+
+# ---------------- tools ----------------
+async def t_overview(ctx, a):
+    from core import outreach as oc, prospector as pe, mailboxes as mb, linkedin as li
+    st = await oc.get_settings()
+    boxes = await db.mailboxes.find({"is_deleted": {"$ne": True}}, {"_id": 0, "smtp_password": 0}).to_list(50)
+    tpls = await db.email_templates.find({"is_deleted": {"$ne": True}}, {"_id": 0, "body": 0}).to_list(100)
+    pool = []
+    try:
+        pool = [{k: s[k] for k in ("id", "email", "remaining")} for s in await mb.senders(st, oc._now()[:10])]
+    except Exception:
+        pass
+    return {"outreach_settings": {k: v for k, v in st.items() if k != "pitch"}, "prospecting_settings": await pe.get_settings(),
+            "linkedin_settings": await li.get_settings(), "inboxes_extra": _scrub(boxes), "senders_now": pool,
+            "templates": _scrub(tpls),
+            "counts": {"prospects": await db.prospects.estimated_document_count(),
+                       "prospects_with_email": await db.prospects.count_documents({"contacts.email": {"$nin": [None, ""]}}),
+                       "outreach_queued": await db.outreach.count_documents({"status": {"$in": ["approved", "pending_approval"]}}),
+                       "outreach_sent": await db.outreach.count_documents({"status": "sent"}),
+                       "leads": await db.leads.estimated_document_count()},
+            "last_outreach_run": await db.settings.find_one({"key": "outreach_last"}, {"_id": 0})}
+
+
+async def t_find(ctx, a):
+    col = a["collection"]
+    if col not in READ_COLS:
+        raise ValueError(f"Unknown collection {col}")
+    f = a.get("filter") or {}
+    _check(f)
+    lim = max(1, min(int(a.get("limit") or 20), 200))
+    cur = db[col].find(f, a.get("projection") or None)
+    if a.get("sort"):
+        cur = cur.sort(list(a["sort"].items()))
+    rows = await cur.limit(lim).to_list(lim)
+    return {"count": await db[col].count_documents(f), "rows": _scrub(rows)}
+
+
+async def t_aggregate(ctx, a):
+    col = a["collection"]
+    if col not in READ_COLS:
+        raise ValueError(f"Unknown collection {col}")
+    pipe = a.get("pipeline") or []
+    _check(pipe)
+    rows = await db[col].aggregate(pipe + [{"$limit": 200}], maxTimeMS=20000).to_list(200)
+    return {"rows": _scrub(rows)}
+
+
+async def t_update(ctx, a):
+    col = a["collection"]
+    if col not in WRITE_COLS:
+        raise ValueError(f"Collection {col} is read-only for the Brain")
+    f, s, u = a.get("filter") or {}, a.get("set") or {}, a.get("unset") or []
+    if not f:
+        raise ValueError("A filter is required")
+    _check(f)
+    _check(s)
+    _fields_ok(s)
+    _fields_ok({k: 1 for k in u})
+    n = await db[col].count_documents(f)
+    if n > MAX_WRITE:
+        raise ValueError(f"{n} records match — narrow the filter (max {MAX_WRITE})")
+    upd = {}
+    if s:
+        upd["$set"] = {**s, **({"updated_at": now_utc_str()} if col in ("email_templates", "mailboxes") else {})}
+    if u:
+        upd["$unset"] = {k: 1 for k in u}
+    if not upd:
+        raise ValueError("Nothing to change")
+    r = await db[col].update_many(f, upd)
+    return {"matched": r.matched_count, "modified": r.modified_count}
+
+
+async def t_settings(ctx, a):
+    from core import outreach as oc, linkedin as li
+    sec, ch = a["section"], a.get("changes") or {}
+    allowed = {"outreach": set(oc.DEFAULTS), "linkedin": set(li.DEFAULTS),
+               "prospecting": {"enabled", "countries", "phase", "concurrency", "create_leads", "daily_cap"}}.get(sec)
+    if allowed is None:
+        raise ValueError("Section must be outreach, prospecting or linkedin")
+    bad = set(ch) - allowed
+    if bad:
+        raise ValueError(f"Unknown settings: {sorted(bad)}; allowed: {sorted(allowed)}")
+    if sec == "prospecting" and "phase" in ch and ch["phase"] not in ("auto", "discovery", "enrichment", "contacts"):
+        raise ValueError("phase must be auto, discovery, enrichment or contacts")
+    await db.settings.update_one({"key": sec}, {"$set": ch}, upsert=True)
+    return {"saved": ch}
+
+
+async def t_template(ctx, a):
+    from core import email_templates as et
+    fields = {k: a[k] for k in ("name", "subject", "body_html", "mode", "audience", "step", "wait_days", "ai_tailor", "active")
+              if a.get(k) is not None}
+    if "body_html" in fields:
+        from core.outreach import clean_html
+        fields["body"] = clean_html(fields.pop("body_html"))
+    if fields.get("audience") and fields["audience"] not in et.AUDIENCES:
+        raise ValueError(f"audience must be one of {list(et.AUDIENCES)}")
+    fields["updated_at"] = now_utc_str()
+    if a.get("template_id"):
+        r = await db.email_templates.update_one({"id": int(a["template_id"]), "is_deleted": {"$ne": True}}, {"$set": fields})
+        if not r.matched_count:
+            raise ValueError("Template not found")
+        return {"updated": int(a["template_id"])}
+    if not fields.get("name") or not fields.get("subject") or not fields.get("body"):
+        raise ValueError("New templates need name, subject and body_html")
+    doc = {"kind": "custom", "mode": "manual", "audience": "all", "step": 1, "wait_days": 0, "ai_tailor": False, "active": True,
+           "attachments": [], "video_links": [], "is_deleted": False, "created_at": now_utc_str(), **fields,
+           "id": await next_id("email_template")}
+    await db.email_templates.insert_one(doc)
+    return {"created": doc["id"]}
+
+
+async def _sender_id(email):
+    from core import mailboxes as mb, outlook_send as ol
+    if not email:
+        return None
+    e = email.strip().lower()
+    b = await db.mailboxes.find_one({"smtp_user": e, "is_deleted": {"$ne": True}}, {"id": 1})
+    if b:
+        return b["id"]
+    cfg = await ol.get_config() or {}
+    if (cfg.get("email") or cfg.get("smtp_user") or "").lower() == e:
+        return mb.PRIMARY
+    raise ValueError(f"No connected inbox {email}. Connected: main + " +
+                     ", ".join([x["smtp_user"] async for x in db.mailboxes.find({"is_deleted": {"$ne": True}}, {"smtp_user": 1})]))
+
+
+async def t_send(ctx, a):
+    from core import email_templates as et
+    from core.outreach import clean_html, pick_contact
+    f = a.get("prospect_filter") or {}
+    _check(f)
+    sid = await _sender_id(a.get("from_inbox"))
+    lim = max(1, min(int(a.get("limit") or 500), MAX_WRITE))
+    t = {"subject": a["subject"], "body": clean_html(a["body_html"]), "ai_tailor": False}
+    made, skipped, now = 0, 0, now_utc_str()
+    async for p in db.prospects.find({"$and": [f, {"replied": {"$ne": True}}]}, {"_id": 0}).limit(lim):
+        bounced = {e.lower() for e in p.get("bounced_emails") or []}
+        cs = [c for c in p.get("contacts") or [] if c.get("email") and c["email"].lower() not in bounced]
+        if a.get("contacts") != "all":
+            cs = [pick_contact(p)] if cs else []
+        for c in [x for x in cs if x]:
+            if await db.outreach.find_one({"to": c["email"], "subject_raw": a["subject"]}):
+                skipped += 1
+                continue
+            subject, body = await et.tailor(t, p, c)
+            lead_id = p.get("lead_id")
+            await db.outreach.insert_one({
+                "id": await next_id("outreach"), "seq_id": await next_id("outreach_seq"), "channel": "email", "step": 1,
+                "kind": "brain", "template_name": a.get("campaign_name") or "Fundle Brain email", "prospect_id": p["id"],
+                "lead_id": lead_id, "brand": p.get("brand_name"), "category": p.get("category"), "fit_score": p.get("fit_score"),
+                "contact_name": c.get("name"), "contact_role": c.get("role"), "to": c["email"], "email_status": c.get("email_status"),
+                "subject": subject, "subject_raw": a["subject"], "body": body, "attachments": [], "video_links": [],
+                "force_sender": sid, "status": "approved", "created_by": f"Fundle Brain ({ctx['user'].get('name')})",
+                "created_at": now, "scheduled_at": now, "approved_by": "Fundle Brain", "approved_at": now})
+            made += 1
+    return {"queued": made, "skipped_duplicates": skipped, "from_inbox": a.get("from_inbox") or "auto (rotating)",
+            "note": "Emails go out within each inbox's hourly limit, starting with the next run (every 15 min) — call run_job outreach to start now."}
+
+
+async def t_stop(ctx, a):
+    f = a.get("outreach_filter") or {}
+    _check(f)
+    if not f:
+        raise ValueError("A filter is required")
+    r = await db.outreach.update_many({"$and": [f, {"status": {"$in": ["approved", "pending_approval", "sending"]}}]},
+                                      {"$set": {"status": "stopped", "stop_reason": f"Fundle Brain: {a.get('reason')}"}})
+    return {"stopped": r.modified_count}
+
+
+async def t_contacts(ctx, a):
+    f = a.get("prospect_filter") or {}
+    _check(f)
+    r = await db.prospects.update_many({"$and": [f, {"contacts_status": {"$ne": "running"}}]},
+                                       {"$set": {"contacts_priority": int(a.get("priority") or 5)}, "$unset": {"contacts_status": 1}})
+    if a.get("contacts_only_mode"):
+        await db.settings.update_one({"key": "prospecting"}, {"$set": {"phase": "contacts"}}, upsert=True)
+    return {"queued_for_contact_search": r.modified_count, "contacts_only_mode": bool(a.get("contacts_only_mode"))}
+
+
+async def t_job(ctx, a):
+    from routes.prospecting import _spawn
+    from core import outreach as oc, email_format as ef, inbox_sync, prospector as pe
+    jobs = {"outreach": lambda: oc.run_outreach("brain"), "email_format": lambda: ef.run("brain"),
+            "inbox_sync": inbox_sync.sync_all, "prospecting": lambda: pe.run_worker(trigger="brain")}
+    if a["job"] not in jobs:
+        raise ValueError(f"job must be one of {list(jobs)}")
+    _spawn(jobs[a["job"]]())
+    return {"started": a["job"]}
+
+
+async def t_email(ctx, a):
+    from core import mailboxes as mb, outreach as oc
+    st = await oc.get_settings()
+    sid = await _sender_id(a.get("from_inbox"))
+    pool = await mb.senders(st, oc._now()[:10])
+    s = next((x for x in pool if x["id"] == sid), None) if sid is not None else (pool[0] if pool else None)
+    if not s:
+        raise ValueError("That inbox isn't connected or active")
+    res = await mb.send(s, a["to"], a["subject"], oc._with_signature(oc.clean_html(a["body_html"]), s))
+    if not res.get("ok"):
+        raise ValueError(res.get("error") or "Send failed")
+    return {"sent": True, "from": s["email"]}
+
+
+async def t_escalate(ctx, a):
+    from core import mailer
+    doc = {"id": await next_id("brain_request"), "at": now_utc_str(), "by": ctx["user"].get("name"), "summary": a["summary"],
+           "details": a.get("details") or "", "reason": a.get("reason"), "session_id": ctx["session_id"], "status": "open"}
+    await db.brain_requests.insert_one(doc)
+    body = (f"<p><b>Fundle Brain change request #{doc['id']}</b> from {doc['by']}</p><p><b>{doc['summary']}</b></p>"
+            f"<p>{doc['details']}</p><p>Reason: {doc['reason']}</p>")
+    try:
+        res = await mailer.send_email(DEV_EMAIL, f"Fundle Brain request: {doc['summary'][:80]}", body, html=True)
+    except Exception as e:
+        res = {"ok": False, "error": str(e)}
+    return {"request_id": doc["id"], "emailed": bool(res.get("ok")), "to": DEV_EMAIL, "error": res.get("error")}
+
+
+def _fn(name, desc, props, req, write=True):
+    if write:
+        props = {**props, "reason": {"type": "string", "description": "The user's reason for this change (ask if not given)"}}
+        req = req + ["reason"]
+    return {"type": "function", "function": {"name": name, "description": desc,
+                                             "parameters": {"type": "object", "properties": props, "required": req}}}
+
+
+OBJ, STR, INT, BOOL = {"type": "object"}, {"type": "string"}, {"type": "integer"}, {"type": "boolean"}
+TOOLS = {
+    "get_system_overview": (t_overview, _fn("get_system_overview", "Current settings (outreach, prospecting, linkedin), inboxes, templates (without body), live sender quotas and key counts. Call this first when unsure.", {}, [], False)),
+    "find_records": (t_find, _fn("find_records", "Read records from a collection with a MongoDB filter. Returns total count + up to `limit` rows.",
+                                 {"collection": STR, "filter": OBJ, "projection": OBJ, "sort": {"type": "object", "description": "e.g. {\"fit_score\": -1}"}, "limit": INT}, ["collection"], False)),
+    "aggregate_records": (t_aggregate, _fn("aggregate_records", "Run a read-only MongoDB aggregation pipeline (for counts/breakdowns/analytics).",
+                                           {"collection": STR, "pipeline": {"type": "array", "items": OBJ}}, ["collection", "pipeline"], False)),
+    "update_records": (t_update, _fn("update_records", f"Change fields on records matching a filter (prospects, leads, outreach, email_templates, mailboxes, settings). $set / unset only, max {MAX_WRITE} records. Use for repairs, data fixes, inbox signature/sender_name/active, etc.",
+                                     {"collection": STR, "filter": OBJ, "set": OBJ, "unset": {"type": "array", "items": STR}}, ["collection", "filter"])),
+    "save_settings": (t_settings, _fn("save_settings", "Change engine settings. outreach: enabled, auto_send, hourly_cap, cc, drafts_per_run, signature (main inbox), sender_name, min_score, gaps, ai_sequence, daily_cap, pitch. prospecting: enabled, countries, phase (auto|discovery|enrichment|contacts), concurrency, create_leads, daily_cap (new brands/day, 0=unlimited). linkedin: enabled, daily_connects, daily_messages.",
+                                      {"section": {"type": "string", "enum": ["outreach", "prospecting", "linkedin"]}, "changes": OBJ}, ["section", "changes"])),
+    "save_email_template": (t_template, _fn("save_email_template", "Create (no template_id) or edit an email template. mode auto = goes out automatically to matching brands; audience all|d2c|stores_100|stores_11_99|stores_1_10; step 1 intro, 2/3 follow-ups with wait_days after the intro. Placeholders {{first_name}}, {{brand}}, {{role}}, {{intro_subject}}. Set active false to switch off.",
+                                            {"template_id": INT, "name": STR, "subject": STR, "body_html": STR, "mode": {"type": "string", "enum": ["auto", "manual"]},
+                                             "audience": STR, "step": INT, "wait_days": INT, "ai_tailor": BOOL, "active": BOOL}, [])),
+    "send_email_campaign": (t_send, _fn("send_email_campaign", "Queue an email to brands matching a prospects filter (e.g. {\"category\": {\"$regex\": \"women\", \"$options\": \"i\"}} or {\"store_count\": {\"$lte\": 5}}). Uses each brand's best contact (or all contacts). Optional from_inbox (email address of a connected inbox) pins the sender. Skips replied brands, bounced addresses and exact repeats.",
+                                        {"prospect_filter": OBJ, "subject": STR, "body_html": STR, "from_inbox": STR, "contacts": {"type": "string", "enum": ["best", "all"]},
+                                         "limit": INT, "campaign_name": STR}, ["prospect_filter", "subject", "body_html"])),
+    "stop_emails": (t_stop, _fn("stop_emails", "Stop queued (not yet sent) outreach emails matching an outreach filter, e.g. {\"template_name\": \"Intro email\"} or {\"brand\": \"X\"}.", {"outreach_filter": OBJ}, ["outreach_filter"])),
+    "prioritize_contact_search": (t_contacts, _fn("prioritize_contact_search", "Put brands matching a prospects filter at the front of the AI contact search (e.g. category grocery, store_count 5). Optionally switch prospecting to contacts-only mode (no new brands).",
+                                                  {"prospect_filter": OBJ, "priority": INT, "contacts_only_mode": BOOL}, ["prospect_filter"])),
+    "run_job": (t_job, _fn("run_job", "Start a background job now: outreach (send queued emails + auto templates), prospecting, email_format, inbox_sync.", {"job": STR}, ["job"])),
+    "send_single_email": (t_email, _fn("send_single_email", "Send one email right now to an address, optionally from a specific connected inbox.",
+                                       {"to": STR, "subject": STR, "body_html": STR, "from_inbox": STR}, ["to", "subject", "body_html"])),
+    "request_developer_change": (t_escalate, _fn("request_developer_change", "Only when a request truly needs new code or a new screen that no tool can do: logs it and emails Vineet.",
+                                                 {"summary": STR, "details": STR}, ["summary"])),
+}
+READ_ONLY = {"get_system_overview", "find_records", "aggregate_records"}
+
+SYSTEM = """You are Fundle Brain, the operator of the Fundle.ai CRM (B2B sales CRM selling AI loyalty/retail software to brands in India/GCC/UK). You act on the live system through tools — you do not just advise.
+
+SYSTEM MAP
+- prospects: AI-researched brands. Fields: id, brand_name, category, segment ("Offline Retail" | "D2C / E-commerce" | "Omnichannel"), country, city, store_count, fit_score, website, status (discovered|enriching|enriched|failed), contacts [{name, role, email, email_status (published|confirmed_format|pattern), linkedin}], contacts_status (running|done|failed|absent=queued), contacts_priority, lead_id, replied, bounced_emails, sender_mailbox (inbox id the brand sticks to; 0 = main), tpl_sent [template ids], email_format.
+- leads: CRM leads (id, name/company fields, lead_stage, user_id, tags, email_from, fit_score). Each prospect has lead_id.
+- outreach: each email. Fields: id, seq_id, kind (template|brain), template_id, template_name, step, prospect_id, lead_id, brand, to, subject, status (pending_approval|approved|sending|sent|failed|stopped|bounced), scheduled_at, sent_at, sent_via (inbox id), force_sender, replied_at.
+- email_templates: id, name, subject, body (HTML), mode (auto|manual), audience, step, wait_days, ai_tailor, active. Auto intros: one intro per brand chosen by audience (d2c segment; stores_100 = 100+; stores_11_99; stores_1_10 incl unknown). Follow-ups step 2/3 go wait_days after the intro to the same person if no reply.
+- mailboxes: extra sending inboxes (id, smtp_user email, sender_name, signature, active, verified). Main inbox = id 0 (its signature = outreach setting `signature`). Each inbox sends max hourly_cap per hour (default 25), spread over runs every 15 min. Ask "from Hardik's email" -> find the mailbox whose smtp_user/sender_name matches.
+- settings: outreach / prospecting / linkedin sections (use save_settings).
+- Engines run every 15 minutes automatically (prospecting, outreach send + reply/bounce sync, email-format check).
+
+RULES
+1. Do what the user asks immediately — no confirmation step. But every change needs the USER'S OWN reason (why they want it). Never invent or paraphrase a reason like "user requested it". If the user's messages don't say why, do NOT call any change tool — reply with one short question asking why, then act once they answer. Pass their reason in `reason`.
+2. Before bulk changes, check scope with find_records/aggregate_records (counts), then do it, then report exactly what changed (numbers, names). Prefer specific filters; regex with $options "i" for categories/names.
+3. Write emails in clean HTML (<p>, <ul><li>, <b>). Don't add a signature — the sending inbox adds its own.
+4. If something truly can't be done with your tools (new screens, new code features, integrations), call request_developer_change with a clear summary so Vineet is emailed, and tell the user.
+5. Never reveal passwords or tokens. Be concise, use short bullet points, and answer analytics questions with real numbers from the tools.
+Today: {today}."""
+
+
+async def run_turn(ctx: dict, history: list, text: str):
+    """Async generator of events: {"type": "text"|"tool"|"tool_done"|"error", ...}."""
+    from emergentintegrations.llm.chat import LlmChat, UserMessage, TextDelta, ToolCallReady, StreamDone
+    chat = LlmChat(api_key=os.environ["EMERGENT_LLM_KEY"], session_id=f"brain-{ctx['session_id']}-{datetime.now().timestamp()}",
+                   system_message=SYSTEM.replace("{today}", datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")),
+                   initial_messages=history).with_model(*MODEL).with_tools([v[1] for v in TOOLS.values()], tool_choice="auto")
+    msg = UserMessage(text=text)
+    for _ in range(15):
+        pending = []
+        async for ev in chat.stream_message(msg):
+            if isinstance(ev, TextDelta):
+                yield {"type": "text", "delta": ev.content}
+            elif isinstance(ev, ToolCallReady):
+                pending.append(ev.tool_call)
+            elif isinstance(ev, StreamDone):
+                break
+        if not pending:
+            return
+        for tc in pending:
+            args = tc.arguments if isinstance(tc.arguments, dict) else json.loads(tc.arguments or "{}")
+            yield {"type": "tool", "name": tc.name, "args": _scrub(args)}
+            fn = TOOLS.get(tc.name)
+            try:
+                if not fn:
+                    raise ValueError("Unknown tool")
+                r = str(args.get("reason") or "").strip()
+                if tc.name not in READ_ONLY and (len(r) < 4 or re.match(r"(?i)^(the )?user (requested|asked|wants)|^as (requested|asked)|^per (the )?user", r)):
+                    raise ValueError("No real reason given — ask the user WHY they want this change, then retry with their reason")
+                out, ok = await fn[0](ctx, args), True
+            except Exception as e:
+                out, ok = {"error": str(e)[:500]}, False
+            if tc.name not in READ_ONLY:
+                await _audit(ctx, tc.name, args, out, ok)
+            res = json.dumps(_scrub(out), default=str)[:20000]
+            yield {"type": "tool_done", "name": tc.name, "ok": ok, "summary": res[:300]}
+            chat.add_tool_result(tc.id, res)
+        msg = None
+    yield {"type": "text", "delta": "\n\n(Stopped after many steps — tell me to continue if needed.)"}

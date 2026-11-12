@@ -8,7 +8,7 @@ import time
 from core.db import db
 
 MODULE_PERMS = ["dashboard", "leads", "followups", "call_center", "whatsapp",
-                "marketing", "reports", "templates", "admin"]
+                "marketing", "reports", "templates", "admin", "brain"]
 ACTION_PERMS = ["leads_view_all", "leads_edit", "leads_reassign", "leads_delete",
                 "export", "manage_users", "admin_write"]
 ALL_PERMS = MODULE_PERMS + ACTION_PERMS
@@ -17,7 +17,7 @@ ALL_PERMS = MODULE_PERMS + ACTION_PERMS
 PERM_LABELS = {
     "dashboard": "Dashboard", "leads": "Leads", "followups": "Follow-ups",
     "call_center": "Call Center", "whatsapp": "WhatsApp", "marketing": "Marketing",
-    "reports": "Reports", "templates": "Templates", "admin": "Admin panel",
+    "reports": "Reports", "templates": "Templates", "admin": "Admin panel", "brain": "Fundle Brain (can change the system)",
     "leads_view_all": "See ALL leads (not just own)", "leads_edit": "Edit leads",
     "leads_reassign": "Reassign leads", "leads_delete": "Delete leads",
     "export": "Export (Excel/PDF)",
@@ -28,14 +28,14 @@ DEFAULT_PERMISSIONS = {
     "admin": {k: True for k in ALL_PERMS},
     "manager": {
         "dashboard": True, "leads": True, "followups": True, "call_center": True,
-        "whatsapp": True, "templates": True, "marketing": True, "reports": True, "admin": True,
+        "whatsapp": True, "templates": True, "marketing": True, "reports": True, "admin": True, "brain": False,
         "leads_view_all": True, "leads_edit": True, "leads_reassign": True,
         "leads_delete": False, "export": False,
         "manage_users": False, "admin_write": False,
     },
     "caller": {
         "dashboard": True, "leads": True, "followups": True, "call_center": True,
-        "whatsapp": True, "templates": True, "marketing": False, "reports": False, "admin": False,
+        "whatsapp": True, "templates": True, "marketing": False, "reports": False, "admin": False, "brain": False,
         "leads_view_all": False, "leads_edit": True, "leads_reassign": False,
         "leads_delete": False, "export": False,
         "manage_users": False, "admin_write": False,

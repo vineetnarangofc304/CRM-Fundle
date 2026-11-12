@@ -47,8 +47,10 @@ async def senders(st: dict, day: str) -> list:
     return out
 
 
-async def pick(prospect_id, pool: list, force: bool = False):
-    """Sticky per brand; otherwise the inbox with the most room left this hour."""
+async def pick(prospect_id, pool: list, force: bool = False, prefer=None):
+    """Sticky per brand; otherwise the inbox with the most room left this hour. `prefer` pins a specific inbox."""
+    if prefer is not None:
+        return next((s for s in pool if s["id"] == prefer and (force or s["remaining"] > 0)), None)
     avail = [s for s in pool if force or s["remaining"] > 0]
     if not avail:
         return None
