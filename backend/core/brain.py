@@ -189,6 +189,9 @@ async def _sender_id(email):
         return None
     e = str(email).strip().lower()
     if e in ("main", "0", "primary", "main inbox"):
+        from core import mailer
+        if not await mailer.is_connected():
+            raise ValueError("The main inbox isn't connected (Admin → Email). Connect it or choose another inbox.")
         return mb.PRIMARY
     b = await db.mailboxes.find_one({"smtp_user": e, "is_deleted": {"$ne": True}}, {"id": 1})
     if b:
@@ -281,8 +284,14 @@ async def _send_now(ids: list, sid=None) -> dict:
             continue
         ok = await oc._send_one(m, st, pool, force=True)
         d = await db.outreach.find_one({"id": i}, {"_id": 0, "status": 1, "error": 1, "sent_from": 1, "to": 1})
-        (sent if ok else failed).append({"id": i, "to": d.get("to"), "from": d.get("sent_from"), "status": d.get("status"),
-                                         "error": d.get("error")})
+        err = d.get("error")
+        if not ok and not err:
+            pin = m.get("force_sender")
+            err = ("No usable inbox: " + ("the main inbox isn't connected" if pin == mb.PRIMARY else
+                   f"inbox #{pin} is inactive, untested or over its hourly limit" if pin is not None else
+                   "no connected inbox has room this hour"))
+            await db.outreach.update_one({"id": i}, {"$set": {"error": err}})
+        (sent if ok else failed).append({"id": i, "to": d.get("to"), "from": d.get("sent_from"), "status": d.get("status"), "error": err})
     return {"sent": sent, "failed": failed,
             "note": "Failed ones stay queued and retry automatically within the hour." if failed else ""}
 
@@ -320,7 +329,10 @@ async def t_send_queued(ctx, a):
                                   {"$set": {"status": "approved", "approved_by": "Fundle Brain", "approved_at": now_utc_str()}})
     if a.get("from_inbox"):
         await db.outreach.update_many({"id": {"$in": ids}}, {"$set": {"force_sender": await _sender_id(a["from_inbox"])}})
-    return await _send_now(ids)
+    r = await _send_now(ids)
+    if r["failed"] and not r["sent"]:
+        raise ValueError("Nothing sent: " + "; ".join(f"#{x['id']} {x['error']}" for x in r["failed"][:5]))
+    return r
 
 
 async def t_inbox(ctx, a):
@@ -448,8 +460,6 @@ STOP = {"this", "that", "with", "from", "have", "they", "them", "their", "want",
 
 def _reason_ok(reason: str, said: str) -> bool:
     r = reason.strip().lower()
-    if r.startswith("instruction: "):
-        return True
     if len(r) < 4 or re.match(r"^(the )?user\b|^as (requested|asked)|^per (the )?user", r) or re.search(r"explicitly asked|user (requested|asked|wants)", r):
         return False
     words = {w for w in re.findall(r"[a-z0-9]{4,}", r) if w not in STOP}
@@ -502,9 +512,9 @@ async def run_turn(ctx: dict, history: list, text: str):
                 r = str(args.get("reason") or "").strip()
                 if given and tc.name not in READ_ONLY:
                     args["reason"] = r = given  # the user's own words win over the model's paraphrase
-                elif tc.name in ACTION_TOOLS and not _reason_ok(r, said):
+                elif tc.name in ACTION_TOOLS:
                     args["reason"] = r = f"Instruction: {text.strip()[:250]}"  # a direct send/stop/run order is its own reason
-                if tc.name not in READ_ONLY and not (tc.name == "manage_contact_sources" and args.get("action") == "list") and not _reason_ok(r, said):
+                if tc.name not in READ_ONLY and tc.name not in ACTION_TOOLS and not (tc.name == "manage_contact_sources" and args.get("action") == "list") and not _reason_ok(r, said):
                     raise ValueError("No real reason from the user — ask the user WHY they want this change, then retry using their words")
                 if tc.name in GATES and not re.search(GATES[tc.name], latest):
                     raise ValueError(f"The user's latest message didn't ask for {tc.name} — don't do it; just report what you did")

@@ -83,7 +83,7 @@ async def overview(user: dict = Depends(require_roles("admin", "manager"))):
                          "runs": st.get("runs", 0), "saturated": st.get("saturated", False), "last_run": st.get("last_run")})
     totals = {k: sum(r[k] for r in rows) for k in ("brands", "enriched", "offline", "d2c", "with_ceo")}
     recent = await db.prospect_runs.find({}, {"_id": 0}).sort("at", -1).limit(25).to_list(25)
-    return {"settings": settings, "running": running, "lock": {k: lock.get(k) for k in ("started", "trigger", "last_finished", "last_stats", "ai_blocked_at", "watchdog_at", "watchdog_action")},
+    return {"settings": settings, "running": running, "lock": {k: lock.get(k) for k in ("started", "trigger", "last_finished", "last_stats", "ai_blocked_at", "ai_blocked_reason", "watchdog_at", "watchdog_action")},
             "totals": totals, "categories": rows, "recent_runs": recent,
             "all_countries": pe.COUNTRIES, "all_categories": pe.CATEGORIES, "segments": pe.SEGMENTS,
             "pending_enrich": await db.prospects.count_documents({"status": "discovered"}),

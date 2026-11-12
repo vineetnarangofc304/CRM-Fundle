@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 
 FLASH = "gemini-3.5-flash"
 PRO = "gemini-3.1-pro-preview"
+FALLBACK_MODELS = ("gemini-3-flash-preview", "gemini-2.5-flash")
 SOURCE = "AI Prospecting"
 
 COUNTRIES = ["India", "UAE", "Saudi Arabia", "Qatar", "Kuwait", "Oman", "Bahrain", "United Kingdom"]
@@ -120,6 +121,7 @@ _QUOTA_MARKERS = ("spend limit", "budget", "insufficient balance", "insufficient
 QUOTA_REGEX = "|".join(_QUOTA_MARKERS)
 _QUOTA_RE = re.compile(QUOTA_REGEX, re.I)
 _blocked = {"on": None}
+_limited = {}
 
 
 async def _call(model: str, system: str, prompt: str):
@@ -140,12 +142,18 @@ def _is_quota(e) -> bool:
 
 async def _ask(model: str, system: str, prompt: str) -> str:
     try:
-        try:
-            r = await _call(model, system, prompt)
-        except Exception as e:
-            if model == FLASH or not _is_quota(e):
-                raise
-            r = await _call(FLASH, system, prompt)
+        full = [model] + [m for m in (FLASH, *FALLBACK_MODELS) if m != model]
+        chain = [m for m in full if _limited.get(m, 0) < time.time()] or full
+        for i, mdl in enumerate(chain):
+            try:
+                r = await _call(mdl, system, prompt)
+                break
+            except Exception as e:
+                # a limit on one Gemini model shouldn't stop the engine — skip it for 30 min, try the next model
+                if not _is_quota(e) or i == len(chain) - 1:
+                    raise
+                _limited[mdl] = time.time() + 1800
+                logger.warning(f"{mdl} limited ({str(e)[:120]}), trying {chain[i + 1]}")
     except Exception as e:
         if _is_quota(e):
             _blocked["on"] = True

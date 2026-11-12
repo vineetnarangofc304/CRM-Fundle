@@ -80,6 +80,7 @@ export default function Layout({ children }) {
               to="/admin"
               onClick={guardClick}
               data-testid="nav-admin"
+              title="Admin"
               className={({ isActive }) =>
                 `flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold transition-colors ${
                   isActive ? "bg-[#1A73E8]/10 text-[#1557B0]" : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"

@@ -25,7 +25,7 @@ function EnginePanel({ ov, isAdmin, reload }) {
     <div className="crm-card space-y-3 p-4" data-testid="prospect-engine-panel">
       {ov.lock.ai_blocked_at && (
         <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700" data-testid="prospect-ai-credits-alert">
-          <b>AI provider is refusing requests</b> (credit or rate limit, since {ov.lock.ai_blocked_at} UTC). Brands are kept in the queue and nothing is marked failed.
+          <b>AI provider is refusing requests</b> (credit or rate limit, since {ov.lock.ai_blocked_at} UTC).{ov.lock.ai_blocked_reason && <span className="block text-[11px] opacity-80" data-testid="ai-blocked-reason">Provider said: {ov.lock.ai_blocked_reason}</span>} Brands are kept in the queue and nothing is marked failed.
           The engine retries automatically every 15 min. If it lasts, check Profile → Manage plan → Universal Key balance.
         </div>
       )}

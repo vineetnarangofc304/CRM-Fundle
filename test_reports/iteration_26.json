@@ -1,0 +1,42 @@
+{
+  "summary": "Tested the iter26 Brain fixes for the production 'send intro email' bug and the collapsible menu. Pytest: 53/55 passed. All 45 regression tests (iter22-25) pass. The new test_fundle_brain_iter26.py passed 8 of 10, with 2 real bugs found. It mocks mb.senders/mb.send and uses a fake LLM inside run_turn, so no real email was sent. Confirmed working: (1) send_single_email success: an outreach doc is created with kind 'brain', force_sender 0, and prospect_id/lead_id matched case-insensitively from the contact. The email is sent with the inbox signature, status becomes sent with sent_from set, and a lead timeline message is logged. (2) send_single_email failure: it raises 'Send failed from X: TEST timeout… retries automatically (outreach #N)' and the doc stays approved with send_attempts 1. (3) send_queued_emails_now moves pending_approval to approved to sent; an empty filter raises an error; no match returns an empty result. (4) inbox_activity is read-only, has no reason param and returns the right structure. (5) In run_turn, ACTION_TOOLS with no reason or an invented one get 'Instruction: <msg>' and run (send_single_email, stop_emails, run_job). save_settings with no reason is still blocked with the WHY error. (6) The SYSTEM prompt contains the new rule. Live LLM, 3 turns in session 45. 'Send intro email to TEST_Urban Kurti contact from main inbox' asked no reason question: overview → find prospect → find intro template 67 → send_single_email right away. In preview it failed, but the error text was 'Send failed from the inbox: None' (see bug). 'Send the queued intro … now' called send_queued_emails_now, which failed with no sender. The mailbox question called inbox_activity. Outreach #801 (to riya@urbankurti.com) was set to stopped. Session 45 was deleted. prospecting.enabled stayed false and hourly_cap stayed 25. UI: everything requested works. sidebar-toggle shrinks the menu from 224px to 64px, hides labels and persists after reload (crm_nav_mini). brain-chats-toggle hides the session list ('Hide chats' becomes 'Chats'), shows brain-new-chat-top, and persists after reload. The message area grows to 1854px. The failed chip reads 'Sent email — failed'.",
+  "backend_issues": {
+    "critical": [
+      {"endpoint": "core/brain.py run_turn + _reason_ok (reason-guard bypass)", "issue": "_reason_ok returns True for ANY reason starting with 'Instruction: ', for ALL tools. If the model writes reason='Instruction: set hourly cap' on save_settings, update_records or save_email_template, the WHY check is skipped and the change is applied. Reproduced in test_run_turn_settings_instruction_prefix_bypass. Fix: accept the 'Instruction:' prefix only when tc.name in ACTION_TOOLS. Or don't special-case it in _reason_ok at all; set a server-side flag in run_turn instead of trusting the string.", "priority": "HIGH"}
+    ],
+    "minor": [
+      {"endpoint": "core/brain.py t_email/_send_now + outreach._send_one (no sender available)", "issue": "When no inbox is in the pool (main not connected, or the pinned inbox is inactive, unverified or over cap), _send_one returns False and writes no error. The user then sees 'Send failed from the inbox: None. It stays queued…', which is the exact message seen live. The doc also stays approved with force_sender pinned and send_attempts unchanged, so it retries forever and never appears in inbox_activity.recent_send_errors. Fix: in _send_now, when a doc failed with no error, report 'No usable inbox: <main inbox not connected | inbox X inactive/over hourly cap>'. _sender_id('main') should also raise up front when the main inbox isn't connected (mailer.is_connected())."},
+      {"endpoint": "core/brain.py t_send_queued", "issue": "pending_approval docs are set to approved BEFORE _sender_id(from_inbox) is checked. A bad from_inbox therefore raises after the drafts are already approved. Resolve the sender_id first."},
+      {"endpoint": "core/brain.py _send_now", "issue": "The `sid` parameter is never used (dead code). In t_inbox, `__import__('datetime').timedelta` should be a normal import."},
+      {"endpoint": "core/brain.py t_email (risk)", "issue": "A failed Brain email stays approved and will go out automatically once the inbox is connected, possibly hours or days later (with CC from settings). Consider telling the user, or expiring kind='brain' single emails after N failed attempts or hours."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "FundleBrain ToolChip", "issue": "send_queued_emails_now returns ok=true even when sent=[] and failed=[...]. The chip shows a green 'Sent queued emails' while nothing was sent, which is misleading. Show amber, or 'failed', when the summary has an empty sent list or a non-empty failed list. Or make the tool raise when everything failed.", "selector": "[data-testid=brain-tool-chip]", "priority": "MEDIUM"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Layout sidebar (mini mode)", "issues": ["The Admin NavLink has no title attribute, so it has no tooltip when collapsed to icons. The other links have one."]}
+    ]
+  },
+  "test_report_links": ["/app/backend/tests/test_fundle_brain_iter26.py", "/app/backend/tests/test_fundle_brain_iter25.py", "/app/backend/tests/test_fundle_brain_iter24.py", "/app/backend/tests/test_fundle_brain_iter23.py", "/app/backend/tests/test_fundle_brain_iter22.py", "/app/test_reports/pytest/pytest_iter26.xml"],
+  "action_items": [
+    "HIGH: Only honour the 'Instruction: ' reason for ACTION_TOOLS. Today any write tool bypasses the WHY check if the model uses that prefix.",
+    "Give a clear error when no inbox is usable: not 'from the inbox: None', but 'main inbox not connected' or 'inbox X inactive / over cap'. Record it in outreach.error, and make _sender_id('main') fail when the main inbox isn't connected.",
+    "Show a failed or amber chip, or raise, when send_queued_emails_now sends nothing.",
+    "In t_send_queued, check from_inbox before approving pending drafts.",
+    "Add title='Admin' to the admin NavLink for the mini sidebar."
+  ],
+  "critical_code_review_comments": [
+    "The user's own extracted reason ('given') still replaces the model's reason for all non-read tools. The new ACTION_TOOLS auto-reason only applies when the reason fails _reason_ok. Correct, apart from the prefix bypass.",
+    "GATES still protects sends and run_job based on the latest message. Note that send_queued_emails_now's gate includes \\bnow\\b and \\bok\\b, so it is fairly permissive.",
+    "_send_one with force=True ignores the hourly cap (remaining can go negative). This is intended for a direct order, but bulk send_queued_emails_now (up to 50) also bypasses the cap."
+  ],
+  "updated_files": ["/app/backend/tests/test_fundle_brain_iter26.py"],
+  "success_rate": {"backend": "96% (53/55). 2 failures are real bugs: the reason bypass and the 'None' error text", "frontend": "100% of the requested UI flows; 1 misleading chip colour"},
+  "seed_data_creation": "The unit tests create prospect 99999926 (TEST_Iter26 Brand), outreach docs and messages for lead 99999926, and brain_audit rows for session 99999926. All are deleted in teardown. The live LLM run created outreach #801 (kind brain, to riya@urbankurti.com, a TEST_Urban Kurti contact), which was set to stopped. Brain session 45 was soft-deleted.",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Run: cd /app/backend && pytest tests/test_fundle_brain_iter2*.py -n 0. iter26 uses a module-level event loop plus monkeypatched mb.senders/mb.send and a fake LlmChat, so no real email is sent. Max outreach id is now 801 (stopped). The main inbox is not connected in preview. Use tests/brain_say.py <sid> 'msg' for live turns. Keep prospecting.enabled=false and hourly_cap=25."
+}
