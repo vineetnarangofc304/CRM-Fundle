@@ -128,6 +128,8 @@ async def t_export(ctx, a):
     if not cols:
         cols = ["brand_name", "category", "segment", "country", "city", "store_count", "website", "fit_score", "contacts"] \
             if col == "prospects" else None
+    if cols and col == "prospects" and "brand_name" not in cols:
+        cols = ["brand_name"] + cols
     per_contact = bool(a.get("one_row_per_contact")) and col == "prospects"
     cur = db[col].find(f, {"_id": 0})
     if a.get("sort"):
@@ -341,7 +343,9 @@ async def _send_now(ids: list) -> dict:
             pin = m.get("force_sender")
             err = ("No usable inbox: " + ("the main inbox isn't connected" if pin == mb.PRIMARY else
                    f"inbox #{pin} is inactive, untested or over its hourly limit" if pin is not None else
-                   "no connected inbox has room this hour"))
+                   ("no outreach inbox is ready — the main inbox is switched off for outreach and no extra inbox "
+                    "(Hardik/Anmol) is active and tested. Add their app password in Admin → Outreach inboxes and click Test"
+                    if not pool else "no connected inbox has room this hour")))
             await db.outreach.update_one({"id": i}, {"$set": {"error": err}})
         (sent if ok else failed).append({"id": i, "to": d.get("to"), "from": d.get("sent_from"), "status": d.get("status"), "error": err})
     return {"sent": sent, "failed": failed,
@@ -385,6 +389,11 @@ async def _send_job(jid: int, ids: list):
         if r["failed"]:
             upd["$push"] = {"errors": {"$each": [f"#{x['id']} {x.get('to') or ''}: {x.get('error')}" for x in r["failed"]], "$slice": -20}}
         await db.brain_send_jobs.update_one({"id": jid}, upd)
+        if any("no outreach inbox is ready" in (x.get("error") or "") for x in r["failed"]):
+            await db.brain_send_jobs.update_one({"id": jid}, {"$set": {
+                "status": "paused", "finished_at": now_utc_str(),
+                "pause_reason": "Paused: no inbox can send right now. Main inbox is off for outreach and Hardik/Anmol aren't active + tested yet — fix in Admin → Outreach inboxes, then ask again."}})
+            return
         streak = streak + 1 if any(_conn_err(x.get("error")) for x in r["failed"]) else 0
         if streak >= 3:
             await db.brain_send_jobs.update_one({"id": jid}, {"$set": {
