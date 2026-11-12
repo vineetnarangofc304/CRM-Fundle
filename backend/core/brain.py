@@ -269,18 +269,80 @@ async def t_job(ctx, a):
     return {"started": a["job"]}
 
 
-async def t_email(ctx, a):
+async def _send_now(ids: list, sid=None) -> dict:
+    """Send queued outreach docs right away through the normal sender (signature, retries, lead log)."""
     from core import mailboxes as mb, outreach as oc
     st = await oc.get_settings()
-    sid = await _sender_id(a.get("from_inbox"))
     pool = await mb.senders(st, oc._now()[:10])
-    s = next((x for x in pool if x["id"] == sid), None) if sid is not None else (pool[0] if pool else None)
-    if not s:
-        raise ValueError("That inbox isn't connected or active")
-    res = await mb.send(s, a["to"], a["subject"], oc._with_signature(oc.clean_html(a["body_html"]), s))
-    if not res.get("ok"):
-        raise ValueError(res.get("error") or "Send failed")
-    return {"sent": True, "from": s["email"]}
+    sent, failed = [], []
+    for i in ids:
+        m = await db.outreach.find_one_and_update({"id": i, "status": "approved"}, {"$set": {"status": "sending"}}, projection={"_id": 0})
+        if not m:
+            continue
+        ok = await oc._send_one(m, st, pool, force=True)
+        d = await db.outreach.find_one({"id": i}, {"_id": 0, "status": 1, "error": 1, "sent_from": 1, "to": 1})
+        (sent if ok else failed).append({"id": i, "to": d.get("to"), "from": d.get("sent_from"), "status": d.get("status"),
+                                         "error": d.get("error")})
+    return {"sent": sent, "failed": failed,
+            "note": "Failed ones stay queued and retry automatically within the hour." if failed else ""}
+
+
+async def t_email(ctx, a):
+    from core.outreach import clean_html
+    sid = await _sender_id(a.get("from_inbox"))
+    to = a["to"].strip().lower()
+    p = await db.prospects.find_one({"contacts.email": {"$regex": f"^{re.escape(to)}$", "$options": "i"}}, {"_id": 0}) or {}
+    c = next((x for x in p.get("contacts") or [] if (x.get("email") or "").lower() == to), {})
+    now = now_utc_str()
+    oid = await next_id("outreach")
+    await db.outreach.insert_one({
+        "id": oid, "seq_id": await next_id("outreach_seq"), "channel": "email", "step": 1, "kind": "brain",
+        "template_name": a.get("campaign_name") or "Fundle Brain email", "prospect_id": p.get("id"), "lead_id": p.get("lead_id"),
+        "brand": p.get("brand_name"), "category": p.get("category"), "contact_name": c.get("name") or to, "contact_role": c.get("role"),
+        "to": to, "subject": a["subject"], "subject_raw": a["subject"], "body": clean_html(a["body_html"]), "attachments": [],
+        "video_links": [], "force_sender": sid, "status": "approved", "created_by": f"Fundle Brain ({ctx['user'].get('name')})",
+        "created_at": now, "scheduled_at": now, "approved_by": "Fundle Brain", "approved_at": now})
+    r = await _send_now([oid])
+    if r["failed"]:
+        raise ValueError(f"Send failed from {r['failed'][0].get('from') or 'the inbox'}: {r['failed'][0].get('error')}. It stays queued and retries automatically (outreach #{oid}).")
+    return r
+
+
+async def t_send_queued(ctx, a):
+    f = a.get("outreach_filter") or {}
+    _check(f)
+    if not f:
+        raise ValueError("A filter is required (e.g. {\"brand\": \"Go Colors\"} or {\"id\": {\"$in\": [..]}})")
+    ids = [m["id"] async for m in db.outreach.find({"$and": [f, {"status": {"$in": ["approved", "pending_approval"]}}]}, {"id": 1}).limit(50)]
+    if not ids:
+        return {"sent": [], "failed": [], "note": "Nothing queued matches that filter."}
+    await db.outreach.update_many({"id": {"$in": ids}, "status": "pending_approval"},
+                                  {"$set": {"status": "approved", "approved_by": "Fundle Brain", "approved_at": now_utc_str()}})
+    if a.get("from_inbox"):
+        await db.outreach.update_many({"id": {"$in": ids}}, {"$set": {"force_sender": await _sender_id(a["from_inbox"])}})
+    return await _send_now(ids)
+
+
+async def t_inbox(ctx, a):
+    from core import mailboxes as mb
+    days = max(1, min(int(a.get("days") or 7), 90))
+    since = (datetime.now(timezone.utc) - __import__("datetime").timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
+    names = {mb.PRIMARY: (await ol_main()) or "main inbox"}
+    names.update({b["id"]: b["smtp_user"] async for b in db.mailboxes.find({}, {"id": 1, "smtp_user": 1})})
+    rows = await db.outreach.aggregate([{"$match": {"sent_at": {"$gte": since}}},
+                                        {"$group": {"_id": {"via": "$sent_via", "status": "$status"}, "n": {"$sum": 1}}}]).to_list(200)
+    per = {}
+    for r in rows:
+        k = names.get(r["_id"].get("via"), str(r["_id"].get("via")))
+        per.setdefault(k, {})[r["_id"]["status"]] = r["n"]
+    replies = await db.outreach.find({"replied_at": {"$gte": since}}, {"_id": 0, "brand": 1, "to": 1, "subject": 1, "replied_at": 1,
+                                                                     "reply_snippet": 1, "sent_via": 1}).sort("replied_at", -1).limit(30).to_list(30)
+    fails = await db.outreach.find({"error": {"$exists": True}, "status": {"$in": ["approved", "failed"]}},
+                                   {"_id": 0, "id": 1, "brand": 1, "to": 1, "error": 1, "sent_via_pref": 1, "force_sender": 1}).sort("id", -1).limit(15).to_list(15)
+    readers = await db.mailbox_readers.find({}, {"_id": 0, "mailbox_id": 1, "email": 1, "last_sync": 1, "last_error": 1}).to_list(50) \
+        if "mailbox_readers" in await db.list_collection_names() else []
+    return {"days": days, "per_inbox_status_counts": per, "recent_replies": replies, "recent_send_errors": fails,
+            "reply_tracking": _scrub(readers)}
 
 
 async def t_escalate(ctx, a):
@@ -330,8 +392,12 @@ TOOLS = {
                                                   {"prospect_filter": OBJ, "priority": INT, "contacts_only_mode": BOOL,
                                                    "include_brands_with_emails": {"type": "boolean", "description": "also re-research brands that already have emails (costs more)"}}, ["prospect_filter"])),
     "run_job": (t_job, _fn("run_job", "Start a background job now: outreach (send queued emails + auto templates), prospecting, email_format, inbox_sync.", {"job": STR}, ["job"])),
-    "send_single_email": (t_email, _fn("send_single_email", "Send one email right now to an address, optionally from a specific connected inbox.",
-                                       {"to": STR, "subject": STR, "body_html": STR, "from_inbox": STR}, ["to", "subject", "body_html"])),
+    "send_single_email": (t_email, _fn("send_single_email", "Send one email RIGHT NOW to an address (e.g. a brand's contact), optionally from a specific inbox (email, sender name match or 'main'). Goes through the normal sender: inbox signature, logged on the brand's lead, auto-retry if it fails.",
+                                       {"to": STR, "subject": STR, "body_html": STR, "from_inbox": STR, "campaign_name": STR}, ["to", "subject", "body_html"])),
+    "send_queued_emails_now": (t_send_queued, _fn("send_queued_emails_now", "Send already-queued outreach emails (e.g. a brand's pending intro) immediately instead of waiting for the next run. Optional from_inbox pins the sender.",
+                                                  {"outreach_filter": OBJ, "from_inbox": STR}, ["outreach_filter"])),
+    "inbox_activity": (t_inbox, _fn("inbox_activity", "Mailbox knowledge: per-inbox sent/bounced/failed counts for the last N days, recent replies, recent send errors and reply-tracking status.",
+                                    {"days": INT}, [], False)),
     "request_developer_change": (t_escalate, _fn("request_developer_change", "Only when a request truly needs new code or a new screen that no tool can do: logs it and emails Vineet.",
                                                  {"summary": STR, "details": STR}, ["summary"])),
 }
@@ -346,7 +412,8 @@ TOOLS.update({
     "manage_contact_sources": (bd.t_sources, _fn("manage_contact_sources", "List, add or remove websites/LinkedIn pages the AI contact search must use when looking for decision makers (trade media, directories, association member lists...).",
                                                  {"action": {"type": "string", "enum": ["list", "add", "remove"]}, "name": STR, "url": STR, "notes": STR}, ["action"])),
 })
-READ_ONLY = {"get_system_overview", "find_records", "aggregate_records", "read_uploaded_file"}
+READ_ONLY = {"get_system_overview", "find_records", "aggregate_records", "read_uploaded_file", "inbox_activity"}
+ACTION_TOOLS = {"send_single_email", "send_email_campaign", "send_queued_emails_now", "stop_emails", "run_job"}
 
 SYSTEM = """You are Fundle Brain, the operator of the Fundle.ai CRM (B2B sales CRM selling AI loyalty/retail software to brands in India/GCC/UK). You act on the live system through tools — you do not just advise.
 
@@ -355,13 +422,15 @@ SYSTEM MAP
 - leads: CRM leads (id, name/company fields, lead_stage, user_id, tags, email_from, fit_score). Each prospect has lead_id.
 - outreach: each email. Fields: id, seq_id, kind (template|brain), template_id, template_name, step, prospect_id, lead_id, brand, to, subject, status (pending_approval|approved|sending|sent|failed|stopped|bounced), scheduled_at, sent_at, sent_via (inbox id), force_sender, replied_at.
 - email_templates: id, name, subject, body (HTML), mode (auto|manual), audience, step, wait_days, ai_tailor, active. Auto intros: one intro per brand chosen by audience (d2c segment; stores_100 = 100+; stores_11_99; stores_1_10 incl unknown). Follow-ups step 2/3 go wait_days after the intro to the same person if no reply.
+- To email a specific brand/contact now: find the contact, use the brand's matching intro template text (email_templates by audience, fill {{first_name}}/{{brand}}) unless the user gave text, and call send_single_email (or send_queued_emails_now if an intro is already queued for that brand). Report the real result (sent from which inbox, or the exact error).
+- Mailbox questions (what was sent, replies, bounces, errors per inbox): use inbox_activity.
 - Inboxes: call get_system_overview first to see main_inbox and inboxes_extra; to send from the main inbox use from_inbox "main".
 - mailboxes: extra sending inboxes (id, smtp_user email, sender_name, signature, active, verified). Main inbox = id 0 (its signature = outreach setting `signature`). Each inbox sends max hourly_cap per hour (default 25), spread over runs every 15 min. Ask "from Hardik's email" -> find the mailbox whose smtp_user/sender_name matches.
 - settings: outreach / prospecting / linkedin sections (use save_settings).
 - Engines run every 15 minutes automatically (prospecting, outreach send + reply/bounce sync, email-format check).
 
 RULES
-1. Do what the user asks immediately — no confirmation step. But every change needs the USER'S OWN reason (why they want it). Never invent or paraphrase a reason like "user requested it". If the user's messages don't say why, do NOT call any change tool — reply with one short question asking why, then act once they answer. Pass their reason in `reason`.
+1. Do what the user asks immediately — no confirmation step. Direct orders to send, stop or run something need NO extra reason (the order is the reason) — just do it. Changes to settings, templates or data need the USER'S OWN reason (why they want it). Never invent or paraphrase a reason like "user requested it". If the user's messages don't say why, do NOT call any change tool — reply with one short question asking why, then act once they answer. Pass their reason in `reason`.
 2. Before bulk changes, check scope with find_records/aggregate_records (counts), then do it, then report exactly what changed (numbers, names). Prefer specific filters; regex with $options "i" for categories/names.
 3. Write emails in clean HTML (<p>, <ul><li>, <b>). Don't add a signature — the sending inbox adds its own.
 4. New emails/templates/campaigns: first DRAFT the email in the chat as plain text (subject + body, no HTML tags) and ask "Shall I save/send it?"; only call save_email_template or send_email_campaign after the user approves. Uploaded or new brands get the automatic intro templates by themselves — NEVER call send_email_campaign or run_job after an import unless the user's latest message explicitly asks to send a specific email or run a job.
@@ -379,6 +448,8 @@ STOP = {"this", "that", "with", "from", "have", "they", "them", "their", "want",
 
 def _reason_ok(reason: str, said: str) -> bool:
     r = reason.strip().lower()
+    if r.startswith("instruction: "):
+        return True
     if len(r) < 4 or re.match(r"^(the )?user\b|^as (requested|asked)|^per (the )?user", r) or re.search(r"explicitly asked|user (requested|asked|wants)", r):
         return False
     words = {w for w in re.findall(r"[a-z0-9]{4,}", r) if w not in STOP}
@@ -393,7 +464,8 @@ def _user_reason(said_msgs: list):
     return None
 
 
-GATES = {"send_email_campaign": r"\bsend\b|\bblast\b|\bshoot\b|go ahead|\byes\b|approve|\bok(ay)?\b|email (this|it|them) to",
+GATES = {"send_queued_emails_now": r"\bsend\b|go ahead|\byes\b|approve|\bok(ay)?\b|\bnow\b",
+         "send_email_campaign": r"\bsend\b|\bblast\b|\bshoot\b|go ahead|\byes\b|approve|\bok(ay)?\b|email (this|it|them) to",
          "send_single_email": r"\bsend\b|go ahead|\byes\b|approve|\bok(ay)?\b",
          "run_job": r"\b(run|start|now|sync|check|trigger|kick|yes)\b|go ahead"}
 
@@ -430,6 +502,8 @@ async def run_turn(ctx: dict, history: list, text: str):
                 r = str(args.get("reason") or "").strip()
                 if given and tc.name not in READ_ONLY:
                     args["reason"] = r = given  # the user's own words win over the model's paraphrase
+                elif tc.name in ACTION_TOOLS and not _reason_ok(r, said):
+                    args["reason"] = r = f"Instruction: {text.strip()[:250]}"  # a direct send/stop/run order is its own reason
                 if tc.name not in READ_ONLY and not (tc.name == "manage_contact_sources" and args.get("action") == "list") and not _reason_ok(r, said):
                     raise ValueError("No real reason from the user — ask the user WHY they want this change, then retry using their words")
                 if tc.name in GATES and not re.search(GATES[tc.name], latest):

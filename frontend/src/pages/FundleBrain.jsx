@@ -7,14 +7,14 @@ const esc = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, 
 const fmt = (s) => esc(s || "").replace(/\*\*(.+?)\*\*/g, "<b>$1</b>").replace(/`([^`]+)`/g, "<code class='rounded bg-slate-100 px-1'>$1</code>")
   .split("\n").filter((l) => !/^\s*\|?\s*:?-{3,}/.test(l)).map((l) => l.replace(/^#{1,6}\s*(.*)$/, "<b>$1</b>").replace(/^\s*\|(.*)\|\s*$/, (_, r) => r.split("|").map((c) => c.trim()).join(" · ")))
   .map((l) => (/^\s*[-•*] /.test(l) ? `<li class="ml-4 list-disc">${l.replace(/^\s*[-•*] /, "")}</li>` : l ? `<p>${l}</p>` : "")).join("");
-const TOOL_LABEL = { get_system_overview: "Checked system status", find_records: "Looked up records", aggregate_records: "Ran analysis", update_records: "Updated records", save_settings: "Changed settings", save_email_template: "Saved email template", send_email_campaign: "Queued emails", stop_emails: "Stopped emails", prioritize_contact_search: "Queued contact search", run_job: "Started a job", send_single_email: "Sent email", request_developer_change: "Emailed Vineet a change request", read_uploaded_file: "Read the file", import_brands_from_file: "Imported brands", import_contact_emails_from_file: "Imported verified emails", manage_contact_sources: "Updated contact sources" };
+const TOOL_LABEL = { get_system_overview: "Checked system status", find_records: "Looked up records", aggregate_records: "Ran analysis", update_records: "Updated records", save_settings: "Changed settings", save_email_template: "Saved email template", send_email_campaign: "Queued emails", stop_emails: "Stopped emails", prioritize_contact_search: "Queued contact search", run_job: "Started a job", send_single_email: "Sent email", send_queued_emails_now: "Sent queued emails", inbox_activity: "Checked mailboxes", request_developer_change: "Emailed Vineet a change request", read_uploaded_file: "Read the file", import_brands_from_file: "Imported brands", import_contact_emails_from_file: "Imported verified emails", manage_contact_sources: "Updated contact sources" };
 const EXAMPLES = ["Attach an Excel of brands → 'Add these brands and start emailing them'", "Also use https://www.example.com/team pages to find contacts — reason: more decision makers", "Send this email to all women fashion brands from Abhinav's inbox: …", "Change the hourly limit from 25 to 60 — reason: inboxes are warmed up", "Stop adding brands and search contacts for grocery brands with up to 5 stores first", "How many intro emails went out today, and how many bounced?"];
 
 function ToolChip({ t }) {
   const warn = t.ok && /"emailed": false/.test(t.summary || "");
   return (
     <div className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold ${t.ok === false ? "bg-rose-50 text-rose-700" : warn ? "bg-amber-50 text-amber-700" : t.ok ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-500"}`} title={t.summary || ""} data-testid="brain-tool-chip">
-      {t.ok === false ? <WarningCircle size={12} /> : t.ok ? <CheckCircle size={12} /> : <Wrench size={12} className="animate-spin" />}{warn ? "Change request saved (email not sent)" : TOOL_LABEL[t.name] || t.name}
+      {t.ok === false ? <WarningCircle size={12} /> : t.ok ? <CheckCircle size={12} /> : <Wrench size={12} className="animate-spin" />}{warn ? "Change request saved (email not sent)" : `${TOOL_LABEL[t.name] || t.name}${t.ok === false ? " — failed" : ""}`}
     </div>
   );
 }
@@ -31,9 +31,10 @@ function Bubble({ m }) {
   );
 }
 
-function Sidebar({ list, cur, pick, add, del, audit }) {
+function Sidebar({ list, cur, pick, add, del, audit, open }) {
+  if (!open) return null;
   return (
-    <aside className="flex w-64 shrink-0 flex-col border-r border-slate-100 bg-slate-50/60" data-testid="brain-sidebar">
+    <aside className="flex w-56 shrink-0 flex-col border-r border-slate-100 bg-slate-50/60" data-testid="brain-sidebar">
       <div className="space-y-2 p-3">
         <button data-testid="brain-new-chat" onClick={add} className="crm-btn-primary w-full justify-center !py-2 text-xs"><Plus size={14} /> New chat</button>
         <button data-testid="brain-audit-btn" onClick={audit} className={`crm-btn-secondary w-full justify-center !py-1.5 text-xs ${cur === "audit" ? "!bg-slate-200" : ""}`}><ClockCounterClockwise size={14} /> Audit log</button>
@@ -78,6 +79,8 @@ export default function FundleBrain() {
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const [file, setFile] = useState(null);
+  const [chats, setChats] = useState(() => localStorage.getItem("brain_chats_open") !== "0" && window.innerWidth > 900);
+  const toggleChats = () => setChats((v) => { localStorage.setItem("brain_chats_open", v ? "0" : "1"); return !v; });
   const end = useRef(null);
   const fileIn = useRef(null);
   const loadList = useCallback(() => API.get("/brain/sessions").then(({ data }) => { setList(data); return data; }), []);
@@ -131,12 +134,14 @@ export default function FundleBrain() {
 
   return (
     <div className="flex h-[calc(100vh-7rem)] overflow-hidden rounded-2xl border border-slate-100 bg-white" data-testid="fundle-brain-page">
-      <Sidebar list={list} cur={cur} pick={setCur} add={add} del={del} audit={() => setCur("audit")} />
+      <Sidebar open={chats} list={list} cur={cur} pick={setCur} add={add} del={del} audit={() => setCur("audit")} />
       {cur === "audit" ? <Audit /> : (
         <div className="flex min-w-0 flex-1 flex-col">
           <div className="flex items-center gap-2 border-b border-slate-100 px-6 py-3">
+            <button data-testid="brain-chats-toggle" onClick={toggleChats} title={chats ? "Hide chats" : "Show chats"} className="crm-btn-secondary !px-2 !py-1 text-xs"><ChatsCircle size={14} /> {chats ? "Hide chats" : "Chats"}</button>
+            {!chats && <button data-testid="brain-new-chat-top" onClick={add} className="crm-btn-secondary !px-2 !py-1 text-xs"><Plus size={14} /> New</button>}
             <Brain size={20} weight="fill" className="text-[#1A73E8]" /><span className="font-display text-sm font-extrabold text-slate-800">Fundle Brain</span>
-            <span className="text-[11px] text-slate-500">runs prospecting, outreach, templates, inboxes and data for you · every change is logged with its reason</span>
+            <span className="hidden text-[11px] text-slate-500 md:inline">runs prospecting, outreach, templates, inboxes and data for you · every change is logged with its reason</span>
           </div>
           <div className="flex-1 space-y-4 overflow-y-auto bg-slate-50/40 px-6 py-5" data-testid="brain-messages">
             {!msgs.length && (

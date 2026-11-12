@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import { NavLink, useNavigate } from "react-router-dom";
 import {
   SquaresFour, UsersThree, ClockCountdown, WhatsappLogo, ChartBar,
-  EnvelopeSimple, GearSix, SignOut, MagnifyingGlass, Sparkle, PhoneCall, Megaphone, Gauge,
+  EnvelopeSimple, GearSix, CaretDoubleLeft, CaretDoubleRight, SignOut, MagnifyingGlass, Sparkle, PhoneCall, Megaphone, Gauge,
   Binoculars,
   PaperPlaneTilt,
 } from "@phosphor-icons/react";
@@ -34,6 +34,8 @@ export default function Layout({ children }) {
   const { checkAllowed } = useNavGuard();
   const navigate = useNavigate();
   const [search, setSearch] = useState("");
+  const [mini, setMini] = useState(() => localStorage.getItem("crm_nav_mini") === "1");
+  const toggleMini = () => setMini((v) => { localStorage.setItem("crm_nav_mini", v ? "0" : "1"); return !v; });
 
   // Block any navigation away while a page (LeadDetail) reports missing mandatory fields.
   const guardClick = (e) => { if (!checkAllowed()) e.preventDefault(); };
@@ -46,12 +48,15 @@ export default function Layout({ children }) {
 
   return (
     <div className="flex h-screen overflow-hidden bg-slate-50">
-      <aside className="flex w-56 shrink-0 flex-col border-r border-slate-200 bg-white">
-        <div className="px-5 py-5">
+      <aside className={`flex shrink-0 flex-col overflow-y-auto border-r border-slate-200 bg-white transition-[width] duration-200 ${mini ? "w-16" : "w-56"}`} data-testid="sidebar">
+        <button data-testid="sidebar-toggle" onClick={toggleMini} title={mini ? "Expand menu" : "Collapse menu"} className="mx-3 mt-3 flex items-center justify-center rounded-lg border border-slate-200 py-1 text-slate-500 transition-colors hover:bg-slate-50">
+          {mini ? <CaretDoubleRight size={14} /> : <CaretDoubleLeft size={14} />}
+        </button>
+        <div className={`px-5 py-5 ${mini ? "hidden" : ""}`}>
           <img src={BRAND.logo} alt={BRAND.name} className="h-8 w-auto self-start object-contain" data-testid="sidebar-brand-logo" />
           <p className="mt-1 text-[10px] font-semibold uppercase tracking-[0.25em] text-[#0B1F3A]">CRM</p>
         </div>
-        <nav className="flex-1 space-y-1 px-3">
+        <nav className={`flex-1 space-y-1 ${mini ? "px-2" : "px-3"}`}>
           {NAV.filter(({ perm, roles }) => can(perm) && (!roles || roles.includes(user?.role))).map(({ to, label, icon: Icon, testid }) => (
             <NavLink
               key={to}
@@ -59,14 +64,15 @@ export default function Layout({ children }) {
               end={to === "/"}
               onClick={guardClick}
               data-testid={testid}
+              title={label}
               className={({ isActive }) =>
                 `flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold transition-colors ${
                   isActive ? "bg-[#1A73E8]/10 text-[#1557B0]" : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
                 }`
               }
             >
-              <Icon size={19} weight="duotone" />
-              {label}
+              <Icon size={19} weight="duotone" className="shrink-0" />
+              {!mini && label}
             </NavLink>
           ))}
           {(can("admin")) && (
@@ -80,19 +86,19 @@ export default function Layout({ children }) {
                 }`
               }
             >
-              <GearSix size={19} weight="duotone" />
-              Admin
+              <GearSix size={19} weight="duotone" className="shrink-0" />
+              {!mini && "Admin"}
             </NavLink>
           )}
         </nav>
-        {can("brain") && <NavLink to="/brain" onClick={guardClick} data-testid="nav-ai-brain-card" className="mx-3 mb-3 block rounded-xl bg-gradient-to-br from-[#0B1F3A]/10 to-[#1A73E8]/10 p-3 transition hover:from-[#0B1F3A]/20 hover:to-[#1A73E8]/20">
+        {can("brain") && <NavLink to="/brain" onClick={guardClick} data-testid="nav-ai-brain-card" title="Fundle Brain" className="mx-3 mb-3 block rounded-xl bg-gradient-to-br from-[#0B1F3A]/10 to-[#1A73E8]/10 p-3 transition hover:from-[#0B1F3A]/20 hover:to-[#1A73E8]/20">
           <div className="flex items-center gap-2 text-[#0B1F3A]">
             <Sparkle size={16} weight="fill" />
-            <span className="text-xs font-bold">Fundle Brain</span>
+            {!mini && <span className="text-xs font-bold">Fundle Brain</span>}
           </div>
-          <p className="mt-1 text-[11px] text-slate-500">Tell it what to change, send or find — it runs the CRM for you →</p>
+          {!mini && <p className="mt-1 text-[11px] text-slate-500">Tell it what to change, send or find — it runs the CRM for you →</p>}
         </NavLink>}
-        <div className="border-t border-slate-100 px-5 py-3">
+        <div className={`border-t border-slate-100 px-5 py-3 ${mini ? "hidden" : ""}`}>
           <p className="text-[10px] uppercase tracking-[0.2em] text-slate-400">{BRAND.poweredBy}</p>
         </div>
       </aside>
