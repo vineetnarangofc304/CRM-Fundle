@@ -112,6 +112,7 @@ def night_seconds_left() -> int:
         end += timedelta(days=1)
     return int((end - now).total_seconds())
 MAX_RETRY_ROUNDS = 5
+MAX_LANES = 4  # more parallel lanes than this trips the AI provider's 429 rate limits
 
 
 class AiCreditsOut(Exception):
@@ -164,7 +165,8 @@ async def _ask(model: str, system: str, prompt: str, meta: dict | None = None) -
                 # a limit on one Gemini model shouldn't stop the engine — skip it for 30 min, try the next model
                 if not _is_quota(e) or i == len(chain) - 1:
                     raise
-                _limited[mdl] = time.time() + 1800
+                # quota exhausted ("exceeded your current quota") lasts hours; plain rate limits clear in minutes
+                _limited[mdl] = time.time() + (10800 if re.search(r"quota|billing", str(e), re.I) else 1800)
                 logger.warning(f"{mdl} limited ({str(e)[:120]}), trying {chain[i + 1]}")
     except Exception as e:
         if _is_quota(e):
@@ -183,7 +185,7 @@ async def _ask(model: str, system: str, prompt: str, meta: dict | None = None) -
 async def get_settings() -> dict:
     doc = await db.settings.find_one({"key": "prospecting"}, {"_id": 0}) or {}
     return {"enabled": doc.get("enabled", True), "countries": doc.get("countries") or ["India"],
-            "phase": doc.get("phase", "auto"), "concurrency": int(doc.get("concurrency") or 3),
+            "phase": doc.get("phase", "auto"), "concurrency": min(int(doc.get("concurrency") or 3), MAX_LANES),
             "create_leads": doc.get("create_leads", True), "daily_cap": int(doc.get("daily_cap") or 0)}
 
 
@@ -385,14 +387,17 @@ async def _next_enrich():
 
 
 async def _lane(deadline, settings, stats):
+    wait = 60
     while time.time() < deadline:
         try:
             if not await _step(settings, stats):
                 return
+            wait = 60
         except AiCreditsOut:
-            if time.time() + 90 > deadline:
+            if time.time() + wait + 30 > deadline:
                 return
-            await asyncio.sleep(60)
+            await asyncio.sleep(wait + random.randint(0, 20))
+            wait = min(wait * 2, 300)
         except Exception:
             logger.exception("prospecting lane step failed")
             await asyncio.sleep(5)
@@ -501,7 +506,7 @@ async def run_worker(max_seconds: int = 840, trigger: str = "cron"):
             await db.settings.insert_one({"key": "prospect_angles_v2", "done": True})
         await ensure_catalog("source_lead", SOURCE)
         deadline = time.time() + max_seconds
-        await asyncio.gather(*[_lane(deadline, settings, stats) for _ in range(max(1, min(settings["concurrency"], 10)))],
+        await asyncio.gather(*[_lane(deadline, settings, stats) for _ in range(max(1, settings["concurrency"]))],
                              return_exceptions=True)
     except Exception:
         logger.exception("prospecting worker failed")

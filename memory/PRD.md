@@ -142,3 +142,4 @@ Gmail OAuth (GOOGLE_CLIENT_ID/SECRET, GMAIL_REDIRECT_URI), Meta CAPI (dataset id
 - Fundle Brain export_csv tool: any collection+filter -> CSV (<=50k rows) stored in brain_exports; GET /api/brain/exports/{id}; Download CSV button in chat.
 - Brain update_brands_from_file: fills only blank store_count/category/city/website/segment; adds unknown brands. Saved CSV files view (GET /api/brain/exports).
 - Contact search rate-limit on prod: RCA requested from deployer (pending).
+- Prod RCA: Gemini 429 'exceeded quota' on Emergent key + concurrency 10. Fix: lanes capped at 4, quota-limited models skipped 3h, exponential backoff (60s→300s) on AI limits.
