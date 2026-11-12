@@ -1,6 +1,7 @@
 """Email template library: AI-tailored, click-to-send or auto-send templates with attachments + video links."""
 import html
 import logging
+from datetime import datetime, timedelta, timezone
 import os
 import re
 import time
@@ -102,6 +103,25 @@ INTRO_V2 = [
              "<li><b>Track Performance:</b> Access real-time reports and customer insights to understand what drives repeat purchases.</li>"
              "</ul>" + _ASK + "<p>I will wait to hear back from you to take this initiative forward.</p>"},
 ]
+_FU_PITCH = {
+    "d2c": "website-led loyalty, referrals and marketplace reconciliation for D2C brands",
+    "stores_100": "a unified AI Retail OS — loyalty, CRM, campaigns and marketplace reconciliation on one platform",
+    "stores_11_99": "POS-integrated O2O loyalty with an in-built SMS, WhatsApp and RCS campaign manager",
+    "stores_1_10": "simple POS-integrated loyalty and repeat-sale campaigns, without enterprise complexity",
+}
+_FU_NAME = {"d2c": "D2C brands", "stores_100": "100+ stores", "stores_11_99": "11 to 99 stores", "stores_1_10": "1 to 10 stores (and unknown)"}
+FOLLOW_UPS = [x for a, pitch in _FU_PITCH.items() for x in (
+    {"kind": f"fu2_{a}", "audience": a, "step": 2, "wait_days": 3, "name": f"Follow-up 1 — {_FU_NAME[a]}",
+     "subject": "Re: {{intro_subject}}",
+     "body": "<p>Dear {{first_name}},</p><p>Just following up on my note below. We help brands like {{brand}} with "
+             f"{pitch}.</p><p>Would a 25-minute live demo this week or early next work for you? Happy to fit around your calendar.</p>"},
+    {"kind": f"fu3_{a}", "audience": a, "step": 3, "wait_days": 7, "name": f"Follow-up 2 — {_FU_NAME[a]}",
+     "subject": "Re: {{intro_subject}}",
+     "body": "<p>Dear {{first_name}},</p><p>I don’t want to crowd your inbox, so this will be my last note for now.</p>"
+             "<p>If improving repeat purchases and customer loyalty at {{brand}} is a priority this quarter, I’d be glad to "
+             "show you a 25-minute walkthrough. If someone else on your team handles this, could you point me to them?</p>"
+             "<p>Thank you for your time.</p>"},
+)]
 TAILOR_SYS = ("You personalise B2B email templates. Keep the template's offer, structure, links and length; "
               "fill placeholders; add at most one specific, true line about the recipient's company. "
               "No hype, no emojis, no invented stats. Reply with JSON only.")
@@ -172,6 +192,64 @@ async def seed_intro_v2():
     await db.mailboxes.update_many({"smtp_user": {"$regex": "^abhinav"}, "signature": {"$exists": False}}, {"$set": {"signature": ABHINAV_SIG}})
 
 
+async def seed_followups_v1():
+    """One-time: add day-3 / day-7 follow-ups per store group (auto, sent as written) and default the signature to Abhinav's."""
+    if await db.settings.find_one({"key": "tpl_followups_v1"}):
+        return
+    await db.settings.insert_one({"key": "tpl_followups_v1", "at": now_utc_str()})
+    for s in FOLLOW_UPS:
+        if not await db.email_templates.find_one({"kind": s["kind"], "is_deleted": {"$ne": True}}):
+            await db.email_templates.insert_one({**s, "id": await next_id("email_template"), "mode": "auto", "ai_tailor": False,
+                                                 "attachments": [], "video_links": [], "active": True, "is_deleted": False,
+                                                 "created_at": now_utc_str(), "updated_at": now_utc_str()})
+    st = await db.settings.find_one({"key": "outreach"}) or {}
+    if not (st.get("signature") or "").strip():
+        await db.settings.update_one({"key": "outreach"}, {"$set": {"signature": ABHINAV_SIG}}, upsert=True)
+
+
+async def run_followups(limit: int) -> int:
+    """Queue follow-up N to the same contact `wait_days` after the intro was sent, unless the brand replied or it bounced."""
+    from core.outreach import _now
+    made = 0
+    fus = await db.email_templates.find({"mode": "auto", "active": True, "is_deleted": {"$ne": True}, "step": {"$gt": 1}},
+                                        {"_id": 0}).sort("step", 1).to_list(50)
+    intro_ids = [t["id"] async for t in db.email_templates.find(
+        {"$or": [{"audience": {"$nin": [None, "all"]}}, {"kind": {"$regex": "^intro"}}], "step": {"$not": {"$gt": 1}}}, {"id": 1})]
+    for t in fus:
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=t.get("wait_days") or 3)).strftime("%Y-%m-%d %H:%M:%S")
+        intros = await db.outreach.find({"kind": "template", "template_id": {"$in": intro_ids}, "status": "sent",
+                                         "sent_at": {"$lte": cutoff}, "replied_at": {"$exists": False},
+                                         f"fu_step{t['step']}": {"$exists": False}}, {"_id": 0}).limit(limit - made + 50).to_list(500)
+        for o in intros:
+            if made >= limit:
+                return made
+            p = await db.prospects.find_one({"id": o["prospect_id"]}, {"_id": 0})
+            if not p or p.get("replied") or o["to"].lower() in {e.lower() for e in p.get("bounced_emails") or []}:
+                continue
+            if AUDIENCES.get(t.get("audience") or "all") and not await db.prospects.find_one(
+                    {"$and": [{"id": p["id"]}, AUDIENCES[t["audience"]]]}, {"_id": 1}):
+                continue
+            if t["step"] > 2 and not await db.outreach.find_one({"seq_id": o["seq_id"], "step": t["step"] - 1, "status": "sent"}):
+                continue
+            await db.outreach.update_one({"id": o["id"]}, {"$set": {f"fu_step{t['step']}": t["id"]}})
+            c = next((x for x in p.get("contacts") or [] if (x.get("email") or "").lower() == o["to"].lower()),
+                     {"name": o.get("contact_name"), "role": o.get("contact_role"), "email": o["to"]})
+            subject, body = await tailor({**t, "subject": t["subject"].replace("{{intro_subject}}", o["subject"])}, p, c)
+            now = _now()
+            await db.outreach.insert_one({
+                "id": await next_id("outreach"), "seq_id": o["seq_id"], "channel": "email", "step": t["step"], "kind": "template",
+                "template_id": t["id"], "template_name": t["name"], "tpl_version": t.get("updated_at"), "prospect_id": p["id"],
+                "lead_id": o.get("lead_id"), "brand": o["brand"], "category": o.get("category"), "fit_score": p.get("fit_score"),
+                "contact_name": c.get("name"), "contact_role": c.get("role"), "to": o["to"], "email_status": c.get("email_status"),
+                "subject": subject, "body": body, "attachments": t.get("attachments") or [], "video_links": t.get("video_links") or [],
+                "sent_via_pref": o.get("sent_via"), "intro_subject": o["subject"],
+                "status": "approved", "created_by": "Auto follow-up", "created_at": now, "scheduled_at": now,
+                "approved_by": "Auto follow-up", "approved_at": now})
+            await db.prospects.update_one({"id": p["id"]}, {"$addToSet": {"tpl_sent": t["id"]}})
+            made += 1
+    return made
+
+
 async def load_attachments(items: list) -> list:
     out = []
     for a in items or []:
@@ -216,11 +294,14 @@ async def run_auto(limit: int) -> int:
     """Auto-mode templates: queue a tailored email for every brand with an email that hasn't had that template."""
     from core.outreach import pick_contact
     await seed_intro_v2()
-    made = 0
-    tpls = await db.email_templates.find({"mode": "auto", "active": True, "is_deleted": {"$ne": True}}, {"_id": 0}).to_list(50)
+    await seed_followups_v1()
+    made = await run_followups(limit)
+    tpls = await db.email_templates.find({"mode": "auto", "active": True, "is_deleted": {"$ne": True},
+                                          "step": {"$not": {"$gt": 1}}}, {"_id": 0}).to_list(50)
     # A brand gets only one intro: any audience-specific template (or the old generic intro) counts.
     intro_ids = [t["id"] async for t in db.email_templates.find(
-        {"$or": [{"audience": {"$in": [k for k in AUDIENCES if k != "all"]}}, {"kind": {"$regex": "^intro"}}]}, {"id": 1})]
+        {"$or": [{"audience": {"$in": [k for k in AUDIENCES if k != "all"]}}, {"kind": {"$regex": "^intro"}}],
+         "step": {"$not": {"$gt": 1}}}, {"id": 1})]
     for t in tpls:
         if made >= limit:
             break

@@ -4,7 +4,7 @@ import { Sparkle, Paperclip, VideoCamera, Plus, Trash, FloppyDisk, X } from "@ph
 import { API, apiErr } from "../lib/api";
 
 const AUD = { all: "Every brand", d2c: "D2C / e-commerce brands", stores_100: "100+ stores", stores_11_99: "11–99 stores", stores_1_10: "1–10 stores or unknown" };
-const EMPTY = { name: "", subject: "", body: "<p>Hi {{first_name}},</p>\n<p></p>", mode: "manual", ai_tailor: true, audience: "all", active: true, attachments: [], video_links: [] };
+const EMPTY = { name: "", subject: "", body: "<p>Hi {{first_name}},</p>\n<p></p>", mode: "manual", ai_tailor: true, audience: "all", step: 1, wait_days: 0, active: true, attachments: [], video_links: [] };
 const kb = (n) => `${Math.max(1, Math.round((n || 0) / 1024))} KB`;
 
 function Attachments({ f, setF }) {
@@ -76,6 +76,11 @@ function Editor({ t, onDone }) {
           <select data-testid="tpl-audience" className="crm-select mt-1 w-full" value={f.audience || "all"} onChange={(e) => setF({ ...f, audience: e.target.value })}>
             {Object.entries(AUD).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
           </select></label>
+        <label className="text-xs font-semibold text-slate-500">Email in sequence
+          <select data-testid="tpl-step" className="crm-select mt-1 w-full" value={f.step || 1} onChange={(e) => { const st = Number(e.target.value); setF({ ...f, step: st, wait_days: st === 1 ? 0 : (f.wait_days || (st === 2 ? 3 : 7)) }); }}>
+            <option value={1}>Intro</option><option value={2}>Follow-up 1</option><option value={3}>Follow-up 2</option>
+          </select></label>
+        {(f.step || 1) > 1 && <label className="text-xs font-semibold text-slate-500">Days after intro (if no reply)<input data-testid="tpl-wait-days" type="number" min={1} max={60} className="crm-input mt-1 w-full" value={f.wait_days} onChange={(e) => setF({ ...f, wait_days: Number(e.target.value) })} /></label>}
         <label className="flex items-end gap-2 pb-2 text-xs font-semibold text-slate-600"><input data-testid="tpl-active" type="checkbox" checked={f.active} onChange={(e) => setF({ ...f, active: e.target.checked })} /> Active</label>
       </div>
       <label className="flex items-center gap-2 text-xs font-semibold text-slate-600"><input data-testid="tpl-ai-tailor" type="checkbox" checked={f.ai_tailor !== false} onChange={(e) => setF({ ...f, ai_tailor: e.target.checked })} />
@@ -157,6 +162,7 @@ export function EmailTemplates() {
             <div className="flex items-center gap-2">
               <span className="font-bold text-slate-800">{t.name}</span>
               <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${t.mode === "auto" ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-600"}`} data-testid={`tpl-mode-badge-${t.id}`}>{t.mode === "auto" ? "AUTO EMAILER" : "MANUAL"}</span>
+              {t.step > 1 && <span className="rounded-full bg-violet-50 px-2 py-0.5 text-[10px] font-bold text-violet-700" data-testid={`tpl-step-badge-${t.id}`}>Follow-up {t.step - 1} · day {t.wait_days}</span>}
               {t.audience && t.audience !== "all" && <span className="rounded-full bg-sky-50 px-2 py-0.5 text-[10px] font-bold text-sky-700" data-testid={`tpl-audience-badge-${t.id}`}>{AUD[t.audience]}</span>}
               <span className="text-[10px] font-semibold text-slate-400" data-testid={`tpl-tailor-label-${t.id}`}>{t.ai_tailor === false ? "sent as written" : "AI-personalised"}</span>
               {!t.active && <span className="rounded-full bg-rose-50 px-2 py-0.5 text-[10px] font-bold text-rose-600">OFF</span>}

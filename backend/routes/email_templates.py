@@ -33,6 +33,8 @@ class Tpl(BaseModel):
     mode: str = "manual"
     ai_tailor: bool = True
     audience: str = "all"
+    step: int = 1
+    wait_days: int = 0
     active: bool = True
     attachments: List[Attachment] = []
     video_links: List[str] = []
@@ -43,6 +45,8 @@ async def _clean(body: Tpl) -> dict:
         raise HTTPException(status_code=400, detail="Mode must be auto or manual")
     if body.audience not in et.AUDIENCES:
         raise HTTPException(status_code=400, detail="Unknown audience")
+    if body.step not in (1, 2, 3) or not 0 <= body.wait_days <= 60:
+        raise HTTPException(status_code=400, detail="Step must be 1-3 and wait 0-60 days")
     if not body.name.strip() or not body.subject.strip() or not body.body.strip():
         raise HTTPException(status_code=400, detail="Name, subject and body are required")
     links = [v.strip() for v in body.video_links if v.strip()]
@@ -63,6 +67,7 @@ async def _clean(body: Tpl) -> dict:
 async def list_templates(user: dict = Depends(STAFF)):
     await et.seed_starters()
     await et.seed_intro_v2()
+    await et.seed_followups_v1()
     return await db.email_templates.find({"is_deleted": {"$ne": True}}, {"_id": 0}).sort("id", 1).to_list(200)
 
 
@@ -169,10 +174,10 @@ async def use_template(pid: int, body: UseTpl, user: dict = Depends(STAFF)):
     cs = p.get("contacts") or []
     if not 0 <= body.contact_index < len(cs) or not cs[body.contact_index].get("email"):
         raise HTTPException(status_code=400, detail="This contact has no email yet")
-    intro = (t.get("audience") or "all") != "all" or str(t.get("kind", "")).startswith("intro")
+    intro = ((t.get("audience") or "all") != "all" or str(t.get("kind", "")).startswith("intro")) and (t.get("step") or 1) == 1
     if intro and await db.outreach.find_one({"prospect_id": pid, "kind": "template", "status": {"$nin": ["stopped", "failed", "bounced"]},
                                              "template_id": {"$in": [x["id"] async for x in db.email_templates.find(
-                                                 {"$or": [{"audience": {"$nin": [None, "all"]}}, {"kind": {"$regex": "^intro"}}]}, {"id": 1})]}}):
+                                                 {"$or": [{"audience": {"$nin": [None, "all"]}}, {"kind": {"$regex": "^intro"}}], "step": {"$not": {"$gt": 1}}}, {"id": 1})]}}):
         raise HTTPException(status_code=409, detail="This brand already has an intro email — pick a follow-up template instead")
     doc = await et.create_message(t, p, cs[body.contact_index], "pending_approval", user["name"])
     return {"id": doc["id"], "subject": doc["subject"]}
