@@ -12,14 +12,16 @@ WARMUP = [30, 30, 50, 50, 80, 80, 80, 120, 120, 120, 160, 160, 160, 200]  # 2-we
 def warm_cap(b: dict, today: str) -> int:
     """Today's limit for an extra inbox: ramps 30 → 200 over 14 days from first successful test."""
     cap = int(b.get("daily_cap") or 200)
-    start = (b.get("verified_at") or today)[:10]
+    if not b.get("verified_at"):
+        return cap
+    start = b["verified_at"][:10]
     days = (date.fromisoformat(today[:10]) - date.fromisoformat(start)).days
     return min(cap, WARMUP[days]) if 0 <= days < len(WARMUP) and b.get("warmup", True) else cap
 
 
 async def _sent_today(day: str) -> dict:
     rows = await db.outreach.aggregate([
-        {"$match": {"status": "sent", "channel": "email", "sent_at": {"$gte": day}}},
+        {"$match": {"status": {"$in": ["sent", "bounced"]}, "channel": "email", "sent_at": {"$gte": day}}},
         {"$group": {"_id": {"$ifNull": ["$sent_via", PRIMARY]}, "n": {"$sum": 1}}}]).to_list(100)
     return {r["_id"]: r["n"] for r in rows}
 

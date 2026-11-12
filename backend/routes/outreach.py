@@ -37,7 +37,7 @@ class OutreachSettings(BaseModel):
     cc: str = ""
     gaps: List[int] = [3, 7]
     pitch: str = oc.DEFAULT_PITCH
-    signature: str = ""
+    signature: Optional[str] = None
 
 
 @router.get("/outreach/settings")
@@ -54,6 +54,8 @@ async def save_settings(body: OutreachSettings, user: dict = Depends(require_rol
     if len(body.gaps) != 2 or any(g < 1 or g > 30 for g in body.gaps):
         raise HTTPException(status_code=400, detail="Follow-up gaps must be 1-30 days")
     data = body.model_dump()
+    if data["signature"] is None:
+        data.pop("signature")
     data["cc"] = body.cc.strip()
     if data["cc"] and not re.fullmatch(r"[^@\s]+@[^@\s]+\.[a-zA-Z]{2,}", data["cc"]):
         raise HTTPException(status_code=400, detail="Enter a valid CC email address")
@@ -61,6 +63,16 @@ async def save_settings(body: OutreachSettings, user: dict = Depends(require_rol
                 drafts_per_run=max(0, min(body.drafts_per_run, 50)))
     await db.settings.update_one({"key": "outreach"}, {"$set": data}, upsert=True)
     return await oc.get_settings()
+
+
+class Signature(BaseModel):
+    signature: str = ""
+
+
+@router.put("/outreach/signature")
+async def save_signature(body: Signature, user: dict = Depends(require_roles("admin"))):
+    await db.settings.update_one({"key": "outreach"}, {"$set": {"signature": body.signature.strip()[:1000]}}, upsert=True)
+    return {"signature": body.signature.strip()[:1000]}
 
 
 @router.get("/outreach/stats")

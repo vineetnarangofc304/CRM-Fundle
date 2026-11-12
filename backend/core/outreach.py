@@ -98,7 +98,7 @@ async def _refresh_from_template(m: dict):
     from core import email_templates as et
     if m.get("kind") != "template" or m.get("edited_by"):
         return m
-    t = await db.email_templates.find_one({"id": m["template_id"]}, {"_id": 0})
+    t = await db.email_templates.find_one({"id": m.get("template_id")}, {"_id": 0})
     if not t or t.get("is_deleted") or not t.get("active"):
         if m.get("created_by") == "Auto-send":
             await db.outreach.update_one({"id": m["id"]}, {"$set": {"status": "stopped", "stop_reason": "Template removed or switched off"}})
@@ -121,7 +121,7 @@ async def _send_one(m: dict, st: dict, pool: list | None = None, force: bool = F
         pool = await mb.senders(st, _now()[:10])
     m = await _refresh_from_template(m)
     if m is None:
-        return False
+        return None
     sender = await mb.pick(m.get("prospect_id"), pool, force)
     if not sender:
         await db.outreach.update_one({"id": m["id"]}, {"$set": {"status": "approved"}})
@@ -285,6 +285,8 @@ async def _run_outreach(st, stats, trigger) -> dict:
                 {"$set": {"status": "sending"}}, sort=[("scheduled_at", 1)], projection={"_id": 0})
             if not m:
                 break
-            stats["sent" if await _send_one(m, st, pool) else "failed"] += 1
+            ok = await _send_one(m, st, pool)
+            key = "stopped" if ok is None else "sent" if ok else "failed"
+            stats[key] = stats.get(key, 0) + 1
     await db.settings.update_one({"key": "outreach_last"}, {"$set": {"at": now_utc_str(), "stats": stats, "trigger": trigger}}, upsert=True)
     return stats

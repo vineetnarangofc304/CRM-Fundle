@@ -328,8 +328,9 @@ async def enrich(p: dict) -> dict:
     from core.contacts import fit_score
     upd["fit_score"] = fit_score({**p, **upd})
     await db.prospects.update_one({"id": p["id"]}, {"$set": upd, "$unset": {"last_error": 1}})
-    if (await get_settings()).get("create_leads", True):
-        await upsert_lead({**p, **upd})
+    lid = await upsert_lead({**p, **upd})
+    await log_message(lid, f"🧠 AI deep research done — stores: {upd.get('store_count') or '?'}, CEO: {upd.get('ceo_name') or '?'}, "
+                           f"fit score {upd['fit_score']}", author={"id": 0, "name": "AI Prospecting"})
     await _log_run("enrich", PRO, True, f"stores={upd.get('store_count')} ceo={upd.get('ceo_name')}", time.time() - t,
                    brand=p["brand_name"])
     return {"ok": True}

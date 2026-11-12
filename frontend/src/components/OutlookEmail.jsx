@@ -49,8 +49,8 @@ function GraphFields({ f, set, s, redirectUri }) {
       </div>
       <ol className="list-decimal space-y-0.5 pl-5 text-[11px] text-slate-500">
         <li>Microsoft Entra admin centre (portal.azure.com) → App registrations → New registration → "Accounts in this organizational directory only".</li>
-        <li>Authentication → Add a platform → Web → paste the Redirect URI above.</li>
-        <li>API permissions → Microsoft Graph → Delegated: <b>Mail.Send</b>, <b>User.Read</b>, <b>offline_access</b> → Grant admin consent.</li>
+        <li>Authentication → Add a platform → Web → paste the Redirect URI above. To also read replies, add a second Redirect URI: <code>{redirectUri.replace("/callback", "/read-callback")}</code></li>
+        <li>API permissions → Microsoft Graph → Delegated: <b>Mail.Send</b>, <b>Mail.Read</b>, <b>User.Read</b>, <b>offline_access</b> → Grant admin consent.</li>
         <li>Certificates & secrets → New client secret → copy the <b>Value</b>. Paste the IDs + secret below, Save, then Connect.</li>
       </ol>
       <div className="grid gap-3 sm:grid-cols-2">

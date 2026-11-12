@@ -187,10 +187,50 @@ async def send_now(mid: int, user: dict = Depends(STAFF)):
     if not m:
         raise HTTPException(status_code=409, detail="Message already sent, sending or stopped")
     ok = await oc._send_one(m, await oc.get_settings(), force=True)
+    if ok is None:
+        raise HTTPException(status_code=409, detail="Its template was removed or switched off, so this email was stopped")
     if not ok:
         err = (await db.outreach.find_one({"id": mid}, {"error": 1}) or {}).get("error")
         raise HTTPException(status_code=502, detail=f"Send failed: {err or 'unknown error'}")
     return {"ok": True}
+
+
+class BounceList(BaseModel):
+    brands: List[str]
+
+
+@router.post("/outreach/mark-bounced")
+async def mark_bounced(body: BounceList, user: dict = Depends(STAFF)):
+    """Brands whose emails bounced: mark their current emails invalid, find new contacts first, auto-resend."""
+    from core import prospector as pe
+    from core.utils import log_message
+    now, matched, missing = oc._now(), [], []
+    for raw in {b.strip() for b in body.brands if b.strip()}:
+        key = pe.brand_key(raw)
+        if len(key) < 3:
+            continue
+        ps = await db.prospects.find({"$or": [{"brand_key": key}, {"brand_key": {"$regex": f"^{re.escape(key)}"}},
+                                              {"website": {"$regex": re.escape(key), "$options": "i"}}]},
+                                     {"_id": 0}).limit(5).to_list(5)
+        if not ps:
+            missing.append(raw)
+            continue
+        for p in ps:
+            sent = await db.outreach.find({"prospect_id": p["id"], "channel": "email", "status": "sent"}, {"_id": 0, "id": 1, "to": 1, "template_id": 1}).to_list(50)
+            emails = {c["email"].lower() for c in p.get("contacts") or [] if c.get("email")} | {m["to"].lower() for m in sent if m.get("to")}
+            await db.outreach.update_many({"id": {"$in": [m["id"] for m in sent]}}, {"$set": {"status": "bounced", "bounced_at": now}})
+            await db.outreach.update_many({"prospect_id": p["id"], "status": {"$in": ["approved", "pending_approval"]}},
+                                          {"$set": {"status": "stopped", "stop_reason": "Emails bounced — finding new contact"}})
+            await db.prospects.update_one({"id": p["id"]}, {
+                "$addToSet": {"bounced_emails": {"$each": sorted(emails)}}, "$set": {"tpl_sent": [], "contacts_priority": 1},
+                "$unset": {"contacts_status": 1, "contacts_retry_rounds": 1}})
+            lid = p.get("lead_id") or await pe.upsert_lead(p)
+            await db.leads.update_one({"id": lid, "email_from": {"$in": list(emails)}}, {"$set": {"email_from": None}})
+            await log_message(lid, f"⚠️ Emails bounced ({', '.join(sorted(emails)) or 'no email on file'}) — marked invalid by "
+                                   f"{user['name']}. AI is finding a new contact; the auto emailer will resend.",
+                              author={"id": 0, "name": "Outreach Agent"})
+            matched.append(p["brand_name"])
+    return {"matched": matched, "not_found": missing}
 
 
 class FinalizeIds(BaseModel):

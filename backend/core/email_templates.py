@@ -126,6 +126,9 @@ async def create_message(t: dict, p: dict, c: dict, status: str, by: str) -> dic
     """Create one tailored email from a template for a prospect contact."""
     from core.outreach import _now
     subject, body = await tailor(t, p, c)
+    if not p.get("lead_id"):
+        from core import prospector as pe
+        p = {**p, "lead_id": await pe.upsert_lead(p)}
     now = _now()
     doc = {"id": await next_id("outreach"), "seq_id": await next_id("outreach_seq"), "channel": "email", "step": 1,
            "kind": "template", "template_id": t["id"], "template_name": t["name"], "tpl_version": t.get("updated_at"), "prospect_id": p["id"],

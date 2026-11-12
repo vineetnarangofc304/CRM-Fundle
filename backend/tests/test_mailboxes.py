@@ -141,9 +141,11 @@ def _conn(monkeypatch, on=True):
     monkeypatch.setattr(ol, "get_config", gc)
 
 
-async def _mk_box(d, bid, cap=200, active=True, verified=True, deleted=False):
+async def _mk_box(d, bid, cap=200, active=True, verified=True, deleted=False, verified_at="2025-01-01 00:00:00"):
+    # verified_at well in the past → warm-up finished, full daily_cap applies
     await d.mailboxes.insert_one({"id": bid, "smtp_user": f"box{bid}@fundle.ai", "smtp_password_enc": "x", "daily_cap": cap,
-                                  "active": active, "verified": verified, "is_deleted": deleted, "smtp_host": "h", "smtp_port": 587})
+                                  "active": active, "verified": verified, "is_deleted": deleted, "smtp_host": "h", "smtp_port": 587,
+                                  **({"verified_at": verified_at} if verified_at else {})})
 
 
 DAY = "2026-01-15"
@@ -224,7 +226,7 @@ class TestRotation:
             await _mk_box(tdb, 2, cap=2)
             docs = [{"id": i, "seq_id": 1000 + i, "prospect_id": 100 + i, "lead_id": 500 + i, "channel": "email", "step": 1,
                      "status": "approved", "to": f"p{i}@example.com", "contact_name": "TEST", "subject": "S", "body": "<p>b</p>",
-                     "scheduled_at": "2026-01-01 00:00:00", "kind": "template"} for i in range(1, n_msgs + 1)]
+                     "scheduled_at": "2026-01-01 00:00:00", "kind": "template", "template_id": 0} for i in range(1, n_msgs + 1)]
             await tdb.outreach.insert_many(docs)
             await tdb.prospects.insert_many([{"id": 100 + i} for i in range(1, n_msgs + 1)])
         run(go())

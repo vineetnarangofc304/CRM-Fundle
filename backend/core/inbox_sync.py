@@ -15,6 +15,9 @@ READ_SCOPES = "openid profile offline_access User.Read Mail.Read"
 GRAPH = "https://graph.microsoft.com/v1.0"
 BOUNCE_FROM = re.compile(r"mailer-daemon|postmaster|microsoftexchange|mail delivery", re.I)
 BOUNCE_SUBJ = re.compile(r"undeliverable|delivery (has )?failed|delivery status notification|returned mail|failure notice|not delivered", re.I)
+FREE_MAIL = {"gmail.com", "googlemail.com", "outlook.com", "hotmail.com", "live.com", "yahoo.com", "yahoo.co.in",
+             "icloud.com", "rediffmail.com", "aol.com", "proton.me", "protonmail.com", "zoho.com"}
+AUTO_REPLY = re.compile(r"^(automatic reply|auto(matic)?[- ]?reply|out of (the )?office|ooo\b|away from)", re.I)
 EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
 
 
@@ -74,18 +77,18 @@ async def _bounce(m: dict, now: str) -> int:
 
 async def _reply(m: dict, now: str) -> int:
     frm = (((m.get("from") or {}).get("emailAddress") or {}).get("address") or "").lower()
-    if not frm or "@" not in frm:
+    if not frm or "@" not in frm or AUTO_REPLY.search((m.get("subject") or "").strip()):
         return 0
     o = await db.outreach.find_one({"channel": "email", "status": {"$in": ["sent", "bounced"]},
                                     "to": {"$regex": f"^{re.escape(frm)}$", "$options": "i"}}, sort=[("sent_at", -1)])
-    if not o:
-        dom = frm.split("@")[1]
+    dom = frm.split("@")[1]
+    if not o and dom not in FREE_MAIL:
         o = await db.outreach.find_one({"channel": "email", "status": "sent", "to": {"$regex": f"@{re.escape(dom)}$", "$options": "i"}},
                                        sort=[("sent_at", -1)])
     if not o or o.get("replied_at"):
         return 0
     pid = o.get("prospect_id")
-    await db.outreach.update_many({"prospect_id": pid, "status": "sent", "replied_at": {"$exists": False}}, {"$set": {"replied_at": now}})
+    await db.outreach.update_one({"id": o["id"]}, {"$set": {"replied_at": now, "replied_from": frm}})
     await db.outreach.update_many({"prospect_id": pid, "status": {"$in": ["approved", "pending_approval"]}},
                                   {"$set": {"status": "stopped", "stop_reason": f"Brand replied ({frm})"}})
     await db.prospects.update_one({"id": pid}, {"$set": {"replied": True, "replied_at": now, "outreach_status": "replied"}})

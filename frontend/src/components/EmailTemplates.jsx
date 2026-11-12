@@ -101,8 +101,7 @@ function SignatureCard() {
   useEffect(() => { API.get("/outreach/settings").then(({ data }) => { setS(data); setSig(data.signature || ""); }).catch(() => {}); }, []);
   if (!s) return null;
   const save = async () => {
-    const { mail_connected, mail_provider, last_run, ...rest } = s;
-    try { await API.put("/outreach/settings", { ...rest, signature: sig }); toast.success("Signature saved — every email now uses it"); }
+    try { await API.put("/outreach/signature", { signature: sig }); toast.success("Signature saved — every email now uses it"); }
     catch (e) { toast.error(apiErr(e)); }
   };
   return (
@@ -114,12 +113,13 @@ function SignatureCard() {
   );
 }
 
-function AutoEmailerBar({ items, onEdit }) {
+function AutoEmailerBar({ items, loaded, onEdit }) {
   const autos = items.filter((t) => t.mode === "auto" && t.active);
   return (
     <div className="crm-card border-l-4 border-emerald-500 p-4" data-testid="tpl-auto-bar">
       <div className="mb-2 text-sm font-extrabold text-slate-800">Auto emailer <span className="text-xs font-normal text-slate-500">— goes out on its own to every brand with an email</span></div>
-      {autos.length === 0 && <div className="text-xs text-slate-500">No template is set to Auto. Edit any template and set Sending to “Auto”.</div>}
+      {!loaded && <div className="text-xs text-slate-400">Loading…</div>}
+      {loaded && autos.length === 0 && <div className="text-xs text-slate-500">No template is set to Auto. Edit any template and set Sending to “Auto”.</div>}
       {autos.map((t) => (
         <div key={t.id} className="flex flex-wrap items-center gap-3 rounded-lg bg-emerald-50/60 p-2">
           <div className="min-w-0 flex-1"><div className="font-bold text-slate-800">{t.name}</div><div className="truncate text-xs text-slate-600">{t.subject}</div></div>
@@ -133,13 +133,14 @@ function AutoEmailerBar({ items, onEdit }) {
 export function EmailTemplates() {
   const [items, setItems] = useState([]);
   const [edit, setEdit] = useState(null);
-  const load = () => API.get("/outreach/templates").then(({ data }) => setItems(data)).catch((e) => toast.error(apiErr(e)));
+  const [loaded, setLoaded] = useState(false);
+  const load = () => API.get("/outreach/templates").then(({ data }) => { setItems(data); setLoaded(true); }).catch((e) => toast.error(apiErr(e)));
   useEffect(() => { load(); }, []);
   const del = async (t) => { if (!window.confirm(`Delete “${t.name}”?`)) return; try { await API.delete(`/outreach/templates/${t.id}`); load(); } catch (e) { toast.error(apiErr(e)); } };
   if (edit) return <Editor t={edit} onDone={() => { setEdit(null); load(); }} />;
   return (
     <div className="space-y-3" data-testid="tpl-list">
-      <AutoEmailerBar items={items} onEdit={setEdit} />
+      <AutoEmailerBar items={items} loaded={loaded} onEdit={setEdit} />
       <SignatureCard />
       <div className="flex items-center justify-between">
         <p className="text-xs text-slate-500">Auto templates go to every brand with an email (within the daily limit). Manual ones appear next to each contact on the brand page.</p>

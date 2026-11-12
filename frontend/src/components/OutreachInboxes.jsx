@@ -32,6 +32,31 @@ function BoxForm({ b, onDone }) {
   );
 }
 
+function ReadAppSetup() {
+  const [f, setF] = useState(null);
+  useEffect(() => { API.get("/admin/mailboxes/read-app").then(({ data }) => setF({ ...data, client_secret: "" })).catch(() => {}); }, []);
+  if (!f) return null;
+  const uri = `${window.location.origin}/api/oauth/outlook/read-callback`;
+  const save = async () => { try { await API.put("/admin/mailboxes/read-app", f); toast.success("Microsoft app saved — now click “Read replies” on each inbox"); } catch (e) { toast.error(apiErr(e)); } };
+  return (
+    <details className="rounded-lg border border-slate-100 p-3 text-xs" data-testid="read-app-setup">
+      <summary className="cursor-pointer font-bold text-slate-600">One-time setup to read replies & bounces (Microsoft 365 admin) {f.client_id && f.has_client_secret ? "✓" : ""}</summary>
+      <ol className="mt-2 list-decimal space-y-0.5 pl-5 text-[11px] text-slate-500">
+        <li>portal.azure.com → App registrations → New registration (this organisation only).</li>
+        <li>Authentication → Web → Redirect URI: <code className="rounded bg-slate-100 px-1" data-testid="read-app-redirect">{uri}</code></li>
+        <li>API permissions → Microsoft Graph → Delegated: <b>Mail.Read</b>, <b>User.Read</b>, <b>offline_access</b> → Grant admin consent.</li>
+        <li>Certificates & secrets → New client secret → copy the Value, paste below, Save.</li>
+      </ol>
+      <div className="mt-2 grid gap-2 sm:grid-cols-3">
+        <input data-testid="read-app-tenant" className="crm-input" placeholder="Directory (tenant) ID" value={f.tenant_id} onChange={(e) => setF({ ...f, tenant_id: e.target.value })} />
+        <input data-testid="read-app-client" className="crm-input" placeholder="Application (client) ID" value={f.client_id} onChange={(e) => setF({ ...f, client_id: e.target.value })} />
+        <input data-testid="read-app-secret" type="password" className="crm-input" placeholder={f.has_client_secret ? "Secret saved — paste to replace" : "Client secret value"} value={f.client_secret} onChange={(e) => setF({ ...f, client_secret: e.target.value })} />
+      </div>
+      <button data-testid="read-app-save" onClick={save} className="crm-btn-primary mt-2 !py-1 text-xs">Save Microsoft app</button>
+    </details>
+  );
+}
+
 function ReadReplies({ bid, reader }) {
   const go = async () => {
     try { const { data } = await API.get(`/admin/mailboxes/${bid}/read-auth-url`, { params: { origin: window.location.origin } }); window.location.href = data.url; }
@@ -53,7 +78,7 @@ function BoxRow({ b, reload, onEdit }) {
       {b.verified ? <span className="flex items-center gap-1 font-bold text-emerald-600" data-testid={`mailbox-status-${b.id}`}><CheckCircle size={14} /> Live</span>
         : <span className="flex items-center gap-1 font-bold text-amber-600" data-testid={`mailbox-status-${b.id}`} title={b.last_error || ""}><WarningCircle size={14} /> Send a test to switch on</span>}
       {!b.active && <span className="font-bold text-slate-400">Paused</span>}
-      <span className="text-slate-500" data-testid={`mailbox-usage-${b.id}`}>{b.sent_today}/{b.today_cap ?? b.daily_cap} today{b.verified && b.today_cap < b.daily_cap ? ` · warming up to ${b.daily_cap}` : ""}</span>
+      <span className="text-slate-500" data-testid={`mailbox-usage-${b.id}`}>{b.verified ? `${b.sent_today}/${b.today_cap ?? b.daily_cap} today${b.today_cap < b.daily_cap ? ` · warming up to ${b.daily_cap}` : ""}` : `not live yet · ${b.daily_cap}/day once warmed up`}</span>
       <div className="ml-auto flex items-center gap-1">
         <ReadReplies bid={b.id} reader={b.reader} />
         <input data-testid={`mailbox-test-to-${b.id}`} className="crm-input w-44 !py-1 text-xs" placeholder="Test to (optional)" value={to} onChange={(e) => setTo(e.target.value)} />
@@ -74,6 +99,7 @@ export function OutreachInboxes({ isAdmin }) {
     const q = new URLSearchParams(window.location.search);
     if (q.get("inboxread") === "connected") toast.success(`Now reading replies & bounces for ${q.get("reason") || "the inbox"}`);
     else if (q.get("inboxread")) toast.error(`Microsoft sign-in failed: ${q.get("reason") || q.get("inboxread")}`);
+    if (q.get("inboxread")) { q.delete("inboxread"); q.delete("reason"); window.history.replaceState(null, "", `${window.location.pathname}?${q}`); }
   }, []);
   if (!d) return null;
   const total = (d.primary ? d.primary.daily_cap : 0) + d.boxes.filter((b) => b.active && b.verified).reduce((a, b) => a + (b.today_cap ?? b.daily_cap), 0);
@@ -89,6 +115,7 @@ export function OutreachInboxes({ isAdmin }) {
         : <div className="text-xs text-amber-600">Main inbox not connected — set up Outlook or Gmail on this page.</div>}
       {d.boxes.map((b) => <BoxRow key={b.id} b={b} reload={load} onEdit={setEdit} />)}
       {edit && <BoxForm b={edit} onDone={() => { setEdit(null); load(); }} />}
+      {isAdmin && <ReadAppSetup />}
       <InboxReport />
     </div>
   );

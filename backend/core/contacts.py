@@ -6,7 +6,7 @@ import time
 import dns.resolver
 
 from core.db import db
-from core.utils import now_utc_str
+from core.utils import log_message, now_utc_str
 
 CONTACT_SYS = ("You are a B2B contact researcher. Run SEVERAL Google searches, using all of these sources: "
                "(1) LinkedIn profiles via Google, e.g. site:linkedin.com/in \"<brand>\" CMO OR \"Head of Marketing\" OR CEO, "
@@ -96,15 +96,19 @@ async def find_contacts(p: dict) -> dict:
         contacts.append({"name": c["name"].strip()[:80], "role": (c.get("role") or "")[:80], "linkedin": pe._url(li),
                          "email": email, "email_status": status if email else None,
                          "domain_accepts_mail": mx if email else None, "evidence_url": pe._url(c.get("evidence_url"))})
-    upd = {"contacts": contacts, "email_pattern": d.get("email_pattern"), "contacts_status": "done",
+    upd = {"contacts": contacts, "email_pattern": d.get("email_pattern"), "contacts_status": "done", "contacts_priority": 0,
            "contacts_at": now_utc_str(), "mx_ok": mx}
     upd["fit_score"] = fit_score({**p, **upd})
     await db.prospects.update_one({"id": p["id"]}, {"$set": upd, "$unset": {"contacts_error": 1}})
     best = next((c for c in contacts if c.get("email") and c["email_status"] == "published"), None) or \
         next((c for c in contacts if c.get("email")), None)
-    if p.get("lead_id") and best:
+    p = {**p, **upd}
+    p["lead_id"] = await pe.upsert_lead(p)
+    found = "; ".join(f"{c['name']} ({c['role'] or '—'}){' · ' + c['email'] if c.get('email') else ''}" for c in contacts) or "none found"
+    await log_message(p["lead_id"], f"🔎 AI contact search: {found}", author={"id": 0, "name": "AI Prospecting"})
+    if best:
         lead = await db.leads.find_one({"id": p["lead_id"]}, {"_id": 0, "email_from": 1})
-        if lead is not None and not lead.get("email_from"):
+        if lead is not None and (not lead.get("email_from") or lead["email_from"].lower() in bounced):
             await db.leads.update_one({"id": p["lead_id"]}, {"$set": {"email_from": best["email"],
                                                                       "email_lc": best["email"]}})
     if p.get("lead_id"):
@@ -120,7 +124,7 @@ async def next_contacts_job():
         p = await db.prospects.find_one_and_update(
             {"status": status, "contacts_status": {"$exists": False}},
             {"$set": {"contacts_status": "running", "contacts_started_at": now_utc_str()}},
-            sort=[("store_count", -1), ("id", 1)], projection={"_id": 0})
+            sort=[("contacts_priority", -1), ("store_count", -1), ("id", 1)], projection={"_id": 0})
         if p:
             return p
     return None

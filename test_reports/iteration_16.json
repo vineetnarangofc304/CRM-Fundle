@@ -1,0 +1,57 @@
+{
+  "summary": "Tested template edits reaching queued emails, the user-defined signature, the Auto emailer edit entry point, Sent/Bounced views, inbox warm-up, the per-inbox report and Microsoft reply/bounce sync. Added the new file tests/test_reply_bounce_warmup.py (32 tests). Unit tests run on a throw-away DB with httpx, _token and send monkeypatched. API tests use TEST_ docs that are deleted by id. Working: _refresh_from_template re-tailors queued template emails when updated_at differs from tpl_version, including old messages with no tpl_version. With ai_tailor=false it does a plain merge; with ai_tailor=true it uses the AI text. Hand-edited messages (edited_by) are skipped. A deleted, inactive or missing template stops Auto-send messages and nothing is sent. Manual messages are kept. PUT template returns queued_updated, which counts only unedited approved/pending messages. Signature: the default is '', nothing is appended when empty, and line breaks become <br>. _migrate_v5 clears 'Team Fundle…' once and keeps custom signatures. A failed send sets failed_via/failed_at. warm_cap follows the 30→200 table, is capped by daily_cap and gives the full cap after 14 days. senders() uses it. sync_all: a bounce (postmaster sender or 'Undeliverable' subject) marks the message bounced, adds to bounced_emails, pulls the template from tpl_sent, unsets contacts_status and writes a lead log. A same-domain reply sets replied_at, stops queued messages, sets prospect replied and lead outreach_replied, and logs. Graph errors are stored on the reader. pick_contact skips bounced emails, run_auto skips replied prospects, and find_contacts drops bounced emails and keeps 6 contacts. API: settings signature round trip, mailboxes today_cap/reader, report rows (id 0 plus boxes, with today/week), read-auth-url 400 without the app (the success path is only unit-tested via auth_url), read-callback with a bad state redirects correctly, and sync-replies returns stats and needs auth. UI: view tabs (Sent underlines correctly), Bounced pill, tpl-auto-bar with tpl-auto-edit-1 opening the editor, signature card save, Admin → Email read-replies button with an error toast, and the inbox-report table all work. Regression across mailboxes, email_templates, outreach, night_window and the new file: 143 of 144 pass. The one failure is the real legacy warm-up bug.",
+  "backend_issues": {
+    "critical": [
+      {"endpoint": "core/mailboxes.warm_cap", "issue": "Inboxes verified before this change have no verified_at, so start=today every day and days is always 0. They are capped at 30/day forever and the list shows '0/30 today · warming up to 200' forever. The test endpoint only sets verified_at on a new success, so existing live boxes never recover unless re-tested, and re-testing would not help either because verified_at is only set when missing. Fix: add a migration that sets verified_at (e.g. to the migration time, or 14+ days ago to skip warm-up) on verified boxes that lack it, or treat a missing verified_at on a verified box as warmed up.", "priority": "HIGH"}
+    ],
+    "minor": [
+      {"endpoint": "core/inbox_sync._reply", "issue": "The same-domain fallback matches free-mail domains: any reply from stranger@gmail.com marks the latest gmail.com prospect as replied and stops its emails. Out-of-office auto-replies also count as replies. Exclude gmail/outlook/yahoo/hotmail etc. from the domain fallback, and skip auto-replies (e.g. subject starting 'Automatic reply' / 'Out of office')."},
+      {"endpoint": "GET /api/admin/mailboxes/report", "issue": "Replies are counted per message: _reply sets replied_at on every sent message of the prospect, so one reply to a brand that got 3 emails counts as 3."},
+      {"endpoint": "core/mailboxes._sent_today", "issue": "Only status 'sent' is counted, so after a bounce sets status 'bounced' that email no longer counts toward today's inbox quota. The inbox can then send more than its warm-up limit on bounce-heavy days."},
+      {"endpoint": "POST /api/outreach/messages/{id}/send-now", "issue": "For an Auto-send message whose template was deleted or switched off, _refresh_from_template stops it but send-now returns 502 'Send failed: unknown error'. It should return a clear message such as 409 'Template removed'. _run_outreach also counts these as failed."},
+      {"endpoint": "core/outreach._refresh_from_template", "issue": "Uses m['template_id'], which raises KeyError if a kind=template message has no template_id. Real data always has it (0 such docs in preview); old test fixtures hit this. m.get() would be safer."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "Outreach SettingsPanel vs EmailTemplates SignatureCard", "issue": "Stale state wipes the signature. Saving a signature in the Templates tab does not refresh the page-level settings, and SettingsPanel still holds the old signature (confirmed: its outreach-signature textarea showed ''). Clicking 'Save settings' then PUTs the old value and silently deletes the new signature (confirmed via GET /api/outreach/settings: signature ''). There are also two signature fields (outreach-signature and tpl-signature). Fix: keep one field, or reload the parent settings after the card saves, or have the settings panel PUT send only its own fields / a PATCH.", "selector": "[data-testid=tpl-signature-save], [data-testid=outreach-settings-save]", "priority": "HIGH"}
+    ],
+    "integration_issues": [
+      {"flow": "Read replies (Microsoft sign-in)", "issue": "read-auth-url uses redirect_uri <origin>/api/oauth/outlook/read-callback, but the Admin Outlook card only tells the user to add /api/oauth/outlook/callback in Azure, and its permission steps list Mail.Send, User.Read and offline_access without Mail.Read. Following the on-screen steps, Microsoft will reject the sign-in (AADSTS50011 redirect URI mismatch) or not grant Mail.Read. Show the read-callback URI as a second redirect URI and add Mail.Read to step 3.", "affected_selectors": ["mailbox-read-connect-{id}"]}
+    ],
+    "design_issues": [
+      {"screen": "Outreach → Email templates & auto emailer", "issues": ["While templates load, the auto bar briefly says 'No template is set to Auto' even though Intro email is Auto. Show a loading state instead."]},
+      {"screen": "Admin → Email (?inboxread=...)", "issues": ["The inboxread toast fires twice in dev (StrictMode) and again whenever OutreachInboxes remounts (key={k}) because the query params are never cleared. Clear them with history.replaceState after showing the toast."]},
+      {"screen": "Admin → Email → Outreach inboxes", "issues": ["Unverified boxes show '0/30 today' (warm-up cap) before they are live, which is slightly confusing. 'Read replies' is not shown for the primary inbox when no main inbox is connected (expected, since there is no mailbox-primary row in preview)."]}
+    ]
+  },
+  "test_report_links": ["/app/backend/tests/test_reply_bounce_warmup.py", "/app/backend/tests/test_mailboxes.py", "/app/backend/tests/test_email_templates.py", "/app/test_reports/pytest/pytest_results_iter16.xml"],
+  "action_items": [
+    "HIGH: Migrate or handle verified mailboxes without verified_at so legacy live inboxes are not capped at 30/day forever.",
+    "HIGH: Fix the signature being wiped. Saving Outreach settings after saving the signature card PUTs the stale signature. Use one signature field, or refresh parent state, or stop sending signature from SettingsPanel.",
+    "HIGH: Show <origin>/api/oauth/outlook/read-callback as a redirect URI to add in Azure, and add Mail.Read to the permission steps in the Outlook card.",
+    "Exclude free-mail domains (gmail.com, outlook.com, yahoo.com, hotmail.com, icloud.com…) from the _reply domain fallback, and skip auto-replies / out-of-office.",
+    "Report replies per prospect, or set replied_at only on the latest message.",
+    "Count bounced messages in _sent_today (status in sent and bounced).",
+    "send-now: return a clear 409 when the template was removed instead of 502 'unknown error'.",
+    "Use m.get('template_id') in _refresh_from_template.",
+    "Clear the inboxread query params after showing the toast; show a loading state in the auto bar."
+  ],
+  "critical_code_review_comments": [
+    "Two signature inputs (Outreach settings panel and Templates signature card) write the same field with independent state, which causes lost updates.",
+    "Bounce → new-contact search relies on next_contacts_job (prospecting agent). With prospecting enabled=false nothing is searched again; only a different existing contact gets the resend via run_auto.",
+    "inbox_sync.sync_all only runs inside _run_outreach when the primary mailer is connected, so replies to extra SMTP inboxes are not synced if the primary is disconnected (same gate as sending).",
+    "read_auth_url accepts any origin and stores it as the redirect. Azure validates it, so the risk is low, but checking it against the app's own URL would be safer."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_reply_bounce_warmup.py (new)",
+    "/app/backend/tests/test_mailboxes.py (_mk_box now sets an old verified_at so warm-up is finished; template fixtures include template_id)",
+    "/app/backend/tests/test_email_templates.py (signature assertion updated from 'Team Fundle.ai' to a custom st signature; fixture includes template_id)"
+  ],
+  "success_rate": {"backend": "99% (143/144; 1 failure is the real legacy warm-up bug)", "frontend": "85% (all flows work; signature stale-state overwrite bug)"},
+  "seed_data_creation": "None kept. TEST_tpl templates (ids 38, 40 from an aborted run, plus later ones), TEST mailboxes (incl. id 43) and the TEST_ outreach docs were all deleted by id. Outreach signature was restored to ''; prospecting stays enabled=false.",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Run with REACT_APP_BACKEND_URL exported. tests/test_reply_bounce_warmup.py unit tests patch db in oc/mb/cu/et/ib/ct/ol and log_message in oc/ib; httpx.AsyncClient and ib._token are faked. test_legacy_verified_box_without_verified_at_not_stuck is expected to fail until the warm-up legacy fix. Preview has no Microsoft app saved, so read-auth-url returns 400 (only the unit auth_url test covers the URL). The primary inbox is not connected, so there is no mailbox-primary row or mailbox-read-connect-0 in the UI; create a TEST box via the API to see mailbox-read-connect-{id}. The signature stale-state bug reproduces on /outreach: Templates tab → save signature → open Outreach settings → Save settings → GET settings shows the signature reverted.",
+  "rca of the issue": "Warm-up: warm_cap uses (verified_at or today), so a missing verified_at means days=0 every day; there is no migration for existing verified boxes. Signature: SettingsPanel's f state comes from the parent s loaded once; SignatureCard PUTs separately without telling the parent, and SettingsPanel later PUTs its whole f including the stale signature. Read replies: the new read-callback redirect URI and the Mail.Read scope were never added to the Azure setup instructions in the Outlook card."
+}

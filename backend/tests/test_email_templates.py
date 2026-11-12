@@ -277,16 +277,17 @@ class TestCore:
         monkeypatch.setattr(mailer, "send_email", send)
         monkeypatch.setattr(oc, "log_message", log)
         m = {"id": 1, "seq_id": 1, "step": 1, "channel": "email", "kind": "template", "template_name": "Intro email",
-             "to": "a@example.com", "contact_name": "A", "subject": "S", "body": "<p>B</p>", "lead_id": 42,
+             "template_id": 0, "to": "a@example.com", "contact_name": "A", "subject": "S", "body": "<p>B</p>", "lead_id": 42,
              "attachments": [{"file_id": 7, "filename": "deck.pdf", "size": 10}], "video_links": ["https://youtu.be/v"],
              "status": "sending"}
         run(self.db.outreach.insert_one(dict(m)))
-        st = {**oc.DEFAULTS, "cc": "c@example.com"}
+        # signature is now user-defined (DEFAULTS signature is ''); use a custom one
+        st = {**oc.DEFAULTS, "cc": "c@example.com", "signature": "TEST Sig\nFundle"}
         assert run(oc._send_one(m, st)) is True
         s = sent[0]
         assert s["attachments"] == [{"filename": "deck.pdf", "content_type": "application/pdf", "data": PDF}]
-        assert "https://youtu.be/v" in s["body"] and "Team Fundle.ai" in s["body"] and s["cc"] == "c@example.com"
-        assert s["body"].index("youtu.be") < s["body"].index("Team Fundle.ai")
+        assert "https://youtu.be/v" in s["body"] and "TEST Sig<br>Fundle" in s["body"] and s["cc"] == "c@example.com"
+        assert s["body"].index("youtu.be") < s["body"].index("TEST Sig")
         assert logs[0][0] == 42 and "Intro email" in logs[0][1] and "deck.pdf" in logs[0][1] and "video" in logs[0][1]
         assert run(self.db.outreach.find_one({"id": 1}))["status"] == "sent"
 

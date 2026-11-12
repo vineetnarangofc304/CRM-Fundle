@@ -86,6 +86,31 @@ async def report(user: dict = Depends(require_roles("admin", "manager"))):
              "replies": replies.get(i, z), "bounces": bounces.get(i, z)} for i in ids]
 
 
+class ReadApp(BaseModel):
+    tenant_id: str = ""
+    client_id: str
+    client_secret: Optional[str] = None
+
+
+@router.get("/admin/mailboxes/read-app")
+async def get_read_app(user: dict = Depends(ADMIN)):
+    cfg = await ol.get_config()
+    return {"tenant_id": cfg.get("tenant_id") or "", "client_id": cfg.get("client_id") or "",
+            "has_client_secret": bool(cfg.get("client_secret_enc"))}
+
+
+@router.put("/admin/mailboxes/read-app")
+async def save_read_app(body: ReadApp, user: dict = Depends(ADMIN)):
+    """Microsoft app (Mail.Read) used to read replies; doesn't change how the main inbox sends."""
+    if not body.client_id.strip():
+        raise HTTPException(status_code=400, detail="Application (client) ID is required")
+    upd = {"tenant_id": body.tenant_id.strip() or None, "client_id": body.client_id.strip()}
+    if (body.client_secret or "").strip():
+        upd["client_secret_enc"] = ol.enc(body.client_secret.strip())
+    await db.settings.update_one({"key": "outlook"}, {"$set": upd}, upsert=True)
+    return {"ok": True}
+
+
 @router.get("/admin/mailboxes/{bid}/read-auth-url")
 async def read_auth_url(bid: int, origin: str, user: dict = Depends(ADMIN)):
     """Microsoft sign-in so the CRM can read replies and bounces in this inbox (bid 0 = main inbox)."""

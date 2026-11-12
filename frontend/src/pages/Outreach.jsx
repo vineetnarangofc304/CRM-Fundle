@@ -12,7 +12,7 @@ function SettingsPanel({ s, isAdmin, reload }) {
   const [f, setF] = useState(s);
   useEffect(() => setF(s), [s]);
   const save = async () => {
-    try { await API.put("/outreach/settings", f); toast.success("Outreach settings saved"); reload(); } catch (e) { toast.error(apiErr(e)); }
+    try { const { signature, ...rest } = f; await API.put("/outreach/settings", rest); toast.success("Outreach settings saved"); reload(); } catch (e) { toast.error(apiErr(e)); }
   };
   const num = (k, v) => setF({ ...f, [k]: Number(v) });
   return (
@@ -26,7 +26,7 @@ function SettingsPanel({ s, isAdmin, reload }) {
           <div className="mt-1 flex gap-1">{[0, 1].map((i) => <input key={i} data-testid={`outreach-gap-${i}`} type="number" className="crm-input w-full" value={f.gaps[i]} onChange={(e) => setF({ ...f, gaps: f.gaps.map((g, j) => (j === i ? Number(e.target.value) : g)) })} />)}</div>
         </label>
         <label className="font-semibold text-slate-500 sm:col-span-2 lg:col-span-3">What we sell (AI uses this to write)<textarea data-testid="outreach-pitch" rows={3} className="crm-input mt-1 w-full" value={f.pitch} onChange={(e) => setF({ ...f, pitch: e.target.value })} /></label>
-        <label className="font-semibold text-slate-500">Email signature<textarea data-testid="outreach-signature" rows={3} className="crm-input mt-1 w-full" value={f.signature} onChange={(e) => setF({ ...f, signature: e.target.value })} /></label>
+        <label className="font-semibold text-slate-500">Email signature<div className="mt-1 text-[11px] font-normal text-slate-400">Edit it in “Email templates & auto emailer”.</div></label>
         <label className="font-semibold text-slate-500">CC every outreach email to<input data-testid="outreach-cc" type="email" className="crm-input mt-1 w-full" value={f.cc || ""} onChange={(e) => setF({ ...f, cc: e.target.value })} /></label>
         <label className="flex items-center gap-2 font-semibold text-slate-600"><input data-testid="outreach-auto-send" type="checkbox" checked={!!f.auto_send} onChange={(e) => setF({ ...f, auto_send: e.target.checked })} /> Send automatically (no approval)</label>
         <label className="flex items-center gap-2 font-semibold text-slate-600"><input data-testid="outreach-ai-sequence" type="checkbox" checked={!!f.ai_sequence} onChange={(e) => setF({ ...f, ai_sequence: e.target.checked })} /> Also write the old 3-email AI sequence</label>
@@ -34,6 +34,28 @@ function SettingsPanel({ s, isAdmin, reload }) {
       </div>
       {isAdmin && <button data-testid="outreach-settings-save" onClick={save} className="crm-btn-primary mt-3 !py-1.5 text-xs">Save settings</button>}
     </details>
+  );
+}
+
+function BouncePanel({ reload }) {
+  const [open, setOpen] = useState(false);
+  const [txt, setTxt] = useState("");
+  const [res, setRes] = useState(null);
+  const go = async () => {
+    try { const { data } = await API.post("/outreach/mark-bounced", { brands: txt.split(/\n|,/) }); setRes(data); toast.success(`${data.matched.length} brands marked — AI is finding new contacts`); reload(); }
+    catch (e) { toast.error(apiErr(e)); }
+  };
+  if (!open) return <button data-testid="outreach-bounce-open" onClick={() => setOpen(true)} className="crm-btn-secondary !py-1.5 text-xs">Mark brands as bounced</button>;
+  return (
+    <div className="crm-card w-full space-y-2 p-4" data-testid="outreach-bounce-panel">
+      <div className="text-sm font-bold text-slate-700">Paste brand names whose emails bounced (one per line)</div>
+      <textarea data-testid="outreach-bounce-input" rows={6} className="crm-input w-full text-xs" value={txt} onChange={(e) => setTxt(e.target.value)} />
+      <div className="flex gap-2">
+        <button data-testid="outreach-bounce-submit" onClick={go} className="crm-btn-primary !py-1.5 text-xs">Mark invalid & find new emails</button>
+        <button onClick={() => { setOpen(false); setRes(null); }} className="crm-btn-secondary !py-1.5 text-xs">Close</button>
+      </div>
+      {res && <div className="text-xs text-slate-600" data-testid="outreach-bounce-result"><b>{res.matched.length}</b> matched{res.not_found.length > 0 && <> · not found: {res.not_found.join(", ")}</>}</div>}
+    </div>
   );
 }
 
@@ -147,6 +169,7 @@ export default function Outreach() {
         ))}
       </div>
       {view === "templates" ? <EmailTemplates /> : <>
+      <div className="flex flex-wrap items-center gap-2"><BouncePanel reload={load} /></div>
       <div className="flex flex-wrap items-center gap-2">
         {TABS.map(([k, l]) => (
           <button key={k} data-testid={`outreach-tab-${k}`} onClick={() => { setTab(k); setSel([]); }} className={`rounded-full px-3 py-1.5 text-xs font-bold transition-colors ${tab === k ? "bg-[#1A73E8] text-white" : "bg-white text-slate-600 hover:bg-slate-100"}`}>{l} · {count(k)}</button>
