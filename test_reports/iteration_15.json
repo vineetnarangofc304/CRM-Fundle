@@ -1,0 +1,47 @@
+{
+  "summary": "Tested multiple outreach inboxes. Admin API /api/admin/mailboxes: GET shape, auth, and POST validation all work: invalid email, bad port, missing or empty password and daily_cap outside 1-1000 each return 400. A duplicate inbox returns 409, also when only the letter case differs. The password is encrypted, never returned, and has_password is true. Editing keeps the password when it is left blank. Soft delete works, a second delete returns 404, and the same email can be added again after deleting. Test send with fake creds returns 400, leaves verified=false and stores last_error. Unit tests on a throw-away DB cover senders() (primary only when connected, legacy sent_via missing counted as primary, active+verified+not deleted boxes only, today's counts only), pick() (sticky, most room left, sticky saved only when the current sticky is not in the pool, force, no prospect), _run_outreach (the daily total is the sum of the inbox caps: 4+3+2=9 sent, 3 left approved, sent_via and sent_from recorded, 'from <inbox>' logged on the lead, sticky saved), a message with no room goes back to approved without counting an attempt, force sends even when the inbox is full, _migrate_v4 runs once, send_with_config returns an error dict, and send_email works for graph and smtp. Frontend: Admin → Email shows the Outreach inboxes card and the add/save/test/edit/delete flow works end to end. The 'Main inbox emails per day' label is on the /outreach page settings, not in Admin. 2 real bugs found (see action_items). Regression across mailboxes, outreach, email_templates and night_window: 109 passed, 3 failed (2 real bugs plus 1 race with test_outreach that is now fixed).",
+  "backend_issues": {
+    "critical": [
+      {"endpoint": "core/outreach._run_outreach + core/mailboxes.pick", "issue": "One broken extra inbox (password changed, SMTP turned off) blocks the whole queue. A failed send does not lower remaining and does not take the inbox out of the pool, so pick() keeps choosing it as the inbox with the most room. Reproduced with primary cap 1, box1 cap 3 (always fails), box2 cap 2 and 6 approved messages: sent 0, failed 6. Every message went to box1, which was also saved as their sticky inbox. After 3 runs those messages become 'failed' and their follow-ups are stopped. The inbox is also never set back to verified=false.", "priority": "HIGH"}
+    ],
+    "minor": [
+      {"endpoint": "PUT /api/admin/mailboxes/{id}", "issue": "No duplicate check. An inbox can be renamed to another active inbox's smtp_user (returns 200). POST checks this and returns 409; PUT should too, excluding its own id."},
+      {"endpoint": "_migrate_v4", "issue": "Only runs inside run_outreach (cron/manual), so the Admin card shows per_inbox_cap 100 until the next run. Consider running it on startup or in get_settings."},
+      {"endpoint": "POST /api/admin/mailboxes/{id}/test", "issue": "'to' is not checked as an email. With fake creds the call blocks for about 25 s (asyncio timeout) before returning 400."},
+      {"endpoint": "core/mailboxes.pick", "issue": "If the sticky inbox is briefly out of the pool (edited, so unverified, or primary briefly disconnected), the brand is moved to another inbox for good. That breaks the 'same inbox' promise."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "OutreachInboxes BoxRow", "issue": "The Send test button has no loading or disabled state during the 25 s SMTP attempt, so it can be clicked several times.", "selector": "[data-testid^='mailbox-test-']", "priority": "LOW"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Admin → Email → Outreach inboxes", "issues": ["'Send test' wraps onto two lines inside a small pill at 1920 px (add whitespace-nowrap)", "'Main inbox not connected — set it up above' but the Gmail card sits below this card", "Badge reads 'up to 0 emails/day' when nothing is connected; a clearer empty state would help"]}
+    ]
+  },
+  "test_report_links": ["/app/backend/tests/test_mailboxes.py", "/app/test_reports/pytest/pytest_iter15.xml"],
+  "action_items": [
+    "HIGH: In _run_outreach/_send_one, when a send fails through an extra inbox, take that sender out of the pool for this run (set remaining=0 or drop it). Ideally set verified=false and last_error after repeated failures, then let pick() fall back to the other inboxes (also re-pick for brands stuck to the broken inbox).",
+    "PUT /api/admin/mailboxes/{id}: return 409 when smtp_user matches another non-deleted inbox",
+    "Run _migrate_v4 on startup (or lazily in get_settings) so the cap shows 200 without waiting for a cron run",
+    "Validate 'to' in TestTo and add a loading or disabled state to the Send test button; add whitespace-nowrap to the row buttons"
+  ],
+  "critical_code_review_comments": [
+    "pick() falls back to max(remaining), so a broken high-cap inbox is always preferred (root cause of the HIGH bug)",
+    "senders() is rebuilt on every send-now and each call runs an aggregate, which is fine at this scale",
+    "list_boxes returns last_error and created_by, which is OK for admin/manager; the password is correctly excluded"
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_mailboxes.py (new)",
+    "/app/backend/tests/test_email_templates.py (patch mailboxes.db, outlook_send.db and mailer.is_connected and insert the outreach_v4 marker in the isolated-DB fixture: tests were stale after the multi-inbox change)",
+    "/app/backend/tests/test_night_window_autosend.py (same fixture update: _migrate_v4 was resetting the test daily_cap to 200)",
+    "/app/backend/tests/test_outreach.py (RESTORE daily_cap 100 → 200)"
+  ],
+  "success_rate": {"backend": "90% (19/21 in test_mailboxes; the 2 failures are the real bugs above)", "frontend": "95%"},
+  "seed_data_creation": "None kept. TEST mailboxes ids 1-7 (example.com, fake creds) were created and all soft-deleted. DATA NOTE: running test_outreach.py triggered /api/outreach/run, which applied _migrate_v4 (cap 200), and then its RESTORE (hardcoded daily_cap 100) put the live outreach daily_cap back to 100 with the outreach_v4 marker already set. I put daily_cap back to 200 (the migration's intended value) and changed RESTORE to 200. Prospecting enabled=false; outreach enabled=true is unchanged.",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Run with REACT_APP_BACKEND_URL exported. test_mailboxes.py unit tests use a throw-away DB and patch oc/mb/utils/et .db, mailer.is_connected, ol.get_config and mb.send, so nothing is really sent. The test send with fake creds takes about 25 s. test_failing_inbox_behaviour and test_edit_duplicate_email are expected to fail until the bugs are fixed. Isolated-DB fixtures must also patch mailboxes.db and outlook_send.db and insert an outreach_v4 marker. The 'Main inbox emails per day' label is on /outreach (data-testid outreach-daily-cap).",
+  "rca of the issue": "Broken inbox blocks the queue: _send_one lowers sender['remaining'] only on success; on failure the sender stays in the pool with the largest remaining, and pick() chooses it again for every next message (it is also saved as sticky because the earlier sticky was None). Reproduced in TestRotation.test_failing_inbox_behaviour. Fix: on failure, set sender['remaining']=0 for the rest of the run (or drop it from the pool) and mark the mailbox unverified after N failures."
+}

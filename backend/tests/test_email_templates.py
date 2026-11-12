@@ -225,6 +225,10 @@ class TestUseTemplate:
 
 
 # ---------------- core unit tests (isolated DB) ----------------
+async def _yes():
+    return True
+
+
 class TestCore:
     @pytest.fixture(autouse=True)
     def tdb(self, monkeypatch):
@@ -234,6 +238,10 @@ class TestCore:
         name = f"{os.environ['DB_NAME']}_t1_{uuid.uuid4().hex[:8]}"
         d = cli[name]
         monkeypatch.setattr(oc, "db", d)
+        from core import mailboxes as _mb
+        monkeypatch.setattr(_mb, "db", d)  # multi-inbox: senders()/pick() read mailboxes.db
+        monkeypatch.setattr(outlook_send, "db", d)
+        run(d.settings.insert_one({"key": "outreach_v4", "done": True}))  # keep the test-set daily_cap
         monkeypatch.setattr(et, "db", d)
         ctr = {"n": 0}
 
@@ -257,6 +265,7 @@ class TestCore:
             assert path == "p/7.pdf"
             return PDF, "application/pdf"
         monkeypatch.setattr(et, "get_object", go)
+        monkeypatch.setattr(mailer, "is_connected", _yes)  # multi-inbox: _send_one needs a sender in the pool
         sent, logs = [], []
 
         async def send(to, subject, body, html=False, cc=None, attachments=None):
@@ -288,6 +297,7 @@ class TestCore:
         async def go(path):
             raise RuntimeError("storage down")
         monkeypatch.setattr(et, "get_object", go)
+        monkeypatch.setattr(mailer, "is_connected", _yes)  # multi-inbox: _send_one needs a sender in the pool
         m = {"id": 2, "seq_id": 2, "step": 1, "channel": "email", "to": "a@example.com", "contact_name": "A",
              "subject": "S", "body": "b", "attachments": [{"file_id": 8, "filename": "x.pdf"}], "status": "sending"}
         run(self.db.outreach.insert_one(dict(m)))

@@ -120,6 +120,10 @@ class TestOutreachAutoSend:
         name = f"{os.environ['DB_NAME']}_t1_{uuid.uuid4().hex[:8]}"
         d = cli[name]
         monkeypatch.setattr(oc, "db", d)
+        from core import mailboxes as _mb
+        monkeypatch.setattr(_mb, "db", d)  # multi-inbox: senders()/pick() read mailboxes.db
+        monkeypatch.setattr(outlook_send, "db", d)
+        run(d.settings.insert_one({"key": "outreach_v4", "done": True}))  # keep the test-set daily_cap
         monkeypatch.setattr(et, "db", d)
         self.db = d
         yield d

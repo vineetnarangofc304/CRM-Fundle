@@ -109,6 +109,9 @@ async def _send_one(m: dict, st: dict, pool: list | None = None, force: bool = F
         body = _with_signature(m["body"] + et.video_block(m.get("video_links")), st)
         res = await mb.send(sender, m["to"], m["subject"], body, cc=st.get("cc") or None, attachments=files)
     if not res.get("ok"):
+        sender["remaining"] = 0
+        if sender["id"] != 0 and any(x in (res.get("error") or "") for x in ("rejected the mailbox", "SMTP sending turned off")):
+            await db.mailboxes.update_one({"id": sender["id"]}, {"$set": {"verified": False, "last_error": res.get("error")}})
         tries = m.get("send_attempts", 0) + 1
         retry = (datetime.now(timezone.utc) + timedelta(hours=1)).strftime("%Y-%m-%d %H:%M:%S")
         await db.outreach.update_one({"id": m["id"]}, {"$set": {

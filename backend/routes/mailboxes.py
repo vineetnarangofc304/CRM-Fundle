@@ -39,6 +39,7 @@ def _check(body: Box):
 
 @router.get("/admin/mailboxes")
 async def list_boxes(user: dict = Depends(require_roles("admin", "manager"))):
+    await oc._migrate_v4()
     st = await oc.get_settings()
     day = oc._now()[:10]
     sent = await mb._sent_today(day)
@@ -74,6 +75,9 @@ async def edit_box(bid: int, body: Box, user: dict = Depends(ADMIN)):
     upd = {"sender_name": body.sender_name.strip() or "Fundle.ai", "smtp_host": body.smtp_host.strip(),
            "smtp_port": body.smtp_port, "daily_cap": body.daily_cap, "active": body.active,
            "smtp_user": body.smtp_user.strip().lower(), "updated_at": now_utc_str()}
+    if upd["smtp_user"] != cur["smtp_user"] and await db.mailboxes.find_one(
+            {"smtp_user": upd["smtp_user"], "is_deleted": {"$ne": True}, "id": {"$ne": bid}}):
+        raise HTTPException(status_code=409, detail="This inbox is already added")
     if body.smtp_password or (upd["smtp_user"], upd["smtp_host"], upd["smtp_port"]) != (cur["smtp_user"], cur["smtp_host"], cur["smtp_port"]):
         upd["verified"] = False
     if body.smtp_password:
@@ -100,6 +104,8 @@ async def test_box(bid: int, body: TestTo, user: dict = Depends(ADMIN)):
     b = await db.mailboxes.find_one({"id": bid, "is_deleted": {"$ne": True}}, {"_id": 0})
     if not b:
         raise HTTPException(status_code=404, detail="Inbox not found")
+    if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[a-zA-Z]{2,}", body.to.strip()):
+        raise HTTPException(status_code=400, detail="Enter a valid email to send the test to")
     cfg = {**b, "method": "smtp", "from_email": b["smtp_user"]}
     res = await ol.send_with_config(cfg, body.to.strip(), "Fundle.ai CRM — inbox test",
                                     f"<p>Test email from <b>{b['smtp_user']}</b> via Fundle.ai CRM. This inbox is ready for outreach.</p>",

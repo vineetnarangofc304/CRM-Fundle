@@ -12,8 +12,8 @@ import requests
 
 BASE_URL = os.environ.get("REACT_APP_BACKEND_URL").rstrip("/")
 ADMIN = {"email": "vineetnarangofc@gmail.com", "password": "Fundle@cf928c"}
-# v2 (auto-send) production values — restored after the module
-RESTORE = {"enabled": True, "min_score": 0, "daily_cap": 100, "drafts_per_run": 30, "gaps": [3, 7],
+# v2 (auto-send) production values (daily_cap 200 since outreach_v4) — restored after the module
+RESTORE = {"enabled": True, "min_score": 0, "daily_cap": 200, "drafts_per_run": 30, "gaps": [3, 7],
            "auto_send": True, "cc": "vineet.narang@fundle.ai"}
 
 

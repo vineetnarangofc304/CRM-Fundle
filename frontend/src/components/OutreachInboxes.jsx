@@ -34,7 +34,8 @@ function BoxForm({ b, onDone }) {
 
 function BoxRow({ b, reload, onEdit }) {
   const [to, setTo] = useState("");
-  const test = async () => { try { await API.post(`/admin/mailboxes/${b.id}/test`, { to: to.trim() || b.smtp_user }); toast.success("Test sent — inbox is live for outreach"); reload(); } catch (e) { toast.error(apiErr(e)); reload(); } };
+  const [busy, setBusy] = useState(false);
+  const test = async () => { setBusy(true); try { await API.post(`/admin/mailboxes/${b.id}/test`, { to: to.trim() || b.smtp_user }); toast.success("Test sent — inbox is live for outreach"); } catch (e) { toast.error(apiErr(e)); } finally { setBusy(false); reload(); } };
   const del = async () => { if (!window.confirm(`Remove ${b.smtp_user}?`)) return; try { await API.delete(`/admin/mailboxes/${b.id}`); reload(); } catch (e) { toast.error(apiErr(e)); } };
   return (
     <div className="flex flex-wrap items-center gap-2 rounded-lg border border-slate-100 p-2 text-xs" data-testid={`mailbox-row-${b.id}`}>
@@ -46,7 +47,7 @@ function BoxRow({ b, reload, onEdit }) {
       <span className="text-slate-500" data-testid={`mailbox-usage-${b.id}`}>{b.sent_today}/{b.daily_cap} today</span>
       <div className="ml-auto flex items-center gap-1">
         <input data-testid={`mailbox-test-to-${b.id}`} className="crm-input w-44 !py-1 text-xs" placeholder="Test to (optional)" value={to} onChange={(e) => setTo(e.target.value)} />
-        <button data-testid={`mailbox-test-${b.id}`} onClick={test} className="crm-btn-secondary !py-1 text-xs">Send test</button>
+        <button data-testid={`mailbox-test-${b.id}`} onClick={test} disabled={busy} className="crm-btn-secondary whitespace-nowrap !py-1 text-xs disabled:opacity-50">{busy ? "Testing…" : "Send test"}</button>
         <button data-testid={`mailbox-edit-${b.id}`} onClick={() => onEdit(b)} className="crm-btn-secondary !py-1 text-xs">Edit</button>
         <button data-testid={`mailbox-delete-${b.id}`} onClick={del} className="crm-btn-secondary !py-1 text-xs text-rose-600"><Trash size={14} /></button>
       </div>
@@ -65,12 +66,12 @@ export function OutreachInboxes({ isAdmin }) {
     <div className="crm-card space-y-3 p-4" data-testid="outreach-inboxes">
       <div className="flex items-center gap-2">
         <h3 className="font-display text-sm font-extrabold text-slate-800">Outreach inboxes</h3>
-        <span className="rounded-full bg-[#1A73E8]/10 px-2 py-0.5 text-[10px] font-bold text-[#1557B0]" data-testid="outreach-inboxes-total">up to {total} emails/day</span>
+        <span className="rounded-full bg-[#1A73E8]/10 px-2 py-0.5 text-[10px] font-bold text-[#1557B0]" data-testid="outreach-inboxes-total">{total ? `up to ${total} emails/day` : "no inbox live yet"}</span>
         {isAdmin && !edit && <button data-testid="mailbox-add" onClick={() => setEdit({})} className="crm-btn-primary ml-auto !py-1 text-xs"><Plus size={14} /> Add inbox</button>}
       </div>
       <p className="text-xs text-slate-500">Outreach emails take turns across these inboxes, each with its own daily limit. A brand always hears from the same inbox. Office 365 inboxes need Authenticated SMTP switched on.</p>
       {d.primary ? <div className="flex items-center gap-2 rounded-lg border border-slate-100 p-2 text-xs" data-testid="mailbox-primary"><EnvelopeSimple size={16} className="text-slate-400" /><b className="text-slate-700">{d.primary.email}</b><span className="font-bold text-emerald-600">Main inbox</span><span className="text-slate-500">{d.primary.sent_today}/{d.primary.daily_cap} today</span></div>
-        : <div className="text-xs text-amber-600">Main inbox not connected — set it up above.</div>}
+        : <div className="text-xs text-amber-600">Main inbox not connected — set up Outlook or Gmail on this page.</div>}
       {d.boxes.map((b) => <BoxRow key={b.id} b={b} reload={load} onEdit={setEdit} />)}
       {edit && <BoxForm b={edit} onDone={() => { setEdit(null); load(); }} />}
     </div>

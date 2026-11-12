@@ -35,8 +35,9 @@ async def pick(prospect_id, pool: list, force: bool = False):
     p = await db.prospects.find_one({"id": prospect_id}, {"sender_mailbox": 1}) if prospect_id else None
     sticky = next((s for s in avail if p and s["id"] == p.get("sender_mailbox") and (force or s["remaining"] > 0)), None)
     s = sticky or max(avail, key=lambda x: x["remaining"])
-    ids = {x["id"] for x in pool}
-    if p is not None and p.get("sender_mailbox") not in ids:
+    cur = p.get("sender_mailbox") if p else None
+    gone = cur is not None and cur != PRIMARY and not await db.mailboxes.find_one({"id": cur, "is_deleted": {"$ne": True}})
+    if p is not None and (cur is None or gone):
         await db.prospects.update_one({"id": prospect_id}, {"$set": {"sender_mailbox": s["id"]}})
     return s
 
