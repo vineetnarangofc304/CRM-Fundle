@@ -7,23 +7,43 @@ const esc = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, 
 const fmt = (s) => esc(s || "").replace(/\*\*(.+?)\*\*/g, "<b>$1</b>").replace(/`([^`]+)`/g, "<code class='rounded bg-slate-100 px-1'>$1</code>")
   .split("\n").filter((l) => !/^\s*\|?\s*:?-{3,}/.test(l)).map((l) => l.replace(/^#{1,6}\s*(.*)$/, "<b>$1</b>").replace(/^\s*\|(.*)\|\s*$/, (_, r) => r.split("|").map((c) => c.trim()).join(" · ")))
   .map((l) => (/^\s*[-•*] /.test(l) ? `<li class="ml-4 list-disc">${l.replace(/^\s*[-•*] /, "")}</li>` : l ? `<p>${l}</p>` : "")).join("");
-const TOOL_LABEL = { get_system_overview: "Checked system status", find_records: "Looked up records", export_csv: "Created CSV file", aggregate_records: "Ran analysis", update_records: "Updated records", save_settings: "Changed settings", save_email_template: "Saved email template", send_email_campaign: "Queued emails", stop_emails: "Stopped emails", prioritize_contact_search: "Queued contact search", run_job: "Started a job", send_single_email: "Sent email", send_queued_emails_now: "Sent queued emails", inbox_activity: "Checked mailboxes", request_developer_change: "Emailed Vineet a change request", read_uploaded_file: "Read the file", import_brands_from_file: "Imported brands", import_contact_emails_from_file: "Imported verified emails", manage_contact_sources: "Updated contact sources" };
+const TOOL_LABEL = { get_system_overview: "Checked system status", find_records: "Looked up records", export_csv: "Created CSV file", aggregate_records: "Ran analysis", update_records: "Updated records", save_settings: "Changed settings", save_email_template: "Saved email template", send_email_campaign: "Queued emails", stop_emails: "Stopped emails", prioritize_contact_search: "Queued contact search", run_job: "Started a job", send_single_email: "Sent email", send_queued_emails_now: "Sent queued emails", inbox_activity: "Checked mailboxes", request_developer_change: "Emailed Vineet a change request", read_uploaded_file: "Read the file", import_brands_from_file: "Imported brands", import_contact_emails_from_file: "Imported verified emails", update_brands_from_file: "Filled store counts & categories", manage_contact_sources: "Updated contact sources" };
 const EXAMPLES = ["Attach an Excel of brands → 'Add these brands and start emailing them'", "Also use https://www.example.com/team pages to find contacts — reason: more decision makers", "Send this email to all women fashion brands from Abhinav's inbox: …", "Change the hourly limit from 25 to 60 — reason: inboxes are warmed up", "Stop adding brands and search contacts for grocery brands with up to 5 stores first", "How many intro emails went out today, and how many bounced?"];
+
+const downloadExport = async (id, name) => {
+  try {
+    const r = await API.get(`/brain/exports/${id}`, { responseType: "blob" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(r.data); a.download = name; a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  } catch (e) { toast.error(apiErr(e)); }
+};
+
+function Exports() {
+  const [rows, setRows] = useState(null);
+  useEffect(() => { API.get("/brain/exports").then(({ data }) => setRows(data)).catch((e) => toast.error(apiErr(e))); }, []);
+  if (!rows) return <div className="p-6 text-sm text-slate-400">Loading files…</div>;
+  return (
+    <div className="flex-1 overflow-y-auto p-6" data-testid="brain-exports">
+      <h2 className="mb-3 text-sm font-extrabold text-slate-800">CSV files Fundle Brain made</h2>
+      <table className="w-full text-xs"><thead className="text-left text-slate-400"><tr><th className="py-2">Created (UTC)</th><th>File</th><th>Rows</th><th /></tr></thead>
+        <tbody>{rows.map((r) => (
+          <tr key={r.id} className="border-t border-slate-100" data-testid={`brain-export-row-${r.id}`}>
+            <td className="whitespace-nowrap py-2 pr-3 text-slate-500">{r.at}</td><td className="pr-3 font-semibold text-slate-700">{r.filename}</td><td className="pr-3">{r.rows}</td>
+            <td className="text-right"><button data-testid={`brain-export-row-download-${r.id}`} onClick={() => downloadExport(r.id, r.filename)} className="crm-btn-secondary !py-1 text-xs"><DownloadSimple size={13} /> Download</button></td>
+          </tr>))}
+          {!rows.length && <tr><td colSpan={4} className="py-8 text-center text-slate-400">No files yet — ask Brain for a CSV.</td></tr>}
+        </tbody></table>
+    </div>
+  );
+}
 
 function ExportButton({ t }) {
   const id = (t.summary || "").match(/"export_id": (\d+)/)?.[1];
   const name = (t.summary || "").match(/"filename": "([^"]+)"/)?.[1] || "export.csv";
   const rows = (t.summary || "").match(/"rows": (\d+)/)?.[1];
   if (!t.ok || !id) return null;
-  const dl = async () => {
-    try {
-      const r = await API.get(`/brain/exports/${id}`, { responseType: "blob" });
-      const a = document.createElement("a");
-      a.href = URL.createObjectURL(r.data); a.download = name; a.click();
-      setTimeout(() => URL.revokeObjectURL(a.href), 5000);
-    } catch (e) { toast.error(apiErr(e)); }
-  };
-  return <button onClick={dl} data-testid={`brain-export-download-${id}`} className="crm-btn-primary !py-1.5 text-xs"><DownloadSimple size={14} /> Download CSV{rows ? ` (${rows} rows)` : ""}</button>;
+  return <button onClick={() => downloadExport(id, name)} data-testid={`brain-export-download-${id}`} className="crm-btn-primary !py-1.5 text-xs"><DownloadSimple size={14} /> Download CSV{rows ? ` (${rows} rows)` : ""}</button>;
 }
 
 function ToolChip({ t }) {
@@ -48,13 +68,14 @@ function Bubble({ m }) {
   );
 }
 
-function Sidebar({ list, cur, pick, add, del, audit, open }) {
+function Sidebar({ list, cur, pick, add, del, audit, exportsView, open }) {
   if (!open) return null;
   return (
     <aside className="flex w-56 shrink-0 flex-col border-r border-slate-100 bg-slate-50/60" data-testid="brain-sidebar">
       <div className="space-y-2 p-3">
         <button data-testid="brain-new-chat" onClick={add} className="crm-btn-primary w-full justify-center !py-2 text-xs"><Plus size={14} /> New chat</button>
         <button data-testid="brain-audit-btn" onClick={audit} className={`crm-btn-secondary w-full justify-center !py-1.5 text-xs ${cur === "audit" ? "!bg-slate-200" : ""}`}><ClockCounterClockwise size={14} /> Audit log</button>
+        <button data-testid="brain-exports-btn" onClick={exportsView} className={`crm-btn-secondary w-full justify-center !py-1.5 text-xs ${cur === "exports" ? "!bg-slate-200" : ""}`}><DownloadSimple size={14} /> Saved CSV files</button>
       </div>
       <div className="flex-1 space-y-0.5 overflow-y-auto px-2 pb-3">
         {list.map((s) => (
@@ -151,8 +172,8 @@ export default function FundleBrain() {
 
   return (
     <div className="flex h-[calc(100vh-7rem)] overflow-hidden rounded-2xl border border-slate-100 bg-white" data-testid="fundle-brain-page">
-      <Sidebar open={chats} list={list} cur={cur} pick={setCur} add={add} del={del} audit={() => setCur("audit")} />
-      {cur === "audit" ? <Audit /> : (
+      <Sidebar open={chats} list={list} cur={cur} pick={setCur} add={add} del={del} audit={() => setCur("audit")} exportsView={() => setCur("exports")} />
+      {cur === "audit" ? <Audit /> : cur === "exports" ? <Exports /> : (
         <div className="flex min-w-0 flex-1 flex-col">
           <div className="flex items-center gap-2 border-b border-slate-100 px-6 py-3">
             <button data-testid="brain-chats-toggle" onClick={toggleChats} title={chats ? "Hide chats" : "Show chats"} className="crm-btn-secondary !px-2 !py-1 text-xs"><ChatsCircle size={14} /> {chats ? "Hide chats" : "Chats"}</button>

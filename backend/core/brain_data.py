@@ -109,6 +109,48 @@ async def t_import_brands(ctx, a):
             "next": "New brands are queued first: AI researches them, finds contacts, then the matching intro email goes out automatically."}
 
 
+def _blank(v) -> bool:
+    return v in (None, "", 0, "Uploaded", "Unknown", "unknown")
+
+
+async def t_update_brands(ctx, a):
+    """Fill missing store_count / category / city / website / segment on brands from a file; add unknown brands."""
+    from core import prospector as pe
+    m, d = a.get("mapping") or {}, a.get("defaults") or {}
+    if not m.get("brand_name"):
+        raise ValueError("mapping.brand_name (the column with brand names) is required")
+    _, rows = await _rows(a["file_id"])
+    st = {"rows": len(rows), "brands_updated": 0, "fields_filled": 0, "already_had_values": 0, "added_brands": 0, "skipped": 0}
+    for r in rows:
+        name = _get(r, m, "brand_name")
+        if not name or len(name) > 120:
+            st["skipped"] += 1
+            continue
+        vals = {"store_count": pe._int(_get(r, m, "store_count")), "category": _get(r, m, "category"), "hq_city": _get(r, m, "city"),
+                "website": pe._url(_get(r, m, "website")) if _get(r, m, "website") else None, "segment": _get(r, m, "segment")}
+        if vals["segment"] not in pe.SEGMENTS:
+            vals["segment"] = None
+        p = await db.prospects.find_one({"brand_key": pe.brand_key(name)}, {"_id": 0})
+        if not p and vals["website"]:
+            dom = vals["website"].lower().replace("https://", "").replace("http://", "").replace("www.", "").split("/")[0]
+            p = dom and await db.prospects.find_one({"website": {"$regex": re.escape(dom), "$options": "i"}}, {"_id": 0})
+        if not p:
+            await _new_prospect(name, _get(r, m, "country", d.get("country") or "India"), vals["category"] or d.get("category") or "Uploaded",
+                                vals["website"], vals["store_count"], vals["hq_city"], vals["segment"])
+            st["added_brands"] += 1
+            continue
+        upd = {k: v for k, v in vals.items() if v not in (None, "") and _blank(p.get(k))}
+        st["already_had_values"] += sum(1 for k, v in vals.items() if v not in (None, "") and not _blank(p.get(k)))
+        if upd:
+            await db.prospects.update_one({"id": p["id"]}, {"$set": upd})
+            if p.get("lead_id") and ("store_count" in upd or "category" in upd):
+                await db.leads.update_one({"id": p["lead_id"]}, {"$set": {k: upd[k] for k in ("store_count", "category") if k in upd}})
+            st["brands_updated"] += 1
+            st["fields_filled"] += len(upd)
+    st["note"] = "Only blank values were filled; existing store counts/categories were kept. New brands go into research → contacts → intro email."
+    return st
+
+
 async def t_import_contacts(ctx, a):
     from core import contacts as ct, prospector as pe
     m, d = a.get("mapping") or {}, a.get("defaults") or {}

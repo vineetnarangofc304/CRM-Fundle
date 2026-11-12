@@ -113,6 +113,12 @@ async def chat(sid: int, b: Say, user: dict = Depends(brain_user)):
     return StreamingResponse(gen(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
+@router.get("/exports")
+async def exports(user: dict = Depends(brain_user)):
+    f = {} if user.get("role") == "admin" else {"user_id": user["id"]}
+    return await db.brain_exports.find(f, {"_id": 0, "csv": 0}).sort("id", -1).limit(300).to_list(300)
+
+
 @router.get("/exports/{eid}")
 async def export_file(eid: int, user: dict = Depends(brain_user)):
     from fastapi.responses import Response
