@@ -2,7 +2,7 @@
 import json
 import re
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
@@ -10,7 +10,7 @@ from core.db import db
 from core.permissions import effective_permissions
 from core.security import get_current_user
 from core.utils import next_id, now_utc_str
-from core import brain
+from core import brain, brain_data
 
 router = APIRouter(prefix="/brain", tags=["brain"])
 
@@ -109,6 +109,26 @@ async def chat(sid: int, b: Say, user: dict = Depends(brain_user)):
             await db.brain_sessions.update_one({"id": sid}, {"$set": {"updated_at": now_utc_str()}})
         yield f"data: {json.dumps({'type': 'done'})}\n\n"
     return StreamingResponse(gen(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+@router.post("/sessions/{sid}/upload")
+async def upload(sid: int, file: UploadFile = File(...), user: dict = Depends(brain_user)):
+    await _session(sid, user)
+    data = await file.read()
+    if len(data) > 15 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="File too large (max 15 MB)")
+    try:
+        doc = await brain_data.save_upload(sid, user, file.filename or "upload.csv", file.content_type, data)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Couldn't read that file: {str(e)[:200]}")
+    return doc
+
+
+@router.get("/sources")
+async def sources(user: dict = Depends(brain_user)):
+    return await brain_data.get_sources()
 
 
 @router.get("/audit")

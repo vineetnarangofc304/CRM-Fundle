@@ -335,7 +335,18 @@ TOOLS = {
     "request_developer_change": (t_escalate, _fn("request_developer_change", "Only when a request truly needs new code or a new screen that no tool can do: logs it and emails Vineet.",
                                                  {"summary": STR, "details": STR}, ["summary"])),
 }
-READ_ONLY = {"get_system_overview", "find_records", "aggregate_records"}
+from core import brain_data as bd  # noqa: E402
+TOOLS.update({
+    "read_uploaded_file": (bd.t_read_file, _fn("read_uploaded_file", "Read rows of a spreadsheet the user attached (file_id from the '[Attached file #N …]' note). Use it to see columns and sample rows before importing.",
+                                               {"file_id": INT, "offset": INT, "limit": INT}, ["file_id"], False)),
+    "import_brands_from_file": (bd.t_import_brands, _fn("import_brands_from_file", "Add every row of an attached file as a new brand + lead (skips brands already in the CRM). New brands go first in the queue: AI research → contacts → matching intro email automatically. mapping = {brand_name, category, country, website, store_count, city, segment} → column names; defaults for missing values.",
+                                                        {"file_id": INT, "mapping": OBJ, "defaults": OBJ}, ["file_id", "mapping"])),
+    "import_contact_emails_from_file": (bd.t_import_contacts, _fn("import_contact_emails_from_file", "Add/update verified contact emails on brands from an attached file. Matches brand by name or website/email domain; creates the brand if missing. Uploaded emails are trusted (published) and the AI stops searching that brand. mapping = {brand_name, website, contact_name, role, email, linkedin, country, category} → column names.",
+                                                                  {"file_id": INT, "mapping": OBJ, "defaults": OBJ}, ["file_id", "mapping"])),
+    "manage_contact_sources": (bd.t_sources, _fn("manage_contact_sources", "List, add or remove websites/LinkedIn pages the AI contact search must use when looking for decision makers (trade media, directories, association member lists...).",
+                                                 {"action": {"type": "string", "enum": ["list", "add", "remove"]}, "name": STR, "url": STR, "notes": STR}, ["action"])),
+})
+READ_ONLY = {"get_system_overview", "find_records", "aggregate_records", "read_uploaded_file"}
 
 SYSTEM = """You are Fundle Brain, the operator of the Fundle.ai CRM (B2B sales CRM selling AI loyalty/retail software to brands in India/GCC/UK). You act on the live system through tools — you do not just advise.
 
@@ -353,8 +364,12 @@ RULES
 1. Do what the user asks immediately — no confirmation step. But every change needs the USER'S OWN reason (why they want it). Never invent or paraphrase a reason like "user requested it". If the user's messages don't say why, do NOT call any change tool — reply with one short question asking why, then act once they answer. Pass their reason in `reason`.
 2. Before bulk changes, check scope with find_records/aggregate_records (counts), then do it, then report exactly what changed (numbers, names). Prefer specific filters; regex with $options "i" for categories/names.
 3. Write emails in clean HTML (<p>, <ul><li>, <b>). Don't add a signature — the sending inbox adds its own.
-4. If something truly can't be done with your tools (new screens, new code features, integrations), call request_developer_change with a clear summary so Vineet is emailed, and tell the user.
-5. Never reveal passwords or tokens. Format replies with short paragraphs and "- " bullet points and **bold** only — no markdown tables or # headings. Be concise, and answer analytics questions with real numbers from the tools.
+4. New emails/templates: first DRAFT the email in the chat (subject + body) and ask "Shall I save it?"; only call save_email_template after the user approves (their approval + reason).
+5. Attached files appear as "[Attached file #N: name — rows, columns]". Read a few rows, decide if it's a brand list or a contact-email list, map the columns, then import and report the counts.
+6. Contact sources: when the user gives sites/pages to find contacts, add them with manage_contact_sources (any non-list action needs a reason). Read-only actions never need a reason.
+7. Only do what was asked. Never switch engines on/off, change settings or start jobs unless the user explicitly asked for that.
+9. If something truly can't be done with your tools (new screens, new code features, integrations), call request_developer_change with a clear summary so Vineet is emailed, and tell the user.
+8. Never reveal passwords or tokens. Format replies with short paragraphs and "- " bullet points and **bold** only — no markdown tables or # headings. Be concise, and answer analytics questions with real numbers from the tools.
 Today: {today}."""
 
 
@@ -384,12 +399,12 @@ async def run_turn(ctx: dict, history: list, text: str):
                 if not fn:
                     raise ValueError("Unknown tool")
                 r = str(args.get("reason") or "").strip()
-                if tc.name not in READ_ONLY and (len(r) < 4 or re.match(r"(?i)^(the )?user (requested|asked|wants)|^as (requested|asked)|^per (the )?user", r)):
+                if tc.name not in READ_ONLY and not (tc.name == "manage_contact_sources" and args.get("action") == "list") and (len(r) < 4 or re.match(r"(?i)^(the )?user (requested|asked|wants)|^as (requested|asked)|^per (the )?user", r)):
                     raise ValueError("No real reason given — ask the user WHY they want this change, then retry with their reason")
                 out, ok = await fn[0](ctx, args), True
             except Exception as e:
                 out, ok = {"error": str(e)[:500]}, False
-            if tc.name not in READ_ONLY:
+            if tc.name not in READ_ONLY and not (tc.name == "manage_contact_sources" and args.get("action") == "list"):
                 await _audit(ctx, tc.name, args, out, ok)
             res = json.dumps(_scrub(out), default=str)[:20000]
             yield {"type": "tool_done", "name": tc.name, "ok": ok, "summary": res[:300]}

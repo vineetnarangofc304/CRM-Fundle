@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
-import { Brain, Plus, Trash, PaperPlaneRight, Wrench, CheckCircle, WarningCircle, ClockCounterClockwise, ChatsCircle } from "@phosphor-icons/react";
+import { Brain, Plus, Trash, PaperPlaneRight, Paperclip, X, Wrench, CheckCircle, WarningCircle, ClockCounterClockwise, ChatsCircle } from "@phosphor-icons/react";
 import { API, apiErr } from "../lib/api";
 
 const esc = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -8,7 +8,7 @@ const fmt = (s) => esc(s || "").replace(/\*\*(.+?)\*\*/g, "<b>$1</b>").replace(/
   .split("\n").filter((l) => !/^\s*\|?\s*:?-{3,}/.test(l)).map((l) => l.replace(/^#{1,6}\s*(.*)$/, "<b>$1</b>").replace(/^\s*\|(.*)\|\s*$/, (_, r) => r.split("|").map((c) => c.trim()).join(" · ")))
   .map((l) => (/^\s*[-•*] /.test(l) ? `<li class="ml-4 list-disc">${l.replace(/^\s*[-•*] /, "")}</li>` : l ? `<p>${l}</p>` : "")).join("");
 const TOOL_LABEL = { get_system_overview: "Checked system status", find_records: "Looked up records", aggregate_records: "Ran analysis", update_records: "Updated records", save_settings: "Changed settings", save_email_template: "Saved email template", send_email_campaign: "Queued emails", stop_emails: "Stopped emails", prioritize_contact_search: "Queued contact search", run_job: "Started a job", send_single_email: "Sent email", request_developer_change: "Emailed Vineet a change request" };
-const EXAMPLES = ["Send this email to all women fashion brands from Abhinav's inbox: …", "Change the hourly limit from 25 to 60 — reason: inboxes are warmed up", "Stop adding brands and search contacts for grocery brands with up to 5 stores first", "How many intro emails went out today, and how many bounced?"];
+const EXAMPLES = ["Attach an Excel of brands → 'Add these brands and start emailing them'", "Also use https://www.example.com/team pages to find contacts — reason: more decision makers", "Send this email to all women fashion brands from Abhinav's inbox: …", "Change the hourly limit from 25 to 60 — reason: inboxes are warmed up", "Stop adding brands and search contacts for grocery brands with up to 5 stores first", "How many intro emails went out today, and how many bounced?"];
 
 function ToolChip({ t }) {
   const warn = t.ok && /"emailed": false/.test(t.summary || "");
@@ -77,7 +77,9 @@ export default function FundleBrain() {
   const [msgs, setMsgs] = useState([]);
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
+  const [file, setFile] = useState(null);
   const end = useRef(null);
+  const fileIn = useRef(null);
   const loadList = useCallback(() => API.get("/brain/sessions").then(({ data }) => { setList(data); return data; }), []);
   useEffect(() => { loadList().then((d) => d[0] && setCur(d[0].id)).catch((e) => toast.error(apiErr(e))); }, [loadList]);
   useEffect(() => { if (typeof cur === "number") API.get(`/brain/sessions/${cur}/messages`).then(({ data }) => setMsgs(data)); else setMsgs([]); }, [cur]);
@@ -86,10 +88,19 @@ export default function FundleBrain() {
   const del = async (id) => { if (!window.confirm("Delete this chat? The audit log keeps its changes.")) return; await API.delete(`/brain/sessions/${id}`); const d = await loadList(); if (cur === id) setCur(d[0]?.id ?? null); };
 
   const send = async (override) => {
-    const q = (override ?? text).trim();
-    if (!q || busy) return;
+    let q = (override ?? text).trim();
+    if ((!q && !file) || busy) return;
     const sid = typeof cur === "number" ? cur : await add();
-    setText(""); setBusy(true);
+    setBusy(true);
+    if (file) {
+      try {
+        const fd = new FormData(); fd.append("file", file);
+        const { data: f } = await API.post(`/brain/sessions/${sid}/upload`, fd);
+        q = `[Attached file #${f.id}: ${f.filename} — ${f.rows} rows, columns: ${f.columns.join(", ")}]\n${q || "Please import this file."}`;
+        setFile(null);
+      } catch (e) { toast.error(apiErr(e)); setBusy(false); return; }
+    }
+    setText("");
     setMsgs((m) => [...m, { role: "user", content: q }, { role: "assistant", content: "", tools: [] }]);
     const upd = (fn) => setMsgs((m) => { const c = [...m]; c[c.length - 1] = fn({ ...c[c.length - 1] }); return c; });
     try {
@@ -139,10 +150,13 @@ export default function FundleBrain() {
             <div ref={end} />
           </div>
           <div className="border-t border-slate-100 p-4">
+            {file && <div className="mb-2 inline-flex items-center gap-2 rounded-full bg-sky-50 px-3 py-1 text-xs font-semibold text-sky-700" data-testid="brain-file-chip"><Paperclip size={12} />{file.name}<button data-testid="brain-file-remove" onClick={() => setFile(null)}><X size={12} /></button></div>}
             <div className="flex items-end gap-2">
+              <input ref={fileIn} type="file" accept=".csv,.xlsx,.xls,.txt" className="hidden" data-testid="brain-file-input" onChange={(e) => { setFile(e.target.files?.[0] || null); e.target.value = ""; }} />
+              <button data-testid="brain-attach" onClick={() => fileIn.current?.click()} title="Attach Excel or CSV" className="crm-btn-secondary !px-3 !py-2.5"><Paperclip size={16} /></button>
               <textarea data-testid="brain-input" rows={2} value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }}
                 placeholder="e.g. Send this email to all D2C brands with under 10 stores from Hardik's inbox… (Enter to send, Shift+Enter for a new line)" className="crm-input flex-1 resize-none text-sm" />
-              <button data-testid="brain-send" disabled={busy || !text.trim()} onClick={() => send()} className="crm-btn-primary !py-2.5"><PaperPlaneRight size={16} weight="fill" /> {busy ? "Working…" : "Send"}</button>
+              <button data-testid="brain-send" disabled={busy || (!text.trim() && !file)} onClick={() => send()} className="crm-btn-primary !py-2.5"><PaperPlaneRight size={16} weight="fill" /> {busy ? "Working…" : "Send"}</button>
             </div>
           </div>
         </div>

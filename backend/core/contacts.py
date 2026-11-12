@@ -60,6 +60,7 @@ async def _mx_ok(domain: str) -> bool:
 
 async def find_contacts(p: dict) -> dict:
     from core import prospector as pe
+    from core import brain_data as bd
     dom = _domain(p)
     prompt = (f"Brand: \"{p['brand_name']}\" ({p['category']}, {p['country']}). Website domain: {dom or 'unknown'}. "
               f"CEO (if known): {p.get('ceo_name') or 'unknown'}.\n"
@@ -67,10 +68,7 @@ async def find_contacts(p: dict) -> dict:
               "head of Marketing / CMO / Head of CRM, Loyalty or Customer Experience (also Head of Retail / Digital if no CMO).\n"
               "Search LinkedIn profiles via Google AND recent news/press releases/magazine interviews and appointment "
               "announcements to confirm names and current roles; put the best source URL in evidence_url.\n"
-              "Also search Indian retail trade media for named executives at this brand (interviews, appointments, quotes): "
-              "indianretailer.com/news, rai.net.in (STOrai), digest.d2cinsider.com, franchiseindia.com/insights, "
-              "retail.economictimes.indiatimes.com, and the LinkedIn posts of Indian Retailer, Retailers Association of India, "
-              "D2C Insider, Franchise India and ETRetail.\n"
+              + bd.sources_prompt(await bd.get_sources()) +
               "Also find the company's email address FORMAT (e.g. firstname.lastname@domain) if published anywhere.\n"
               'Return JSON: {"email_pattern": str|null, "contacts": [{"name": str, "role": str, "linkedin": str|null, '
               '"email": str|null, "email_status": "published"|"pattern"|null, "evidence_url": str|null}]}')
