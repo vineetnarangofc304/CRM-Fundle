@@ -1,0 +1,42 @@
+{
+  "summary": "Tested the auto follow-ups and the Abhinav signature fix. Backend: 14 pytest tests (3 against the live API, 11 core unit tests run on a throwaway Mongo DB with db monkeypatched; no email was sent and no preview outreach rows were touched). 12 passed, 2 failed, and both failures are real bugs. Frontend: Outreach -> Email templates tab checked with Playwright. Signature card shows Abhinav's signature, the 8 follow-up step badges are correct, and the editor's step select and days input work. Everything requested works except the 2 bugs below.",
+  "backend_issues": {
+    "critical": [
+      {"endpoint": "core/outreach._refresh_from_template (follow-up emails)", "issue": "After a follow-up template is edited (its updated_at changes), queued follow-up emails are re-merged from the raw template subject. {{intro_subject}} is not a merge() key, so the subject becomes the literal 'Re: {{intro_subject}}' and goes out that way. Reproduced in test_refresh_after_template_edit_keeps_intro_subject. Fix: in _refresh_from_template, replace {{intro_subject}} with m['intro_subject'] (already stored on the row) before calling tailor, the same way run_followups does.", "priority": "HIGH"},
+      {"endpoint": "core/email_templates.run_followups", "issue": "Starvation. Each follow-up template scans only limit+50 intros (no sort). Intros it skips without marking fu_stepN stay in that window on every run: replied or bounced prospects, other audiences, and for step 3 intros whose step 2 is queued but not yet sent (likely with the 200/day cap). Once there are about 80 of them, eligible intros are never reached. Reproduced: 120 replied intros plus 1 eligible intro, run_followups(10) -> 0 follow-ups created. Fix: push the conditions into the Mongo query (join or pre-filter prospect ids by audience and not replied) and sort by sent_at, or mark permanently ineligible intros (fu_stepN='skip'), or page through all candidates.", "priority": "HIGH"}
+    ],
+    "minor": [
+      {"endpoint": "run_followups", "issue": "Follow-ups are sent as new messages with a 'Re:' subject. There are no In-Reply-To/References headers, so they will not thread under the intro in the recipient's mail client."},
+      {"endpoint": "run_followups", "issue": "The reply check only looks at prospect.replied and the intro's replied_at. inbox_sync does set prospect.replied on any reply, so this works today, but it depends on inbox_sync."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Outreach -> Email templates", "issues": [
+        "The Auto emailer bar lists the 8 follow-ups under the caption 'goes out on its own to every brand with an email'. This is misleading for follow-ups, and the bar rows have no step or day badge.",
+        "The placeholder hint under the editor does not mention {{intro_subject}}, which the follow-ups use.",
+        "On follow-up cards the badges (AUTO EMAILER, Follow-up 1 · day 3, audience, sent as written) wrap into cramped two-line pills next to the long names at the 3-column xl width. Consider moving the badges to their own row."
+      ]}
+    ]
+  },
+  "test_report_links": ["/app/backend/tests/test_followups_iter19.py", "/app/test_reports/pytest/pytest_iter19.xml"],
+  "action_items": [
+    "Fix _refresh_from_template so follow-ups keep 'Re: <intro subject>' after a template edit (use m['intro_subject'])",
+    "Fix run_followups starvation: filter by audience and not-replied in the query, or mark skipped intros, or iterate all candidates sorted by sent_at",
+    "Optional: add In-Reply-To headers so follow-ups thread; label follow-ups in the Auto emailer bar; mention {{intro_subject}} in the placeholder hint"
+  ],
+  "critical_code_review_comments": [
+    "_refresh_from_template ignores {{intro_subject}} (see the HIGH issue above)",
+    "run_followups fetches limit-made+50 rows unsorted and filters in Python, so skipped rows are never marked and can starve eligible intros",
+    "The intro_ids query is duplicated 3 times (run_followups, run_auto, the use_template route) with slightly different filters ($nin [None,'all'] vs $in AUDIENCES). Extract it into one helper.",
+    "senders(): primary uses st.signature and extra inboxes fall back to st.signature, as the spec requires (verified)"
+  ],
+  "updated_files": ["/app/backend/tests/test_followups_iter19.py"],
+  "success_rate": {"backend": "86% (12/14)", "frontend": "100%"},
+  "seed_data_creation": "None in the preview DB. One TEST_fu19 template was created through the API and deleted. Unit tests used throwaway DBs test_database_t19_* that are dropped afterwards.",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Run: REACT_APP_BACKEND_URL=<url> pytest tests/test_followups_iter19.py -n 0. The 2 failing tests (starvation and refresh subject) should pass after the fixes. Live follow-up template ids are 72-79 and intro ids 65-68. The main signature in the preview is already Abhinav's. No inbox is connected in the preview."
+}

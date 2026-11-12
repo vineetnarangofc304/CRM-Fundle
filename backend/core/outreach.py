@@ -107,6 +107,7 @@ async def _refresh_from_template(m: dict):
     if t.get("updated_at") == m.get("tpl_version"):
         return m
     p = await db.prospects.find_one({"id": m["prospect_id"]}, {"_id": 0}) or {"brand_name": m.get("brand")}
+    t = {**t, "subject": t["subject"].replace("{{intro_subject}}", m.get("intro_subject") or "")}
     subject, body = await et.tailor(t, p, {"name": m.get("contact_name"), "role": m.get("contact_role"), "email": m.get("to")})
     upd = {"subject": subject, "body": body, "attachments": t.get("attachments") or [], "video_links": t.get("video_links") or [],
            "template_name": t["name"], "tpl_version": t.get("updated_at")}

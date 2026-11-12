@@ -95,7 +95,7 @@ function Editor({ t, onDone }) {
         <textarea data-testid="tpl-body" rows={12} className="crm-input w-full font-mono text-xs" value={f.body} onChange={(e) => setF({ ...f, body: e.target.value })} />
         <div className="prose prose-sm max-w-none rounded-lg border border-slate-100 bg-slate-50 p-3 text-slate-600 [&_p]:mb-3 [&_ul]:list-disc [&_ul]:pl-5" data-testid="tpl-preview" dangerouslySetInnerHTML={{ __html: f.body }} />
       </div>
-      <p className="text-[11px] text-slate-400">Placeholders: {"{{first_name}}"}, {"{{brand}}"}, {"{{role}}"}. {f.ai_tailor !== false ? "AI also tailors one line to each brand before sending." : "Sent exactly as written."} The sending inbox's own signature and CC are added automatically.</p>
+      <p className="text-[11px] text-slate-400">Placeholders: {"{{first_name}}"}, {"{{brand}}"}, {"{{role}}"}, {"{{intro_subject}}"} (follow-ups: the intro's subject). {f.ai_tailor !== false ? "AI also tailors one line to each brand before sending." : "Sent exactly as written."} The sending inbox's own signature and CC are added automatically.</p>
       <div className="grid gap-4 sm:grid-cols-2"><Attachments f={f} setF={setF} /><Videos f={f} setF={setF} /></div>
       <div className="flex gap-2">
         <button data-testid="tpl-save" onClick={save} className="crm-btn-primary !py-1.5 text-xs"><FloppyDisk size={14} /> Save template</button>
@@ -127,7 +127,7 @@ function AutoEmailerBar({ items, loaded, onEdit }) {
   const autos = items.filter((t) => t.mode === "auto" && t.active);
   return (
     <div className="crm-card border-l-4 border-emerald-500 p-4" data-testid="tpl-auto-bar">
-      <div className="mb-2 text-sm font-extrabold text-slate-800">Auto emailer <span className="text-xs font-normal text-slate-500">— goes out on its own to every brand with an email</span></div>
+      <div className="mb-2 text-sm font-extrabold text-slate-800">Auto emailer <span className="text-xs font-normal text-slate-500">— intros go out on their own to every brand with an email; follow-ups go to the same person on day 3 and day 7 if they haven't replied</span></div>
       {!loaded && <div className="text-xs text-slate-400">Loading…</div>}
       {loaded && autos.length === 0 && <div className="text-xs text-slate-500">No template is set to Auto. Edit any template and set Sending to “Auto”.</div>}
       {autos.map((t) => (

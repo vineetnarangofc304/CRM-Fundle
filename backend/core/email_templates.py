@@ -217,17 +217,19 @@ async def run_followups(limit: int) -> int:
         {"$or": [{"audience": {"$nin": [None, "all"]}}, {"kind": {"$regex": "^intro"}}], "step": {"$not": {"$gt": 1}}}, {"id": 1})]
     for t in fus:
         cutoff = (datetime.now(timezone.utc) - timedelta(days=t.get("wait_days") or 3)).strftime("%Y-%m-%d %H:%M:%S")
-        intros = await db.outreach.find({"kind": "template", "template_id": {"$in": intro_ids}, "status": "sent",
-                                         "sent_at": {"$lte": cutoff}, "replied_at": {"$exists": False},
-                                         f"fu_step{t['step']}": {"$exists": False}}, {"_id": 0}).limit(limit - made + 50).to_list(500)
-        for o in intros:
+        q = {"kind": "template", "template_id": {"$in": intro_ids}, "status": "sent", "sent_at": {"$lte": cutoff},
+             "replied_at": {"$exists": False}, f"fu_step{t['step']}": {"$exists": False}}
+        if t["step"] > 2:
+            q[f"fu_step{t['step'] - 1}"] = {"$exists": True, "$ne": "skip"}
+        aud = AUDIENCES.get(t.get("audience") or "all") or {}
+        pids = [x["id"] async for x in db.prospects.find({"$and": [{"replied": {"$ne": True}}, aud]}, {"id": 1})]
+        q["prospect_id"] = {"$in": pids}
+        async for o in db.outreach.find(q, {"_id": 0}).sort("sent_at", 1):
             if made >= limit:
                 return made
             p = await db.prospects.find_one({"id": o["prospect_id"]}, {"_id": 0})
-            if not p or p.get("replied") or o["to"].lower() in {e.lower() for e in p.get("bounced_emails") or []}:
-                continue
-            if AUDIENCES.get(t.get("audience") or "all") and not await db.prospects.find_one(
-                    {"$and": [{"id": p["id"]}, AUDIENCES[t["audience"]]]}, {"_id": 1}):
+            if not p or o["to"].lower() in {e.lower() for e in p.get("bounced_emails") or []}:
+                await db.outreach.update_one({"id": o["id"]}, {"$set": {f"fu_step{t['step']}": "skip"}})
                 continue
             if t["step"] > 2 and not await db.outreach.find_one({"seq_id": o["seq_id"], "step": t["step"] - 1, "status": "sent"}):
                 continue

@@ -93,3 +93,9 @@ Gmail OAuth (GOOGLE_CLIENT_ID/SECRET, GMAIL_REDIRECT_URI), Meta CAPI (dataset id
 - Signatures per sending inbox: mailboxes.signature (Abhinav's pre-filled for abhinav@ inboxes); main inbox uses settings.outreach.signature.
 - core/email_format.py: every 15 min (with outreach cron) up to 30 brands, 6 lanes: AI Google search + existing published emails → confirm format → rebuild guessed/bounced emails (email_status confirmed_format), requeue brands with no contacts. Manual: POST /api/prospecting/prospects/{pid}/check-format; status GET /api/outreach/email-format.
 - Tested: iteration_18 (backend 17/18 → fixed, frontend 100%) + follow-up fixes verified via curl.
+
+## 2026-11-12 — Auto follow-ups + Abhinav signature fix
+- Bug: prod emails had no signature (main inbox signature empty). Fix: seed_followups_v1 sets settings.outreach.signature = Abhinav's if empty; extra inboxes fall back to it when they have none.
+- 8 follow-up templates (fu2_/fu3_<audience>, step 2 day 3 / step 3 day 7, subject "Re: {{intro_subject}}", ai_tailor false, editable incl. step + days). run_followups: same recipient + seq_id, skips replied/bounced, step 3 only after step 2 sent, no duplicates, scans all eligible intros (sorted by sent_at). Queued follow-ups keep intro subject after template edits.
+- Follow-ups are new messages with "Re:" subject (not threaded via In-Reply-To headers).
+- Tested: iteration_19 (14/14 after fixes, frontend 100%).
