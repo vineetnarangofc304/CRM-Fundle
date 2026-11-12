@@ -85,7 +85,9 @@ async def chat(sid: int, b: Say, user: dict = Depends(brain_user)):
     await db.brain_messages.insert_one({"id": await next_id("brain_message"), "session_id": sid, "role": "user",
                                         "content": text, "at": now_utc_str(), "user_name": user.get("name")})
     if s["title"] == "New chat":
-        await db.brain_sessions.update_one({"id": sid}, {"$set": {"title": re.sub(r"\s+", " ", text)[:60]}})
+        att = re.match(r"\[Attached file #\d+: (.+?) —.*?\]\s*(.*)", text, re.S)
+        title = (att.group(2).strip() or f"File: {att.group(1)}") if att else text
+        await db.brain_sessions.update_one({"id": sid}, {"$set": {"title": re.sub(r"\s+", " ", title)[:60]}})
     ctx = {"user": user, "session_id": sid}
 
     async def gen():

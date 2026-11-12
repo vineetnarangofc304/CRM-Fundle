@@ -255,7 +255,7 @@ async def t_contacts(ctx, a):
                                        {"$set": {"contacts_priority": int(a.get("priority") or 5)}, "$unset": {"contacts_status": 1}})
     if a.get("contacts_only_mode"):
         await db.settings.update_one({"key": "prospecting"}, {"$set": {"phase": "contacts"}}, upsert=True)
-    return {"queued_for_contact_search": r.modified_count, "contacts_only_mode": bool(a.get("contacts_only_mode"))}
+    return {"queued_for_contact_search": r.matched_count, "contacts_only_mode": bool(a.get("contacts_only_mode"))}
 
 
 async def t_job(ctx, a):
@@ -364,7 +364,7 @@ RULES
 1. Do what the user asks immediately — no confirmation step. But every change needs the USER'S OWN reason (why they want it). Never invent or paraphrase a reason like "user requested it". If the user's messages don't say why, do NOT call any change tool — reply with one short question asking why, then act once they answer. Pass their reason in `reason`.
 2. Before bulk changes, check scope with find_records/aggregate_records (counts), then do it, then report exactly what changed (numbers, names). Prefer specific filters; regex with $options "i" for categories/names.
 3. Write emails in clean HTML (<p>, <ul><li>, <b>). Don't add a signature — the sending inbox adds its own.
-4. New emails/templates: first DRAFT the email in the chat (subject + body) and ask "Shall I save it?"; only call save_email_template after the user approves (their approval + reason).
+4. New emails/templates/campaigns: first DRAFT the email in the chat as plain text (subject + body, no HTML tags) and ask "Shall I save/send it?"; only call save_email_template or send_email_campaign after the user approves. Uploaded or new brands get the automatic intro templates by themselves — NEVER call send_email_campaign or run_job after an import unless the user's latest message explicitly asks to send a specific email or run a job.
 5. Attached files appear as "[Attached file #N: name — rows, columns]". Read a few rows, decide if it's a brand list or a contact-email list, map the columns, then import and report the counts.
 6. Contact sources: when the user gives sites/pages to find contacts, add them with manage_contact_sources (any non-list action needs a reason). Read-only actions never need a reason.
 7. Only do what was asked. Never switch engines on/off, change settings or start jobs unless the user explicitly asked for that.
@@ -373,12 +373,31 @@ RULES
 Today: {today}."""
 
 
+STOP = {"this", "that", "with", "from", "have", "they", "them", "their", "want", "need", "because", "should", "would", "will",
+        "user", "asked", "requested", "explicitly", "please", "change", "make", "into", "these", "those", "about", "there"}
+
+
+def _reason_ok(reason: str, said: str) -> bool:
+    r = reason.strip().lower()
+    if len(r) < 4 or re.match(r"^(the )?user\b|^as (requested|asked)|^per (the )?user", r) or re.search(r"explicitly asked|user (requested|asked|wants)", r):
+        return False
+    words = {w for w in re.findall(r"[a-z0-9]{4,}", r) if w not in STOP}
+    return not words or any(w in said for w in words)
+
+
+GATES = {"send_email_campaign": r"\bsend\b|\bblast\b|\bshoot\b|go ahead|\byes\b|approve|\bok(ay)?\b|email (this|it|them) to",
+         "send_single_email": r"\bsend\b|go ahead|\byes\b|approve|\bok(ay)?\b",
+         "run_job": r"\brun\b|start|now|sync|check|trigger|kick|go ahead|yes"}
+
+
 async def run_turn(ctx: dict, history: list, text: str):
     """Async generator of events: {"type": "text"|"tool"|"tool_done"|"error", ...}."""
     from emergentintegrations.llm.chat import LlmChat, UserMessage, TextDelta, ToolCallReady, StreamDone
     chat = LlmChat(api_key=os.environ["EMERGENT_LLM_KEY"], session_id=f"brain-{ctx['session_id']}-{datetime.now().timestamp()}",
                    system_message=SYSTEM.replace("{today}", datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")),
                    initial_messages=history).with_model(*MODEL).with_tools([v[1] for v in TOOLS.values()], tool_choice="auto")
+    said = " ".join([m["content"] for m in history if m.get("role") == "user"][-6:] + [text]).lower()
+    latest = text.lower()
     msg = UserMessage(text=text)
     for _ in range(15):
         pending = []
@@ -399,8 +418,12 @@ async def run_turn(ctx: dict, history: list, text: str):
                 if not fn:
                     raise ValueError("Unknown tool")
                 r = str(args.get("reason") or "").strip()
-                if tc.name not in READ_ONLY and not (tc.name == "manage_contact_sources" and args.get("action") == "list") and (len(r) < 4 or re.match(r"(?i)^(the )?user (requested|asked|wants)|^as (requested|asked)|^per (the )?user", r)):
-                    raise ValueError("No real reason given — ask the user WHY they want this change, then retry with their reason")
+                if tc.name not in READ_ONLY and not (tc.name == "manage_contact_sources" and args.get("action") == "list") and not _reason_ok(r, said):
+                    raise ValueError("No real reason from the user — ask the user WHY they want this change, then retry using their words")
+                if tc.name in GATES and not re.search(GATES[tc.name], latest):
+                    raise ValueError(f"The user's latest message didn't ask for {tc.name} — don't do it; just report what you did")
+                if tc.name == "prioritize_contact_search" and args.get("contacts_only_mode") and not re.search(r"contacts? only|stop adding|no new brands|stop (searching|finding) brands", said):
+                    args["contacts_only_mode"] = False
                 out, ok = await fn[0](ctx, args), True
             except Exception as e:
                 out, ok = {"error": str(e)[:500]}, False
