@@ -151,7 +151,27 @@ def _is_quota(e) -> bool:
     return bool(_QUOTA_RE.search(str(e)))
 
 
+_budget = {"until": 0.0, "checked": 0.0}
+
+
+async def budget_blocked() -> bool:
+    """True while the Universal Key budget is exhausted — stops issuing (billed) failing AI calls for 6 h."""
+    if time.time() - _budget["checked"] > 60:
+        d = await db.settings.find_one({"key": "ai_budget_block"}, {"_id": 0}) or {}
+        _budget.update(until=float(d.get("until") or 0), checked=time.time())
+    return _budget["until"] > time.time()
+
+
+async def _mark_budget(e) -> None:
+    if re.search(r"budget has been exceeded|budget exceeded|insufficient balance", str(e), re.I):
+        _budget.update(until=time.time() + 6 * 3600, checked=time.time())
+        await db.settings.update_one({"key": "ai_budget_block"}, {"$set": {"until": _budget["until"], "reason": str(e)[:200],
+                                                                          "at": now_utc_str()}}, upsert=True)
+
+
 async def _ask(model: str, system: str, prompt: str, meta: dict | None = None) -> str:
+    if await budget_blocked():
+        raise AiCreditsOut("AI budget exhausted — paused for 6 h (top up the Universal Key)")
     try:
         full = [model] + [m for m in (FLASH, *FALLBACK_MODELS) if m != model]
         chain = [m for m in full if _limited.get(m, 0) < time.time()] or full
@@ -170,6 +190,7 @@ async def _ask(model: str, system: str, prompt: str, meta: dict | None = None) -
                 logger.warning(f"{mdl} limited ({str(e)[:120]}), trying {chain[i + 1]}")
     except Exception as e:
         if _is_quota(e):
+            await _mark_budget(e)
             _blocked["on"] = True
             await db.settings.update_one({"key": "prospect_lock", "ai_blocked_at": {"$exists": False}},
                                          {"$set": {"ai_blocked_at": now_utc_str()}})
