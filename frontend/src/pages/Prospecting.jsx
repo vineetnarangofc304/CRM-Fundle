@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
-import { Binoculars, Play, Pause, Storefront, UserCircle, LinkedinLogo, MagnifyingGlass, ArrowsClockwise } from "@phosphor-icons/react";
+import { Binoculars, Play, Pause, Storefront, UserCircle, LinkedinLogo, MagnifyingGlass, ArrowsClockwise, DownloadSimple, UploadSimple } from "@phosphor-icons/react";
 import { API, apiErr } from "../lib/api";
 import { SEGMENT_STYLE } from "../lib/prospecting";
 import { useAuth } from "../context/AuthContext";
@@ -90,6 +90,56 @@ function CategoryGrid({ rows, active, onPick }) {
   );
 }
 
+function DownloadBtn({ filters, total }) {
+  const [busy, setBusy] = useState(false);
+  const go = async () => {
+    setBusy(true);
+    try {
+      const params = Object.fromEntries(Object.entries(filters).filter(([k, v]) => v !== "" && v != null && k !== "page"));
+      const r = await API.get("/prospecting/prospects/export", { params, responseType: "blob" });
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(r.data); a.download = `brands_${new Date().toISOString().slice(0, 10)}.csv`; a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+    } catch (e) { toast.error(apiErr(e)); }
+    setBusy(false);
+  };
+  return <button data-testid="prospect-download-csv" disabled={busy || !total} onClick={go} className="crm-btn-secondary !py-1 text-xs"><DownloadSimple size={14} /> {busy ? "Preparing…" : "Download CSV"}</button>;
+}
+
+const SUMMARY = [["brands_matched", "brands matched"], ["brands_added", "new brands"], ["contacts_added", "contacts added"], ["contacts_updated", "contacts updated"],
+  ["work_emails", "work emails"], ["guessed_from_format", "emails from format"], ["saved_without_email", "saved without email"], ["official_emails_saved", "company emails saved"], ["store_counts_filled", "store counts filled"]];
+
+function UploadContacts({ onDone }) {
+  const [busy, setBusy] = useState(false);
+  const [res, setRes] = useState(null);
+  const ref = useRef(null);
+  const pick = async (e) => {
+    const f = e.target.files?.[0];
+    e.target.value = "";
+    if (!f) return;
+    setBusy(true);
+    try {
+      const fd = new FormData(); fd.append("file", f);
+      const { data } = await API.post("/prospecting/upload-contacts", fd, { timeout: 600000 });
+      setRes(data); onDone(); toast.success(`Sheet processed: ${data.contacts_added} contacts added, ${data.contacts_updated} updated`);
+    } catch (er) { toast.error(apiErr(er)); }
+    setBusy(false);
+  };
+  return (
+    <>
+      <input ref={ref} type="file" accept=".csv,.xlsx,.xls" hidden onChange={pick} data-testid="prospect-upload-input" />
+      <button data-testid="prospect-upload-contacts" disabled={busy} onClick={() => ref.current?.click()} className="crm-btn-primary !py-1 text-xs"><UploadSimple size={14} /> {busy ? "Updating brands…" : "Upload contacts sheet"}</button>
+      {res && (
+        <div className="w-full rounded-lg border border-emerald-100 bg-emerald-50 p-2 text-xs text-emerald-800" data-testid="prospect-upload-summary">
+          <b>{res.rows} rows processed:</b> {SUMMARY.map(([k, l]) => `${res[k] || 0} ${l}`).join(" · ")}
+          {!!res.skipped?.length && <div className="mt-1 text-amber-700">Skipped: {res.skipped.slice(0, 5).join("; ")}</div>}
+          <button onClick={() => setRes(null)} className="ml-2 font-bold underline" data-testid="prospect-upload-summary-close">close</button>
+        </div>
+      )}
+    </>
+  );
+}
+
 function ProspectTable({ filters, setFilters, ov }) {
   const [data, setData] = useState({ items: [], total: 0 });
   const navigate = useNavigate();
@@ -124,6 +174,8 @@ function ProspectTable({ filters, setFilters, ov }) {
           <option value="store_count">Most stores</option><option value="score">Best fit</option><option value="recent">Newest</option><option value="brand">A–Z</option>
         </select>
         <span className="ml-auto text-xs text-slate-500" data-testid="prospect-total">{data.total.toLocaleString("en-IN")} brands</span>
+        <DownloadBtn filters={filters} total={data.total} />
+        <UploadContacts onDone={() => setFilters({ ...filters })} />
       </div>
       <div className="overflow-x-auto">
         <table className="w-full text-sm">

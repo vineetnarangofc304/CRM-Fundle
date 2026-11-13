@@ -80,8 +80,8 @@ async def chat(sid: int, b: Say, user: dict = Depends(brain_user)):
     text = b.message.strip()
     if not text:
         raise HTTPException(status_code=400, detail="Type a message")
-    prev = await db.brain_messages.find({"session_id": sid}, {"_id": 0}).sort("id", -1).limit(30).to_list(30)
-    history = [{"role": m["role"], "content": m["content"]} for m in reversed(prev) if m.get("content")]
+    prev = await db.brain_messages.find({"session_id": sid}, {"_id": 0}).sort("id", -1).limit(10).to_list(10)
+    history = [{"role": m["role"], "content": m["content"][:1500]} for m in reversed(prev) if m.get("content")]
     await db.brain_messages.insert_one({"id": await next_id("brain_message"), "session_id": sid, "role": "user",
                                         "content": text, "at": now_utc_str(), "user_name": user.get("name")})
     if s["title"] == "New chat":

@@ -472,8 +472,7 @@ async def t_escalate(ctx, a):
 
 def _fn(name, desc, props, req, write=True):
     if write:
-        props = {**props, "reason": {"type": "string", "description": "The user's reason for this change (ask if not given)"}}
-        req = req + ["reason"]
+        props = {**props, "reason": {"type": "string", "description": "Short reason in the user's words (optional — never ask the user for it)"}}
     return {"type": "function", "function": {"name": name, "description": desc,
                                              "parameters": {"type": "object", "properties": props, "required": req}}}
 
@@ -546,12 +545,12 @@ SYSTEM MAP
 - Engines run every 15 minutes automatically (prospecting, outreach send + reply/bounce sync, email-format check).
 
 RULES
-1. Do what the user asks immediately — no confirmation step. Direct orders to send, stop or run something need NO extra reason (the order is the reason) — just do it. Changes to settings, templates or data need the USER'S OWN reason (why they want it). Never invent or paraphrase a reason like "user requested it". If the user's messages don't say why, do NOT call any change tool — reply with one short question asking why, then act once they answer. Pass their reason in `reason`.
+1. Do what the user asks immediately in as FEW tool calls as possible — no confirmation step, no extra look-ups "to double-check", and NEVER ask the user why they want something. Their instruction is the reason; the system logs it automatically. Keep replies short (2–4 lines).
 2. Before bulk changes, check scope with find_records/aggregate_records (counts), then do it, then report exactly what changed (numbers, names). Prefer specific filters; regex with $options "i" for categories/names.
 3. Write emails in clean HTML (<p>, <ul><li>, <b>). Don't add a signature — the sending inbox adds its own.
 4. New emails/templates/campaigns: first DRAFT the email in the chat as plain text (subject + body, no HTML tags) and ask "Shall I save/send it?"; only call save_email_template or send_email_campaign after the user approves. Uploaded or new brands get the automatic intro templates by themselves — NEVER call send_email_campaign or run_job after an import unless the user's latest message explicitly asks to send a specific email or run a job.
 5. Attached files appear as "[Attached file #N: name — rows, columns]". Read a few rows, decide if it's a brand list, a contact-email list, a sheet of decision-makers per brand (CEO/CMO/executive names, LinkedIn, work emails → enrich_contacts_from_file), or a sheet to update store counts/categories (user says update/fill/correct store counts or categories → update_brands_from_file), map the columns, then run it and report the counts. A file attachment with an instruction is the reason itself.
-6. Contact sources: when the user gives sites/pages to find contacts, add them with manage_contact_sources (any non-list action needs a reason). Read-only actions never need a reason.
+6. Contact sources: when the user gives sites/pages to find contacts, add them with manage_contact_sources. Never ask for a reason.
 7. Only do what was asked. Never switch engines on/off, change settings or start jobs unless the user explicitly asked for that.
 9. If something truly can't be done with your tools (new screens, new code features, integrations), call request_developer_change with a clear summary so Vineet is emailed, and tell the user.
 8. Never reveal passwords or tokens. Format replies with short paragraphs and "- " bullet points and **bold** only — no markdown tables or # headings. Be concise, and answer analytics questions with real numbers from the tools.
@@ -597,7 +596,7 @@ async def run_turn(ctx: dict, history: list, text: str):
     given = _user_reason(said_msgs)
     latest = text.lower()
     msg = UserMessage(text=text)
-    for _ in range(15):
+    for _ in range(8):
         pending = []
         async for ev in chat.stream_message(msg):
             if isinstance(ev, TextDelta):
@@ -618,10 +617,8 @@ async def run_turn(ctx: dict, history: list, text: str):
                 r = str(args.get("reason") or "").strip()
                 if given and tc.name not in READ_ONLY:
                     args["reason"] = r = given  # the user's own words win over the model's paraphrase
-                elif tc.name in ACTION_TOOLS:
-                    args["reason"] = r = f"Instruction: {text.strip()[:250]}"  # a direct send/stop/run order is its own reason
-                if tc.name not in READ_ONLY and tc.name not in ACTION_TOOLS and not (tc.name == "manage_contact_sources" and args.get("action") == "list") and not _reason_ok(r, said):
-                    raise ValueError("No real reason from the user — ask the user WHY they want this change, then retry using their words")
+                elif tc.name not in READ_ONLY and (tc.name in ACTION_TOOLS or not _reason_ok(r, said)):
+                    args["reason"] = r = f"Instruction: {text.strip()[:250]}"  # the user's order is its own reason — never ask why
                 if tc.name in GATES and not re.search(GATES[tc.name], latest):
                     raise ValueError(f"The user's latest message didn't ask for {tc.name} — don't do it; just report what you did")
                 if tc.name == "prioritize_contact_search" and args.get("contacts_only_mode") and not re.search(r"contacts? only|stop adding|no new brands|stop (searching|finding) brands", said):
@@ -631,7 +628,7 @@ async def run_turn(ctx: dict, history: list, text: str):
                 out, ok = {"error": str(e)[:500]}, False
             if tc.name not in READ_ONLY and not (tc.name == "manage_contact_sources" and args.get("action") == "list"):
                 await _audit(ctx, tc.name, args, out, ok)
-            res = json.dumps(_scrub(out), default=str)[:20000]
+            res = json.dumps(_scrub(out), default=str)[:6000]
             yield {"type": "tool_done", "name": tc.name, "ok": ok, "summary": res[:300]}
             chat.add_tool_result(tc.id, res)
         msg = None

@@ -5,7 +5,7 @@ import os
 import re
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 from pydantic import BaseModel
 
 from core.db import db
@@ -113,11 +113,7 @@ async def stop(user: dict = Depends(require_roles("admin"))):
     return {"ok": True}
 
 
-@router.get("/prospecting/prospects")
-async def list_prospects(country: Optional[str] = None, category: Optional[str] = None, segment: Optional[str] = None,
-                         status: Optional[str] = None, min_stores: Optional[int] = None, has_ceo: Optional[bool] = None,
-                         q: Optional[str] = None, sort: str = "store_count", page: int = 1, limit: int = 50,
-                         user: dict = Depends(require_roles("admin", "manager"))):
+def _prospect_filter(country, category, segment, status, min_stores, has_ceo, q):
     f = {}
     for k, v in (("country", country), ("category", category), ("segment", segment), ("status", status)):
         if v:
@@ -128,11 +124,60 @@ async def list_prospects(country: Optional[str] = None, category: Optional[str] 
         f["ceo_name"] = {"$nin": [None, ""]}
     if q:
         f["brand_name"] = {"$regex": re.escape(q), "$options": "i"}
-    srt = {"store_count": [("store_count", -1), ("id", 1)], "brand": [("brand_name", 1)],
-           "score": [("fit_score", -1), ("store_count", -1)], "recent": [("id", -1)]}.get(sort, [("store_count", -1)])
+    return f
+
+
+SORTS = {"store_count": [("store_count", -1), ("id", 1)], "brand": [("brand_name", 1)],
+         "score": [("fit_score", -1), ("store_count", -1)], "recent": [("id", -1)]}
+
+
+@router.get("/prospecting/prospects")
+async def list_prospects(country: Optional[str] = None, category: Optional[str] = None, segment: Optional[str] = None,
+                         status: Optional[str] = None, min_stores: Optional[int] = None, has_ceo: Optional[bool] = None,
+                         q: Optional[str] = None, sort: str = "store_count", page: int = 1, limit: int = 50,
+                         user: dict = Depends(require_roles("admin", "manager"))):
+    f = _prospect_filter(country, category, segment, status, min_stores, has_ceo, q)
+    srt = SORTS.get(sort, [("store_count", -1)])
     limit = max(1, min(limit, 200))
     items = await db.prospects.find(f, {"_id": 0, "sources": 0}).sort(srt).skip((max(page, 1) - 1) * limit).limit(limit).to_list(limit)
     return {"items": items, "total": await db.prospects.count_documents(f), "page": page, "limit": limit}
+
+
+@router.get("/prospecting/prospects/export")
+async def export_prospects(country: Optional[str] = None, category: Optional[str] = None, segment: Optional[str] = None,
+                           status: Optional[str] = None, min_stores: Optional[int] = None, has_ceo: Optional[bool] = None,
+                           q: Optional[str] = None, sort: str = "store_count",
+                           user: dict = Depends(require_roles("admin", "manager"))):
+    import csv
+    import io
+    from fastapi.responses import Response
+    f = _prospect_filter(country, category, segment, status, min_stores, has_ceo, q)
+    base = ["brand_name", "country", "category", "segment", "store_count", "hq_city", "website", "fit_score", "status", "official_email"]
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(base + ["contact_name", "contact_role", "contact_email", "email_status", "contact_linkedin"])
+    async for p in db.prospects.find(f, {"_id": 0, **{k: 1 for k in base}, "contacts": 1}).sort(SORTS.get(sort, [("store_count", -1)])):
+        row = ["" if p.get(k) is None else p.get(k) for k in base]
+        for c in p.get("contacts") or [{}]:
+            w.writerow(row + [c.get(k) or "" for k in ("name", "role", "email", "email_status", "linkedin")])
+    return Response("\ufeff" + buf.getvalue(), media_type="text/csv",
+                    headers={"Content-Disposition": f'attachment; filename="brands_{pe.now_utc_str()[:10]}.csv"'})
+
+
+@router.post("/prospecting/upload-contacts")
+async def upload_contacts(file: UploadFile = File(...), user: dict = Depends(require_roles("admin", "manager"))):
+    """Same CEO/CMO/executive sheet format as Brain's enrich, but with no AI involved."""
+    from core import brain_data as bd
+    data = await file.read()
+    if len(data) > 15 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="File too large (max 15 MB)")
+    try:
+        doc = await bd.save_upload(0, user, file.filename or "upload.csv", file.content_type, data)
+        return await bd.t_enrich_people({"user": user, "session_id": 0}, {"file_id": doc["id"]})
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Couldn't read that file: {str(e)[:200]}")
 
 
 @router.get("/prospecting/prospects/{pid}")

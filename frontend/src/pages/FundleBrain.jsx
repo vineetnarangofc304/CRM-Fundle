@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
-import { Brain, Plus, Trash, PaperPlaneRight, Paperclip, X, Wrench, CheckCircle, WarningCircle, ClockCounterClockwise, ChatsCircle, DownloadSimple } from "@phosphor-icons/react";
+import { Brain, Plus, Trash, PaperPlaneRight, Paperclip, X, Wrench, CheckCircle, WarningCircle, ChatsCircle, DownloadSimple } from "@phosphor-icons/react";
 import { API, apiErr } from "../lib/api";
 
 const esc = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -94,13 +94,12 @@ function Bubble({ m }) {
   );
 }
 
-function Sidebar({ list, cur, pick, add, del, audit, exportsView, open }) {
+function Sidebar({ list, cur, pick, add, del, exportsView, open }) {
   if (!open) return null;
   return (
     <aside className="flex w-56 shrink-0 flex-col border-r border-slate-100 bg-slate-50/60" data-testid="brain-sidebar">
       <div className="space-y-2 p-3">
         <button data-testid="brain-new-chat" onClick={add} className="crm-btn-primary w-full justify-center !py-2 text-xs"><Plus size={14} /> New chat</button>
-        <button data-testid="brain-audit-btn" onClick={audit} className={`crm-btn-secondary w-full justify-center !py-1.5 text-xs ${cur === "audit" ? "!bg-slate-200" : ""}`}><ClockCounterClockwise size={14} /> Audit log</button>
         <button data-testid="brain-exports-btn" onClick={exportsView} className={`crm-btn-secondary w-full justify-center !py-1.5 text-xs ${cur === "exports" ? "!bg-slate-200" : ""}`}><DownloadSimple size={14} /> Saved CSV files</button>
       </div>
       <div className="flex-1 space-y-0.5 overflow-y-auto px-2 pb-3">
@@ -113,26 +112,6 @@ function Sidebar({ list, cur, pick, add, del, audit, exportsView, open }) {
         {!list.length && <p className="px-2 text-[11px] text-slate-400">No chats yet.</p>}
       </div>
     </aside>
-  );
-}
-
-function Audit() {
-  const [rows, setRows] = useState(null);
-  useEffect(() => { API.get("/brain/audit").then(({ data }) => setRows(data)).catch((e) => toast.error(apiErr(e))); }, []);
-  if (!rows) return <div className="p-6 text-sm text-slate-400">Loading audit log…</div>;
-  return (
-    <div className="flex-1 overflow-y-auto p-6" data-testid="brain-audit">
-      <h2 className="mb-3 text-sm font-extrabold text-slate-800">Every change Fundle Brain made</h2>
-      <table className="w-full text-xs"><thead className="text-left text-slate-400"><tr><th className="py-2">When (UTC)</th><th>Who</th><th>Action</th><th>Reason</th><th>Result</th></tr></thead>
-        <tbody>{rows.map((r) => (
-          <tr key={r.id} className="border-t border-slate-100 align-top" data-testid={`brain-audit-row-${r.id}`}>
-            <td className="whitespace-nowrap py-2 pr-3 text-slate-500">{r.at}</td><td className="pr-3">{r.user_name}</td>
-            <td className="pr-3"><span className={r.ok ? "font-semibold text-emerald-700" : "font-semibold text-rose-700"}>{TOOL_LABEL[r.tool] || r.tool}</span><div className="max-w-xs break-all text-[10px] text-slate-400">{JSON.stringify(r.args).slice(0, 200)}</div></td>
-            <td className="max-w-xs pr-3 text-slate-600">{r.reason}</td><td className="max-w-xs break-all text-[10px] text-slate-500">{r.result?.slice(0, 220)}</td>
-          </tr>))}
-          {!rows.length && <tr><td colSpan={5} className="py-8 text-center text-slate-400">No changes yet.</td></tr>}
-        </tbody></table>
-    </div>
   );
 }
 
@@ -152,7 +131,7 @@ export default function FundleBrain() {
   useEffect(() => { if (typeof cur === "number") API.get(`/brain/sessions/${cur}/messages`).then(({ data }) => setMsgs(data)); else setMsgs([]); }, [cur]);
   useEffect(() => { end.current?.scrollIntoView({ behavior: "smooth" }); }, [msgs]);
   const add = async () => { const { data } = await API.post("/brain/sessions"); await loadList(); setCur(data.id); return data.id; };
-  const del = async (id) => { if (!window.confirm("Delete this chat? The audit log keeps its changes.")) return; await API.delete(`/brain/sessions/${id}`); const d = await loadList(); if (cur === id) setCur(d[0]?.id ?? null); };
+  const del = async (id) => { if (!window.confirm("Delete this chat?")) return; await API.delete(`/brain/sessions/${id}`); const d = await loadList(); if (cur === id) setCur(d[0]?.id ?? null); };
 
   const send = async (override) => {
     let q = (override ?? text).trim();
@@ -198,8 +177,8 @@ export default function FundleBrain() {
 
   return (
     <div className="flex h-[calc(100vh-7rem)] overflow-hidden rounded-2xl border border-slate-100 bg-white" data-testid="fundle-brain-page">
-      <Sidebar open={chats} list={list} cur={cur} pick={setCur} add={add} del={del} audit={() => setCur("audit")} exportsView={() => setCur("exports")} />
-      {cur === "audit" ? <Audit /> : cur === "exports" ? <Exports /> : (
+      <Sidebar open={chats} list={list} cur={cur} pick={setCur} add={add} del={del} exportsView={() => setCur("exports")} />
+      {cur === "exports" ? <Exports /> : (
         <div className="flex min-w-0 flex-1 flex-col">
           <div className="flex items-center gap-2 border-b border-slate-100 px-6 py-3">
             <button data-testid="brain-chats-toggle" onClick={toggleChats} title={chats ? "Hide chats" : "Show chats"} className="crm-btn-secondary !px-2 !py-1 text-xs"><ChatsCircle size={14} /> {chats ? "Hide chats" : "Chats"}</button>
