@@ -66,12 +66,20 @@ async def overview(user: dict = Depends(require_roles("admin", "manager"))):
     lock = await db.settings.find_one({"key": "prospect_lock"}, {"_id": 0}) or {}
     from datetime import datetime, timezone
     running = bool(lock.get("until")) and lock["until"] > datetime.now(timezone.utc).isoformat()
+    if not await db.settings.find_one({"key": "ceo_backfill_v1"}):
+        from core import brain_data as bd
+        n = await bd.backfill_ceo()
+        await db.settings.insert_one({"key": "ceo_backfill_v1", "filled": n})
     agg = await db.prospects.aggregate([{"$group": {
         "_id": {"country": "$country", "category": "$category"}, "brands": {"$sum": 1},
         "enriched": {"$sum": {"$cond": [{"$eq": ["$status", "enriched"]}, 1, 0]}},
         "offline": {"$sum": {"$cond": [{"$in": ["$segment", ["Offline Retail", "Omnichannel"]]}, 1, 0]}},
         "d2c": {"$sum": {"$cond": [{"$eq": ["$segment", "D2C / E-commerce"]}, 1, 0]}},
-        "with_ceo": {"$sum": {"$cond": [{"$gt": ["$ceo_name", None]}, 1, 0]}},
+        "with_ceo": {"$sum": {"$cond": [{"$gt": ["$ceo_name", ""]}, 1, 0]}},
+        "with_contacts": {"$sum": {"$cond": [{"$gt": [{"$size": {"$ifNull": ["$contacts", []]}}, 0]}, 1, 0]}},
+        "with_email": {"$sum": {"$cond": [{"$gt": [{"$size": {"$filter": {"input": {"$ifNull": ["$contacts", []]}, "as": "c",
+                                                                          "cond": {"$gt": ["$$c.email", ""]}}}}, 0]}, 1, 0]}},
+        "people": {"$sum": {"$size": {"$ifNull": ["$contacts", []]}}},
         "stores": {"$sum": {"$ifNull": ["$store_count", 0]}}}}]).to_list(2000)
     cats = {(d["country"], d["category"]): d async for d in db.prospect_cats.find({}, {"_id": 0})}
     rows = []
@@ -81,7 +89,7 @@ async def overview(user: dict = Depends(require_roles("admin", "manager"))):
             st = cats.get((country, cat), {})
             rows.append({"country": country, "category": cat, **{k: a.get(k, 0) for k in ("brands", "enriched", "offline", "d2c", "with_ceo", "stores")},
                          "runs": st.get("runs", 0), "saturated": st.get("saturated", False), "last_run": st.get("last_run")})
-    totals = {k: sum(r[k] for r in rows) for k in ("brands", "enriched", "offline", "d2c", "with_ceo")}
+    totals = {k: sum(a.get(k, 0) for a in agg) for k in ("brands", "enriched", "offline", "d2c", "with_ceo", "with_contacts", "with_email", "people")}
     recent = await db.prospect_runs.find({}, {"_id": 0}).sort("at", -1).limit(25).to_list(25)
     return {"settings": settings, "running": running, "lock": {k: lock.get(k) for k in ("started", "trigger", "last_finished", "last_stats", "ai_blocked_at", "ai_blocked_reason", "watchdog_at", "watchdog_action")},
             "totals": totals, "categories": rows, "recent_runs": recent,

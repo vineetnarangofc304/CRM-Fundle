@@ -236,12 +236,15 @@ export default function Prospecting() {
         <button data-testid="prospect-refresh" onClick={load} className="crm-btn-secondary !py-1.5 text-xs"><ArrowsClockwise size={14} /> Refresh</button>
       </div>
       <EnginePanel ov={ov} isAdmin={user.role === "admin"} reload={load} />
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-8">
         <Stat label="Brands found" value={ov.totals.brands} testid="prospect-stat-brands" />
         <Stat label="Deep researched" value={ov.totals.enriched} testid="prospect-stat-enriched" />
         <Stat label="With stores" value={ov.totals.offline} testid="prospect-stat-offline" />
         <Stat label="D2C / E-com" value={ov.totals.d2c} testid="prospect-stat-d2c" />
         <Stat label="CEO identified" value={ov.totals.with_ceo} testid="prospect-stat-ceo" />
+        <Stat label="Brands with contacts" value={ov.totals.with_contacts} testid="prospect-stat-contacts" />
+        <Stat label="Brands with email" value={ov.totals.with_email} testid="prospect-stat-email" />
+        <Stat label="Decision-makers" value={ov.totals.people} testid="prospect-stat-people" />
       </div>
       <CategoryGrid rows={rows} active={filters.category ? `${filters.country || rows[0]?.country}|${filters.category}` : null}
         onPick={(r) => setFilters({ ...filters, category: r ? r.category : "", country: r ? r.country : "", page: 1 })} />

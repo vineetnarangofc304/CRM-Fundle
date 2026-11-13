@@ -157,6 +157,25 @@ PEOPLE_COLS = [("ceo_name", "CEO", "ceo_linkedin", "ceo_work_email"), ("cmo_name
 EMAIL_RE = re.compile(r"[a-z0-9._%+'-]+@[a-z0-9.-]+\.[a-z]{2,}")
 
 
+TOP_ROLE = re.compile(r"\b(ceo|chief executive|founder|co-?founder|managing director|md|owner|president|chairman)\b", re.I)
+
+
+def _top_exec(cs: list):
+    return next((c for c in cs if c.get("name") and TOP_ROLE.search(c.get("role") or "")), None)
+
+
+async def backfill_ceo() -> int:
+    """Brands whose contacts include a CEO/founder but have no ceo_name — fill it so dashboard counts are right."""
+    n = 0
+    async for p in db.prospects.find({"ceo_name": {"$in": [None, ""]}, "contacts.0": {"$exists": True}}, {"_id": 0, "id": 1, "contacts": 1, "ceo_linkedin": 1}):
+        top = _top_exec(p["contacts"])
+        if top:
+            await db.prospects.update_one({"id": p["id"]}, {"$set": {"ceo_name": top["name"], "ceo_title": top.get("role"),
+                                                                     "ceo_linkedin": p.get("ceo_linkedin") or top.get("linkedin")}})
+            n += 1
+    return n
+
+
 def _people(r: dict, groups: list) -> list:
     out = []
     for name_c, role_c, li_c, em_c in groups:
@@ -241,6 +260,10 @@ async def t_enrich_people(ctx, a):
                 st["contacts_added"] += 1
                 logs.append(f"{x['name']} ({x['role'] or '—'}){' · ' + x['email'] if x['email'] else ''}")
         upd["contacts"] = cs
+        if not p.get("ceo_name"):
+            top = _top_exec(cs)
+            if top:
+                upd.update(ceo_name=top["name"], ceo_title=top.get("role"), ceo_linkedin=p.get("ceo_linkedin") or top.get("linkedin"))
         if cs and p.get("contacts_status") != "done":
             upd.update(contacts_status="done", contacts_at=now_utc_str(), contacts_priority=0)
         upd["fit_score"] = ct.fit_score({**p, **upd})
