@@ -251,6 +251,16 @@ async def _migrate_v7():
     await db.settings.insert_one({"key": "outreach_v7", "done": True})
 
 
+async def _migrate_v8():
+    """Pause every AI prospecting job (discover, research, contacts, email-format checks, LinkedIn lookups) to save AI credits."""
+    if await db.settings.find_one({"key": "ai_pause_v1"}):
+        return
+    await db.settings.update_one({"key": "prospecting"}, {"$set": {"enabled": False}}, upsert=True)
+    await db.settings.update_one({"key": "email_format"}, {"$set": {"enabled": False}}, upsert=True)
+    await db.settings.update_one({"key": "linkedin"}, {"$set": {"enabled": False}}, upsert=True)
+    await db.settings.insert_one({"key": "ai_pause_v1", "done": True, "at": now_utc_str()})
+
+
 async def run_outreach(trigger="cron") -> dict:
     await _migrate_v2()
     await _migrate_v3()
@@ -258,6 +268,7 @@ async def run_outreach(trigger="cron") -> dict:
     await _migrate_v5()
     await _migrate_v6()
     await _migrate_v7()
+    await _migrate_v8()
     st = await get_settings()
     stats = {"drafted": 0, "sent": 0, "failed": 0}
     if not st["enabled"]:

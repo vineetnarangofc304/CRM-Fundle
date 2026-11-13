@@ -138,6 +138,8 @@ async def _next():
 
 async def run(trigger="cron") -> dict:
     from core import prospector as pe
+    if (await db.settings.find_one({"key": "email_format"}, {"_id": 0}) or {}).get("enabled") is False:
+        return {"skipped": "email format checker paused"}
     if _lock["on"]:
         return {"skipped": "already running"}
     _lock["on"] = True
