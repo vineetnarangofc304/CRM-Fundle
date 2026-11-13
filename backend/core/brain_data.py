@@ -39,7 +39,7 @@ def parse_file(name: str, data: bytes) -> list[dict]:
     else:
         raise ValueError("Upload an Excel (.xlsx) or CSV file")
     df = df.dropna(how="all").fillna("")
-    df.columns = [str(c).strip() for c in df.columns]
+    df.columns = [str(c).replace("\ufeff", "").strip() for c in df.columns]
     return [{k: str(v).strip() for k, v in r.items()} for r in df.head(MAX_ROWS).to_dict("records")]
 
 
@@ -148,6 +148,116 @@ async def t_update_brands(ctx, a):
             st["brands_updated"] += 1
             st["fields_filled"] += len(upd)
     st["note"] = "Only blank values were filled; existing store counts/categories were kept. New brands go into research → contacts → intro email."
+    return st
+
+
+PEOPLE_COLS = [("ceo_name", "CEO", "ceo_linkedin", "ceo_work_email"), ("cmo_name", "CMO", "cmo_linkedin", "cmo_work_email"),
+               ("other_executive", "other_executive_title", "other_executive_linkedin", "other_executive_work_email"),
+               ("other_marketing_contact", "other_marketing_title", "other_marketing_linkedin", "other_marketing_work_email")]
+EMAIL_RE = re.compile(r"[a-z0-9._%+'-]+@[a-z0-9.-]+\.[a-z]{2,}")
+
+
+def _people(r: dict, groups: list) -> list:
+    out = []
+    for name_c, role_c, li_c, em_c in groups:
+        name = (r.get(name_c) or "").strip()
+        if not name:
+            continue
+        role = (r.get(role_c) or "").strip() if role_c in r else role_c
+        li = (r.get(li_c) or "").strip()
+        em = EMAIL_RE.search((r.get(em_c) or "").lower())
+        out.append({"name": name[:80], "role": (role or "")[:80], "linkedin": li if "linkedin.com/" in li else None,
+                    "email": em.group(0) if em else None})
+    return out
+
+
+async def t_enrich_people(ctx, a):
+    """Add CEO/CMO/leader contacts (name, title, LinkedIn, work email) from a sheet to brands; never overwrites existing data."""
+    from core import contacts as ct, email_format as ef, prospector as pe
+    m = a.get("mapping") or {}
+    f, rows = await _rows(a["file_id"])
+    groups = [tuple(g) for g in a.get("people_columns") or []] or \
+        [g for g in PEOPLE_COLS if rows and g[0] in rows[0]]
+    if not groups:
+        raise ValueError("people_columns needed: [[name_col, title_col_or_fixed_role, linkedin_col, email_col], ...]")
+    bc, sc, oc, nc = m.get("brand_name", "brand_name"), m.get("store_count", "store_count"), m.get("official_email", "official_contact"), m.get("notes", "research_notes")
+    st = {"rows": len(rows), "brands_matched": 0, "brands_added": 0, "contacts_added": 0, "contacts_updated": 0, "work_emails": 0,
+          "guessed_from_format": 0, "saved_without_email": 0, "official_emails_saved": 0, "store_counts_filled": 0, "skipped": []}
+    for r in rows:
+        name = (r.get(bc) or "").strip()
+        if not name or len(name) > 120:
+            st["skipped"].append(f"row without brand name: {str(r)[:60]}")
+            continue
+        country = (r.get(m.get("country", "country")) or "").strip() or "India"
+        p = await db.prospects.find_one({"brand_key": pe.brand_key(name), "country": country}, {"_id": 0}) or \
+            await db.prospects.find_one({"brand_key": pe.brand_key(name)}, {"_id": 0})
+        if p:
+            st["brands_matched"] += 1
+        else:
+            p, _ = await _new_prospect(name, country, "Uploaded", None, r.get(sc), priority=0)
+            st["brands_added"] += 1
+        upd, logs = {}, []
+        if _blank(p.get("store_count")) and pe._int(r.get(sc)):
+            upd["store_count"] = pe._int(r.get(sc))
+            st["store_counts_filled"] += 1
+        off = EMAIL_RE.search((r.get(oc) or "").lower())
+        if off and not p.get("official_email"):
+            upd["official_email"] = off.group(0)  # company inbox: kept on record, never emailed
+            st["official_emails_saved"] += 1
+        if (r.get(nc) or "").strip():
+            upd["research_notes"] = r[nc].strip()[:1500]
+            upd["research_sources"] = [s.strip() for s in (r.get(m.get("sources", "sources")) or "").split("|") if s.strip()][:8]
+        fmt, dom = p.get("email_format") or {}, ct._domain(p)
+        bounced = {e.lower() for e in p.get("bounced_emails") or []}
+        cs = p.get("contacts") or []
+        for x in _people(r, groups):
+            if x["email"] in bounced:
+                x["email"] = None
+            c = next((c for c in cs if c["name"].strip().lower() == x["name"].lower()
+                      or (x["linkedin"] and (c.get("linkedin") or "").rstrip("/").lower() == x["linkedin"].rstrip("/").lower())), None)
+            if x["email"]:
+                st["work_emails"] += 1
+                status = "published"
+            elif fmt.get("confirmed") and fmt.get("pattern") and dom and not (c or {}).get("email"):
+                x["email"] = ef.build(fmt["pattern"], x["name"], dom)
+                x["email"] = x["email"] if x["email"] not in bounced else None
+                status = "confirmed_format" if x["email"] else None
+                st["guessed_from_format" if x["email"] else "saved_without_email"] += 1
+            else:
+                status = None
+                if not (c or {}).get("email"):
+                    st["saved_without_email"] += 1
+            if c:
+                if x["linkedin"] and not c.get("linkedin"):
+                    c["linkedin"] = x["linkedin"]
+                if x["role"] and not c.get("role"):
+                    c["role"] = x["role"]
+                if x["email"] and (status == "published" and c.get("email_status") != "published" or not c.get("email")):
+                    c.update(email=x["email"], email_status=status)
+                c["uploaded"] = True
+                st["contacts_updated"] += 1
+            else:
+                cs.append({**x, "email_status": status if x["email"] else None, "uploaded": True, "evidence_url": f"Uploaded sheet: {f.get('filename')}"})
+                st["contacts_added"] += 1
+                logs.append(f"{x['name']} ({x['role'] or '—'}){' · ' + x['email'] if x['email'] else ''}")
+        upd["contacts"] = cs
+        if cs and p.get("contacts_status") != "done":
+            upd.update(contacts_status="done", contacts_at=now_utc_str(), contacts_priority=0)
+        upd["fit_score"] = ct.fit_score({**p, **upd})
+        await db.prospects.update_one({"id": p["id"]}, {"$set": upd})
+        lead_id = p.get("lead_id") or await pe.upsert_lead({**p, **upd})
+        best = next((c for c in cs if c.get("email") and c.get("email_status") == "published"), None) or next((c for c in cs if c.get("email")), None)
+        lead = await db.leads.find_one({"id": lead_id}, {"_id": 0, "email_from": 1}) if lead_id else None
+        if lead is not None:
+            lu = {"fit_score": upd["fit_score"]}
+            if best and (not lead.get("email_from") or lead["email_from"].lower() in bounced):
+                lu.update(email_from=best["email"], email_lc=best["email"])
+            await db.leads.update_one({"id": lead_id}, {"$set": lu})
+            if logs:
+                await log_message(lead_id, "📥 Contacts added from uploaded sheet: " + "; ".join(logs), author=AI)
+    st["skipped"] = st["skipped"][:30]
+    st["note"] = ("Existing contacts kept; new people added and missing LinkedIn/roles/emails filled. Company inboxes (info@ etc.) saved as "
+                  "official_email and never emailed. People without an email get one automatically once the brand's email format is confirmed.")
     return st
 
 
