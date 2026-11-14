@@ -66,8 +66,8 @@ export default function LinkedInContacts() {
         <select data-testid="li-status" className="crm-select" value={f.status} onChange={(e) => setF({ ...f, status: e.target.value, page: 1 })}>
           <option value="todo">Not messaged yet</option><option value="sent">Messaged</option><option value="all">All</option></select>
         <select data-testid="li-source" className="crm-select" value={f.source} onChange={(e) => setF({ ...f, source: e.target.value, page: 1 })}>
-          <option value="all">All contacts</option><option value="sheet">From uploaded sheets (direct profiles)</option></select>
-        <span className="text-xs text-slate-500" data-testid="li-total">{d ? d.total.toLocaleString("en-IN") : "…"} contacts</span>
+          <option value="all">All contacts</option><option value="sheet">From uploaded sheets</option></select>
+        <span className="text-xs text-slate-500" data-testid="li-total">{d ? `${d.total.toLocaleString("en-IN")} contact${d.total === 1 ? "" : "s"}` : "…"}</span>
         <span className="ml-auto" /><TemplateBox tpl={tpl} setTpl={setTpl} />
       </div>
       <div className="crm-card overflow-x-auto p-4">
@@ -75,9 +75,9 @@ export default function LinkedInContacts() {
           <tbody>{d?.items.map((r) => <Row key={`${r.prospect_id}-${r.name}`} r={r} tpl={tpl} reload={load} />)}
             {d && !d.items.length && <tr><td colSpan={5} className="py-10 text-center text-slate-400">No contacts match.</td></tr>}</tbody></table>
         <div className="mt-3 flex items-center justify-end gap-2 text-xs">
-          <button data-testid="li-prev" disabled={f.page <= 1} onClick={() => setF({ ...f, page: f.page - 1 })} className="crm-btn-secondary !py-1 text-xs">Prev</button>
+          <button data-testid="li-prev" disabled={f.page <= 1} onClick={() => setF({ ...f, page: f.page - 1 })} className="crm-btn-secondary !py-1 text-xs disabled:opacity-40">Prev</button>
           <span>Page {f.page} / {pages}</span>
-          <button data-testid="li-next" disabled={f.page >= pages} onClick={() => setF({ ...f, page: f.page + 1 })} className="crm-btn-secondary !py-1 text-xs">Next</button>
+          <button data-testid="li-next" disabled={f.page >= pages} onClick={() => setF({ ...f, page: f.page + 1 })} className="crm-btn-secondary !py-1 text-xs disabled:opacity-40">Next</button>
         </div>
       </div>
     </div>

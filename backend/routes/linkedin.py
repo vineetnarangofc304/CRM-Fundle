@@ -178,13 +178,12 @@ class SentMark(BaseModel):
 async def report_mark_sent(b: SentMark, user: dict = Depends(STAFF)):
     val = {"contacts.$[c].li_sent_at": now_utc_str(), "contacts.$[c].li_sent_by": user["name"]} if b.sent \
         else {"contacts.$[c].li_sent_at": None, "contacts.$[c].li_sent_by": None}
-    r = await db.prospects.update_one({"id": b.prospect_id}, {"$set": val}, array_filters=[{"c.name": b.name}])
+    r = await db.prospects.update_one({"id": b.prospect_id, "contacts.name": b.name}, {"$set": val}, array_filters=[{"c.name": b.name}])
     if not r.matched_count:
         raise HTTPException(status_code=404, detail="Contact not found")
-    if b.sent:
-        p = await db.prospects.find_one({"id": b.prospect_id}, {"_id": 0, "lead_id": 1})
-        if p and p.get("lead_id"):
-            await log_message(p["lead_id"], f"💬 LinkedIn message sent to {escape(b.name)} by {escape(user['name'])}", author=user)
+    p = await db.prospects.find_one({"id": b.prospect_id}, {"_id": 0, "lead_id": 1})
+    if p and p.get("lead_id"):
+        await log_message(p["lead_id"], f"💬 LinkedIn message {'sent to' if b.sent else 'un-marked for'} {escape(b.name)} by {escape(user['name'])}", author=user)
     return {"ok": True}
 
 

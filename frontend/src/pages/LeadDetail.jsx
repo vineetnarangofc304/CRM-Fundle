@@ -335,7 +335,7 @@ export default function LeadDetail() {
                 <div key={l} className="flex justify-between py-1 text-sm"><span className="text-slate-400">{l}</span><span className="font-semibold text-slate-800">{v || "—"}</span></div>
               ))}
               <div className="mt-1 flex gap-3 text-xs font-bold">
-                {lead.contact_name && lead.source_lead === "AI Prospecting" && <a href={liLink({ name: lead.contact_name }, lead.company_name || lead.name).href} target="_blank" rel="noreferrer" className="text-[#0A66C2]" data-testid="lead-ceo-linkedin">Find CEO on LinkedIn</a>}
+                {(lead.ceo_name || lead.contact_name) && lead.source_lead === "AI Prospecting" && <a href={liLink({ name: lead.ceo_name || lead.contact_name, linkedin: lead.ceo_linkedin, verified: lead.ceo_li_verified }, lead.company_name || lead.name).href} target="_blank" rel="noreferrer" className="text-[#0A66C2]" data-testid="lead-ceo-linkedin">{lead.ceo_li_verified ? "CEO LinkedIn" : "Find CEO on LinkedIn"}</a>}
                 {lead.company_website && <a href={lead.company_website} target="_blank" rel="noreferrer" className="text-[#1557B0]">Website</a>}
               </div>
               {["admin", "manager"].includes(user?.role) && <LeadContacts leadId={lead.id} />}

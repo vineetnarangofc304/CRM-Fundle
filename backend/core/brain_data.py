@@ -179,7 +179,7 @@ async def backfill_ceo() -> int:
 async def backfill_li_v2() -> int:
     """Normalise uploaded LinkedIn URLs to www.linkedin.com/in/<slug>/ and mark sheet-verified CEO links."""
     n = 0
-    async for p in db.prospects.find({"contacts.uploaded": True}, {"_id": 0, "id": 1, "contacts": 1, "ceo_name": 1}):
+    async for p in db.prospects.find({"contacts.uploaded": True}, {"_id": 0, "id": 1, "contacts": 1, "ceo_name": 1, "lead_id": 1}):
         cs = p["contacts"]
         for c in cs:
             s = re.search(r"linkedin\.com/in/([^/?#\s]+)", c.get("linkedin") or "", re.I)
@@ -190,6 +190,8 @@ async def backfill_li_v2() -> int:
         if ceo:
             upd.update(ceo_linkedin=ceo["linkedin"], ceo_li_verified=True)
         await db.prospects.update_one({"id": p["id"]}, {"$set": upd})
+        if ceo and p.get("lead_id"):
+            await db.leads.update_one({"id": p["lead_id"]}, {"$set": {"ceo_name": p["ceo_name"], "ceo_linkedin": ceo["linkedin"], "ceo_li_verified": True}})
         n += 1
     return n
 
@@ -294,7 +296,7 @@ async def t_enrich_people(ctx, a):
         best = next((c for c in cs if c.get("email") and c.get("email_status") == "published"), None) or next((c for c in cs if c.get("email")), None)
         lead = await db.leads.find_one({"id": lead_id}, {"_id": 0, "email_from": 1}) if lead_id else None
         if lead is not None:
-            lu = {"fit_score": upd["fit_score"]}
+            lu = {"fit_score": upd["fit_score"], **{k: upd[k] for k in ("ceo_name", "ceo_linkedin", "ceo_li_verified") if k in upd}}
             if best and (not lead.get("email_from") or lead["email_from"].lower() in bounced):
                 lu.update(email_from=best["email"], email_lc=best["email"])
             await db.leads.update_one({"id": lead_id}, {"$set": lu, "$unset": {"search_words": 1}})

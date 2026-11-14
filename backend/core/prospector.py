@@ -233,7 +233,7 @@ async def _lead_fields(p: dict) -> dict:
     return {k: v for k, v in {
         "company_name": p["brand_name"], "contact_name": p.get("ceo_name") or p["brand_name"],
         "prospect_id": p["id"], "prospect_category": p["category"], "prospect_segment": p.get("segment"),
-        "store_count": p.get("store_count"), "ceo_name": p.get("ceo_name"), "ceo_linkedin": p.get("ceo_linkedin"),
+        "store_count": p.get("store_count"), "ceo_name": p.get("ceo_name"), "ceo_linkedin": p.get("ceo_linkedin"), "ceo_li_verified": bool(p.get("ceo_li_verified")),
         "company_website": p.get("website"), "company_linkedin": p.get("company_linkedin"),
         "email_from": p.get("contact_email"), "phone": p.get("contact_phone"), "city": p.get("hq_city"),
         "country": p["country"], "designation": "CEO" if p.get("ceo_name") else None,

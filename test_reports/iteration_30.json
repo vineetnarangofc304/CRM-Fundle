@@ -1,0 +1,45 @@
+{
+  "summary": "Iter30 tested lead word-search, the Country/Source/Sender filters, the new LinkedIn Contacts report, and LinkedIn link rules on Prospect and Lead detail, through both API and UI. Backend: 19 pytest tests, 17 passed and 2 failed on minor edge cases. Frontend: everything works except the Leads Country filter, which is broken for UAE. That filter is a HIGH bug: its options come from the country catalog ('United Arab Emirates'), but leads store 'UAE', so choosing UAE shows 'No leads found' while 1,181 UAE leads exist. Working: 'bansal' and 'deepak bansal' find Cantabil and 'raymond' finds 4 Raymond leads, by API and by pressing Enter in the UI. The Source filter includes 'AI Prospecting'. filter-sender is hidden (senders=[]) and sender=0 returns 200. On /linkedin-contacts the total shows 2,268, search, status and source filters work, and prev/next pages do not overlap. Profile links open /in/<slug>/ and Search links open the people search. Copy & open copies the filled message and opens the right URL in a new tab. Mark sent removes the row from the todo view; the sent view shows 'Sent · Fundle.ai Admin', which survives a reload; unmarking returns it to todo. The template edit, save and reload works. On prospect 15 (Cantabil, AI contacts) every link is 'Find on LinkedIn' with a search href. On prospect 24 (DaMENSCH, sheet contact) the link is 'Open LinkedIn' with the /in/ href, and the CEO link is 'LinkedIn profile'. Lead detail decision makers follow the same rule.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "GET /api/leads?sender=abc", "issue": "Returns 500 because query_params_dep runs int(sender) without validation. Catch ValueError and return 400, or type it as Optional[int]."},
+      {"endpoint": "POST /api/linkedin/report/sent", "issue": "Returns {ok:true} for a contact name that does not exist on the prospect. It checks matched_count (the prospect) rather than whether the array filter matched a contact. It still writes '💬 LinkedIn message sent to <bogus name>' into the lead chatter. Check that the name exists first, e.g. filter on {'id': pid, 'contacts.name': name}."},
+      {"endpoint": "POST /api/linkedin/report/sent (sent=false)", "issue": "Unmarking does not remove or counter the 'LinkedIn message sent' chatter entry, so the lead history still says a message was sent. Consider logging an 'unmarked' note."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "Leads Country filter", "issue": "Options come from catalogs.country, e.g. 'United Arab Emirates' and 'United States'. Leads store short or other forms ('UAE'; DB distinct values: Bahrain, India, Kuwait, Oman, Qatar, Saudi Arabia, UAE, United Kingdom). Choosing 'United Arab Emirates' returns 0 leads, while ?country=UAE returns 1,181. Countries that exist in the data but not the catalog cannot be selected.", "selector": "[data-testid=filter-country]", "priority": "HIGH"},
+      {"component": "LeadDetail 'Find CEO on LinkedIn'", "issue": "It uses lead.contact_name, which for AI leads is the brand name. Lead 704127 links to keywords='DaMENSCH DaMENSCH' even though prospect.ceo_name is 'Gaurav Pushkar' and has a verified profile. Use lead.ceo_name and ceo_linkedin with liLink.", "selector": "[data-testid=lead-ceo-linkedin]", "priority": "MEDIUM"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "/linkedin-contacts", "issues": [
+        "The source option says 'From uploaded sheets (direct profiles)', but 350 of 635 sheet contacts have no LinkedIn URL, so they show 'Search' rather than 'Profile'. Rename the option or add a 'has profile' filter.",
+        "The total reads '1 contacts' (no singular form).",
+        "Prev/Next look enabled even when disabled (on page 1 of 1); there is no disabled styling."
+      ]}
+    ]
+  },
+  "test_report_links": ["/app/backend/tests/test_iter30_search_linkedin_report.py", "/app/test_reports/pytest/iter30.xml"],
+  "action_items": [
+    "HIGH: Fix the Leads Country filter. Build its options from db.leads.distinct('country'), or normalise catalog names to stored values (e.g. UAE vs 'United Arab Emirates') on both write and filter.",
+    "Fix LeadDetail lead-ceo-linkedin to use ceo_name and ceo_linkedin (and verified) rather than contact_name.",
+    "Validate the sender query param (no 500 on non-integer values).",
+    "Return 404 from /linkedin/report/sent when the contact name is not on the prospect, and skip the chatter log in that case.",
+    "Minor: query word-split in build_query (keeps . _ + -) does not match the stored search_words split ([^a-z0-9]+). A search like 'jean-paul' or 'h.m' will not match word tokens."
+  ],
+  "critical_code_review_comments": [
+    "build_query splits the search on [^a-z0-9@._+-]+ while core.utils.search_words splits on [^a-z0-9]+. Hyphenated or dotted queries miss word matches. Align the two (keep the full email as its own token).",
+    "The /linkedin/report q filter is an unanchored case-insensitive regex on prospects.brand_name, contacts.name and contacts.role. It is fine at about 8k prospects but is a full scan; consider reusing search_words.",
+    "The report_mark_sent array_filters match on c.name. Two contacts with the same name on one prospect would both toggle. There are none today, but React row keys and testids (prospect_id-name) would also collide.",
+    "Leads with country=UAE have cities like 'Berlin, Germany' and 'Paris, France' (prospect HQ data). That is a data-quality issue, not code."
+  ],
+  "updated_files": ["/app/backend/tests/test_iter30_search_linkedin_report.py"],
+  "success_rate": {"backend": "89% (17/19; the 2 failures are minor edge cases)", "frontend": "90% (all requested flows except the Country filter for UAE)"},
+  "seed_data_creation": "None. Temporarily marked TEST_Urban Kurti / Riya Shah (prospect 2831) as sent, then unmarked it. Deleted only the 3 chatter messages my tests created (ids 5262314, 5262315, 5262316 on lead 706376). The li_report_msg template was edited and then restored; it is now stored explicitly with the default text, so behaviour is unchanged. No contacts are left marked sent (verified with $elemMatch, count 0).",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Run with: cd /app/backend && REACT_APP_BACKEND_URL=... pytest tests/test_iter30_search_linkedin_report.py -n 0. GET /api/leads returns total=-1 (lazy count), so assert on items, not total. Test data: Cantabil is prospect 15 / lead 704118 with AI contacts (Search links). DaMENSCH is prospect 24 / lead 704127 with sheet contact Gaurav Pushkar (Profile link). test_mark_sent_unmark writes a chatter message on the lead; delete it by id after the run. test_country_uae passes because it sends 'UAE' directly; the UI bug is in the catalog values."
+}

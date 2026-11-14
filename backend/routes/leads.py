@@ -233,6 +233,8 @@ async def query_params_dep(
 ):
     lead_ids = None
     if sender not in (None, ""):
+        if not str(sender).lstrip("-").isdigit():
+            raise HTTPException(status_code=400, detail="sender must be an inbox id")
         # leads that one of our outreach inboxes has emailed (sent_via = mailbox id, 0 = main inbox)
         lead_ids = [i for i in await db.outreach.distinct("lead_id", {"status": "sent", "channel": "email", "sent_via": int(sender)}) if i]
     return dict(
@@ -246,6 +248,11 @@ async def query_params_dep(
         prospect_category=prospect_category, prospect_segment=prospect_segment, min_stores=min_stores,
         country=country, lead_ids=lead_ids,
     )
+
+
+@router.get("/countries")
+async def lead_countries(user: dict = Depends(get_current_user)):
+    return sorted(c for c in await db.leads.distinct("country") if isinstance(c, str) and c)
 
 
 @router.get("/senders")

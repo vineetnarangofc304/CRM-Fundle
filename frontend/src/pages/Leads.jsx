@@ -103,6 +103,17 @@ function LeadCell({ colKey, l, tagById, userById }) {
   return <span className="text-slate-500">{l[colKey] || "—"}</span>;
 }
 
+function CountryFilter({ value, onChange }) {
+  const [opts, setOpts] = useState([]);
+  useEffect(() => { API.get("/leads/countries").then(({ data }) => setOpts(data)).catch(() => {}); }, []);
+  return (
+    <select data-testid="filter-country" className="crm-select max-w-40" value={value} onChange={(e) => onChange(e.target.value)}>
+      <option value="">Country: All</option>
+      {opts.map((c) => <option key={c} value={c}>{c}</option>)}
+    </select>
+  );
+}
+
 function SenderFilter({ value, onChange }) {
   const [opts, setOpts] = useState([]);
   useEffect(() => { API.get("/leads/senders").then(({ data }) => setOpts(data)).catch(() => {}); }, []);
@@ -362,10 +373,7 @@ export default function Leads() {
             <option value="">Source: All</option>
             {(catalogs?.source_lead || []).map((s) => <option key={s.id} value={s.name}>{s.name}</option>)}
           </select>
-          <select data-testid="filter-country" className="crm-select max-w-40" value={params.get("country") || ""} onChange={(e) => setParam("country", e.target.value)}>
-            <option value="">Country: All</option>
-            {(catalogs?.country || []).map((c) => <option key={c.id} value={c.name}>{c.name}</option>)}
-          </select>
+          <CountryFilter value={params.get("country") || ""} onChange={(v) => setParam("country", v)} />
           <SenderFilter value={params.get("sender") || ""} onChange={(v) => setParam("sender", v)} />
           <select data-testid="filter-utm-source" className="crm-select" value={params.get("utm_source") || ""} onChange={(e) => setParam("utm_source", e.target.value)}>
             <option value="">UTM Source: All</option>
