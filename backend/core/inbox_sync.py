@@ -65,6 +65,10 @@ async def _bounce(m: dict, now: str) -> int:
         n += 1
         await db.outreach.update_one({"id": o["id"]}, {"$set": {"status": "bounced", "bounced_at": now}})
         pid = o.get("prospect_id")
+        if o.get("probe"):  # bounce-test address: the verifier decides what to try next
+            if pid:
+                await db.prospects.update_one({"id": pid}, {"$addToSet": {"bounced_emails": addr}})
+            continue
         if pid:
             await db.prospects.update_one({"id": pid}, {
                 "$addToSet": {"bounced_emails": addr}, "$pull": {"tpl_sent": o.get("template_id")},

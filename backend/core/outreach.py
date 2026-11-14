@@ -315,6 +315,12 @@ async def _run_outreach(st, stats, trigger) -> dict:
             stats["inbox"] = await inbox_sync.sync_all()
         except Exception as e:
             logger.warning(f"inbox sync failed: {e}")
+        from core import email_probe as pb
+        try:
+            stats["imap"] = await pb.imap_sync()
+            stats["verifier"] = await pb.finalize()
+        except Exception as e:
+            logger.warning(f"email verifier failed: {e}")
         stats["auto_template"] = await et.run_auto(st["drafts_per_run"])
         pool = await mb.senders(st, _now()[:10])
         per_run = -(-st["hourly_cap"] // 4)  # spread the hourly limit over the 4 runs each hour

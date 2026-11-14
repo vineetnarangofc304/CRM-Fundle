@@ -220,7 +220,8 @@ async def run_followups(limit: int) -> int:
     for t in fus:
         cutoff = (datetime.now(timezone.utc) - timedelta(days=t.get("wait_days") or 3)).strftime("%Y-%m-%d %H:%M:%S")
         q = {"kind": "template", "template_id": {"$in": intro_ids}, "status": "sent", "sent_at": {"$lte": cutoff},
-             "replied_at": {"$exists": False}, f"fu_step{t['step']}": {"$exists": False}}
+             "replied_at": {"$exists": False}, f"fu_step{t['step']}": {"$exists": False},
+             "$or": [{"probe": {"$ne": True}}, {"probe_result": "delivered"}]}  # follow up only the address that worked
         if t["step"] > 2:
             q[f"fu_step{t['step'] - 1}"] = {"$exists": True, "$ne": "skip"}
         aud = AUDIENCES.get(t.get("audience") or "all") or {}
@@ -297,6 +298,7 @@ async def create_message(t: dict, p: dict, c: dict, status: str, by: str) -> dic
 async def run_auto(limit: int) -> int:
     """Auto-mode templates: queue a tailored email for every brand with an email that hasn't had that template."""
     from core.outreach import pick_contact
+    from core import email_probe as pb
     await seed_intro_v2()
     await seed_followups_v1()
     made = await run_followups(limit)
@@ -312,13 +314,17 @@ async def run_auto(limit: int) -> int:
         aud = t.get("audience") or "all"
         is_intro = t["id"] in intro_ids
         q = {"tpl_sent": {"$nin": intro_ids} if is_intro else {"$ne": t["id"]}, "replied": {"$ne": True},
-             "contacts": {"$elemMatch": {"email": {"$nin": [None, ""]}}}}
+             "$or": [{"contacts": {"$elemMatch": {"email": {"$nin": [None, ""]}}}},
+                     {"contacts.name": {"$nin": [None, ""]}, "website": {"$nin": [None, ""]}}] if is_intro
+             else [{"contacts": {"$elemMatch": {"email": {"$nin": [None, ""]}, "email_status": {"$in": list(pb.PROVEN)}}}}]}
         f = AUDIENCES.get(aud, {})
         cands = await db.prospects.find({"$and": [q, f]} if f else q, {"_id": 0}
                                         ).sort("fit_score", -1).limit(limit - made).to_list(limit)
         for p in cands:
-            c = pick_contact(p)
-            if c:
+            c, test = pb.pick_target_contact(p) if is_intro else (pick_contact(p), False)
+            if c and test:
+                made += 1 if await pb.queue_probe(t, p, c) else 0
+            elif c:
                 await create_message(t, p, c, "approved", "Auto-send")
                 made += 1
     return made
