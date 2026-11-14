@@ -3,7 +3,7 @@ import { NavLink, useNavigate } from "react-router-dom";
 import {
   SquaresFour, UsersThree, ClockCountdown, WhatsappLogo, ChartBar,
   EnvelopeSimple, GearSix, CaretDoubleLeft, CaretDoubleRight, SignOut, MagnifyingGlass, Sparkle, PhoneCall, Megaphone, Gauge,
-  Binoculars,
+  Binoculars, LinkedinLogo,
   PaperPlaneTilt,
 } from "@phosphor-icons/react";
 import { useAuth } from "../context/AuthContext";
@@ -18,6 +18,7 @@ const NAV = [
   { to: "/dashboard", label: "Dashboard", icon: SquaresFour, testid: "nav-dashboard", perm: "dashboard" },
   { to: "/leads", label: "Leads", icon: UsersThree, testid: "nav-leads", perm: "leads" },
   { to: "/prospecting", label: "AI Prospecting", icon: Binoculars, testid: "nav-prospecting", perm: "leads", roles: ["admin", "manager"] },
+  { to: "/linkedin-contacts", label: "LinkedIn Contacts", icon: LinkedinLogo, testid: "nav-linkedin-contacts", perm: "leads", roles: ["admin", "manager"] },
   { to: "/outreach", label: "Outreach", icon: PaperPlaneTilt, testid: "nav-outreach", perm: "leads", roles: ["admin", "manager"] },
   { to: "/followups", label: "Follow-ups", icon: ClockCountdown, testid: "nav-followups", perm: "followups" },
   { to: "/call-center", label: "Call Center", icon: PhoneCall, testid: "nav-call-center", perm: "call_center" },

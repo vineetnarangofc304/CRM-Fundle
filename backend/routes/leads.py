@@ -66,8 +66,13 @@ def build_query(
     follow_up_tag=None, lost_reason_id=None, bucket=None, duplicate=None, scope=None,
     utm_source=None, utm_medium=None, utm_campaign=None, min_followups=None,
     current_user=None, min_deal_value=None, prospect_category=None, prospect_segment=None, min_stores=None,
+    country=None, sender=None, lead_ids=None,
 ):
     q = {}
+    if country:
+        q["country"] = country
+    if lead_ids is not None:
+        q["id"] = {"$in": lead_ids}
     # When SEARCHING (Case 1 — find ANY customer by number/name), do NOT restrict to a single
     # bucket: a caller must be able to pull up a customer whether they are a pipeline lead OR a
     # raw (un-promoted) Ozonetel lead. The bucket tabs only scope the DEFAULT (non-search) list.
@@ -101,6 +106,10 @@ def build_query(
             # exhausting the DB connection pool → intermittent 500s (incl. on login).
             pfx = {"$regex": "^" + re.escape(s.lower())}
             ors = [{"name_lc": pfx}, {"contact_name_lc": pfx}, {"email_lc": pfx}]
+            words = [w for w in re.split(r"[^a-z0-9@._+-]+", s.lower()) if w]
+            if words:
+                ors.append({"$and": [{"search_words": {"$regex": "^" + re.escape(w)}} for w in words[:4]]}
+                           if len(words) > 1 else {"search_words": {"$regex": "^" + re.escape(words[0])}})
             if digits and len(digits) >= 4:
                 d10 = digits[-10:]
                 ors.append({"phone_digits": d10} if len(digits) >= 10 else {"phone_digits": {"$regex": "^" + re.escape(d10)}})
@@ -205,7 +214,7 @@ def build_query(
     return q
 
 
-def query_params_dep(
+async def query_params_dep(
     search: Optional[str] = None, stage_id: Optional[str] = None,
     lead_stage: Optional[str] = None, tags: Optional[str] = None,
     user_id: Optional[str] = None, source_lead: Optional[str] = None,
@@ -220,8 +229,12 @@ def query_params_dep(
     utm_campaign: Optional[str] = None, min_followups: Optional[str] = None,
     min_deal_value: Optional[str] = None,
     prospect_category: Optional[str] = None, prospect_segment: Optional[str] = None,
-    min_stores: Optional[str] = None,
+    min_stores: Optional[str] = None, country: Optional[str] = None, sender: Optional[str] = None,
 ):
+    lead_ids = None
+    if sender not in (None, ""):
+        # leads that one of our outreach inboxes has emailed (sent_via = mailbox id, 0 = main inbox)
+        lead_ids = [i for i in await db.outreach.distinct("lead_id", {"status": "sent", "channel": "email", "sent_via": int(sender)}) if i]
     return dict(
         search=search, stage_id=stage_id, lead_stage=lead_stage, tags=tags, user_id=user_id,
         source_lead=source_lead, campaign_name=campaign_name, ads_platform=ads_platform,
@@ -231,7 +244,19 @@ def query_params_dep(
         utm_source=utm_source, utm_medium=utm_medium, utm_campaign=utm_campaign,
         min_followups=min_followups, min_deal_value=min_deal_value,
         prospect_category=prospect_category, prospect_segment=prospect_segment, min_stores=min_stores,
+        country=country, lead_ids=lead_ids,
     )
+
+
+@router.get("/senders")
+async def lead_senders(user: dict = Depends(get_current_user)):
+    ids = await db.outreach.distinct("sent_via", {"status": "sent", "channel": "email"})
+    boxes = {b["id"]: b async for b in db.mailboxes.find({}, {"_id": 0, "id": 1, "smtp_user": 1, "sender_name": 1})}
+    out = []
+    for i in sorted(x for x in ids if x is not None):
+        b = boxes.get(i) or {}
+        out.append({"id": i, "label": "Main inbox" if i == 0 else (" · ".join(x for x in (b.get("sender_name"), b.get("smtp_user")) if x) or f"Inbox #{i}")})
+    return out
 
 
 ALLOWED_SORT = {"create_date", "create_date_ist", "contact_name", "name", "phone", "city",
@@ -582,6 +607,8 @@ async def update_lead(lead_id: int, body: LeadUpdate, user: dict = Depends(get_c
     await _track_changes(lead, updates, user)
     updates["write_date"] = now_utc_str()
     updates["write_uid"] = user["id"]
+    if any(k in updates for k in ("name", "contact_name", "company_name", "partner_name", "email_from")):
+        await db.leads.update_one({"id": lead_id}, {"$unset": {"search_words": 1}})  # backfill loop recomputes
     await db.leads.update_one({"id": lead_id}, {"$set": updates})
     new_lead = await db.leads.find_one({"id": lead_id}, {"_id": 0}, max_time_ms=5000)
     if "user_id" in updates:

@@ -70,6 +70,9 @@ async def overview(user: dict = Depends(require_roles("admin", "manager"))):
         from core import brain_data as bd
         n = await bd.backfill_ceo()
         await db.settings.insert_one({"key": "ceo_backfill_v1", "filled": n})
+    if not await db.settings.find_one({"key": "li_backfill_v2"}):
+        from core import brain_data as bd
+        await db.settings.insert_one({"key": "li_backfill_v2", "fixed": await bd.backfill_li_v2()})
     agg = await db.prospects.aggregate([{"$group": {
         "_id": {"country": "$country", "category": "$category"}, "brands": {"$sum": 1},
         "enriched": {"$sum": {"$cond": [{"$eq": ["$status", "enriched"]}, 1, 0]}},

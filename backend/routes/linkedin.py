@@ -127,9 +127,75 @@ async def save_settings(b: Settings, user: dict = Depends(require_roles("admin")
 
 @router.get("/lead/{lead_id}/contacts")
 async def lead_contacts(lead_id: int, user: dict = Depends(STAFF)):
-    p = await db.prospects.find_one({"lead_id": lead_id}, {"_id": 0, "contacts": 1, "li_lookup_at": 1})
-    cs = [{k: c.get(k) for k in ("name", "role", "linkedin", "email")} for c in (p or {}).get("contacts") or []]
-    return {"contacts": cs, "searched": bool((p or {}).get("li_lookup_at"))}
+    p = await db.prospects.find_one({"lead_id": lead_id}, {"_id": 0, "contacts": 1, "li_lookup_at": 1, "brand_name": 1})
+    cs = [{k: c.get(k) for k in ("name", "role", "linkedin", "email", "uploaded")} for c in (p or {}).get("contacts") or []]
+    return {"contacts": cs, "searched": bool((p or {}).get("li_lookup_at")), "brand": (p or {}).get("brand_name")}
+
+
+DEFAULT_LI_MSG = ("Hi {first_name}, came across {brand} and loved how you've grown your stores. At Fundle we help retail brands "
+                  "drive repeat purchases with loyalty across stores and online. Open to a quick chat?")
+REPORT_PROJ = {"_id": 0, "id": 1, "brand_name": 1, "store_count": 1, "category": 1, "lead_id": 1, "country": 1, "contacts": 1}
+
+
+@router.get("/report")
+async def report(q: Optional[str] = None, status: str = "all", source: str = "all", page: int = 1, limit: int = 50,
+                 user: dict = Depends(STAFF)):
+    import re
+    m = {"contacts.name": {"$nin": [None, ""]}}
+    if q:
+        rx = {"$regex": re.escape(q.strip()), "$options": "i"}
+        m = {**m, "$or": [{"brand_name": rx}, {"contacts.name": rx}, {"contacts.role": rx}]}
+    cm = {"contacts.name": {"$nin": [None, ""]}}
+    if q:
+        cm["$or"] = [{"brand_name": rx}, {"contacts.name": rx}, {"contacts.role": rx}]
+    if status == "sent":
+        cm["contacts.li_sent_at"] = {"$nin": [None, ""]}
+    elif status == "todo":
+        cm["contacts.li_sent_at"] = {"$in": [None, ""]}
+    if source == "sheet":
+        cm["contacts.uploaded"] = True
+    limit = max(1, min(limit, 200))
+    pipe = [{"$match": m}, {"$project": REPORT_PROJ}, {"$unwind": "$contacts"}, {"$match": cm},
+            {"$sort": {"contacts.uploaded": -1, "store_count": -1, "id": 1}},
+            {"$facet": {"items": [{"$skip": (max(page, 1) - 1) * limit}, {"$limit": limit}], "total": [{"$count": "n"}]}}]
+    r = (await db.prospects.aggregate(pipe, allowDiskUse=True).to_list(1))[0]
+    items = [{"prospect_id": x["id"], "brand": x["brand_name"], "store_count": x.get("store_count"), "category": x.get("category"),
+              "lead_id": x.get("lead_id"), "country": x.get("country"),
+              **{k: x["contacts"].get(k) for k in ("name", "role", "email", "linkedin", "uploaded", "li_sent_at", "li_sent_by")}}
+             for x in r["items"]]
+    tpl = await db.settings.find_one({"key": "li_report_msg"}, {"_id": 0})
+    return {"items": items, "total": (r["total"] or [{"n": 0}])[0]["n"], "page": page, "limit": limit,
+            "template": (tpl or {}).get("text") or DEFAULT_LI_MSG}
+
+
+class SentMark(BaseModel):
+    prospect_id: int
+    name: str
+    sent: bool = True
+
+
+@router.post("/report/sent")
+async def report_mark_sent(b: SentMark, user: dict = Depends(STAFF)):
+    val = {"contacts.$[c].li_sent_at": now_utc_str(), "contacts.$[c].li_sent_by": user["name"]} if b.sent \
+        else {"contacts.$[c].li_sent_at": None, "contacts.$[c].li_sent_by": None}
+    r = await db.prospects.update_one({"id": b.prospect_id}, {"$set": val}, array_filters=[{"c.name": b.name}])
+    if not r.matched_count:
+        raise HTTPException(status_code=404, detail="Contact not found")
+    if b.sent:
+        p = await db.prospects.find_one({"id": b.prospect_id}, {"_id": 0, "lead_id": 1})
+        if p and p.get("lead_id"):
+            await log_message(p["lead_id"], f"💬 LinkedIn message sent to {escape(b.name)} by {escape(user['name'])}", author=user)
+    return {"ok": True}
+
+
+class LiTemplate(BaseModel):
+    text: str
+
+
+@router.put("/report/template")
+async def report_save_template(b: LiTemplate, user: dict = Depends(STAFF)):
+    await db.settings.update_one({"key": "li_report_msg"}, {"$set": {"text": b.text.strip()[:1500]}}, upsert=True)
+    return {"ok": True}
 
 
 @router.post("/run")

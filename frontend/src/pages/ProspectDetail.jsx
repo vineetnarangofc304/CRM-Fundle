@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { ArrowLeft, LinkedinLogo, Globe, Sparkle, UserPlus, Storefront } from "@phosphor-icons/react";
 import { API, apiErr } from "../lib/api";
 import { SEGMENT_STYLE } from "../lib/prospecting";
+import { liLink } from "../lib/linkedin";
 import { useAuth } from "../context/AuthContext";
 
 const Row = ({ label, children, testid }) => (
@@ -60,7 +61,7 @@ function ContactsCard({ p, reload }) {
                     <div key={h.id} className="text-[10px] font-normal text-slate-500">{h.template_name || `Email ${h.step}/3`} · <b className={h.status === "sent" ? "text-emerald-600" : "text-amber-600"}>{h.status.replace("_", " ")}</b>{h.sent_at ? ` ${h.sent_at}` : ""}</div>))}</div>}
                 </td>
                 <td className="text-xs">{c.email ? <>{c.email} {EMAIL_BADGE[c.email_status] && <span className={`ml-1 rounded px-1 text-[9px] font-bold ${EMAIL_BADGE[c.email_status][1]}`}>{EMAIL_BADGE[c.email_status][0]}</span>}</> : <span className="text-slate-300">no email found</span>}</td>
-                <td>{c.linkedin && <a data-testid={`prospect-contact-linkedin-${i}`} href={c.linkedin} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 whitespace-nowrap rounded-full bg-[#0A66C2]/10 px-2 py-0.5 text-[11px] font-bold text-[#0A66C2] transition-colors hover:bg-[#0A66C2]/20"><LinkedinLogo size={14} weight="fill" /> Open LinkedIn</a>}</td>
+                <td>{liLink(c, p.brand_name) && <a data-testid={`prospect-contact-linkedin-${i}`} href={liLink(c, p.brand_name).href} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 whitespace-nowrap rounded-full bg-[#0A66C2]/10 px-2 py-0.5 text-[11px] font-bold text-[#0A66C2] transition-colors hover:bg-[#0A66C2]/20"><LinkedinLogo size={14} weight="fill" /> {liLink(c, p.brand_name).direct ? "Open LinkedIn" : "Find on LinkedIn"}</a>}</td>
                 <td className="text-right">{c.email && <div className="flex flex-wrap justify-end gap-1">{tpls.map((t) => (
                   <button key={t.id} data-testid={`prospect-tpl-${i}-${t.id}`} disabled={!!busy} onClick={() => applyTpl(i, t)} title={`AI tailors “${t.name}” for ${c.name}, then you review & send`} className="rounded-full border border-[#1A73E8]/30 px-2 py-0.5 text-[10px] font-bold text-[#1557B0] transition-colors hover:bg-[#1A73E8]/10 disabled:opacity-50">{busy === `${i}-${t.id}` ? "Tailoring…" : t.name}</button>))}</div>}</td>
               </tr>
@@ -112,7 +113,7 @@ export default function ProspectDetail() {
           <div className="mt-4 text-[11px] font-bold uppercase tracking-wider text-slate-400">CEO</div>
           <div className="text-lg font-bold text-slate-800" data-testid="prospect-ceo">{p.ceo_name || "—"}</div>
           <div className="text-xs text-slate-500">{p.ceo_title}</div>
-          {p.ceo_linkedin && <a data-testid="prospect-ceo-linkedin" href={p.ceo_linkedin} target="_blank" rel="noreferrer" className="mt-2 inline-flex items-center gap-1 text-xs font-bold text-[#0A66C2]"><LinkedinLogo size={16} weight="fill" /> LinkedIn profile</a>}
+          {p.ceo_name && <a data-testid="prospect-ceo-linkedin" href={liLink({ name: p.ceo_name, linkedin: p.ceo_linkedin, verified: p.ceo_li_verified }, p.brand_name).href} target="_blank" rel="noreferrer" className="mt-2 inline-flex items-center gap-1 text-xs font-bold text-[#0A66C2]"><LinkedinLogo size={16} weight="fill" /> {p.ceo_li_verified ? "LinkedIn profile" : "Find on LinkedIn"}</a>}
           {p.description && <p className="mt-4 text-sm text-slate-600">{p.description}</p>}
         </div>
         <div className="crm-card p-4 lg:col-span-2">

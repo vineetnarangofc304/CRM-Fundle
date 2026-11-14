@@ -35,6 +35,19 @@ def ist_date_parts(ist_str: str) -> dict:
     return {"create_dt": d, "create_dow": (d.isoweekday() % 7) + 1, "create_hour": d.hour}
 
 
+def search_words(doc: dict, extra=()) -> list:
+    """Every word (and the full email) of a lead's name / contact / company / email + extra names, lowercased.
+    A '^word' regex on this indexed array finds 'Bansal' in 'Deepak Bansal' with tight index bounds."""
+    out = set()
+    for v in [doc.get(k) for k in ("name", "contact_name", "company_name", "partner_name", "email_from")] + list(extra):
+        if isinstance(v, str) and v:
+            v = v.lower()
+            out.update(w for w in re.split(r"[^a-z0-9]+", v) if len(w) >= 2)
+            if "@" in v:
+                out.add(v.strip())
+    return sorted(out)[:80]
+
+
 def search_norm(doc: dict) -> dict:
     """Lowercased search fields for a lead (name_lc/contact_name_lc/email_lc).
     A CASE-SENSITIVE '^prefix' regex on these uses TIGHT index bounds; a

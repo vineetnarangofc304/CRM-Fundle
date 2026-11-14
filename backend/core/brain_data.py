@@ -176,6 +176,24 @@ async def backfill_ceo() -> int:
     return n
 
 
+async def backfill_li_v2() -> int:
+    """Normalise uploaded LinkedIn URLs to www.linkedin.com/in/<slug>/ and mark sheet-verified CEO links."""
+    n = 0
+    async for p in db.prospects.find({"contacts.uploaded": True}, {"_id": 0, "id": 1, "contacts": 1, "ceo_name": 1}):
+        cs = p["contacts"]
+        for c in cs:
+            s = re.search(r"linkedin\.com/in/([^/?#\s]+)", c.get("linkedin") or "", re.I)
+            if c.get("uploaded") and s:
+                c["linkedin"] = f"https://www.linkedin.com/in/{s.group(1)}/"
+        upd = {"contacts": cs}
+        ceo = next((c for c in cs if c.get("uploaded") and c.get("linkedin") and c["name"].lower() == (p.get("ceo_name") or "").lower()), None)
+        if ceo:
+            upd.update(ceo_linkedin=ceo["linkedin"], ceo_li_verified=True)
+        await db.prospects.update_one({"id": p["id"]}, {"$set": upd})
+        n += 1
+    return n
+
+
 def _people(r: dict, groups: list) -> list:
     out = []
     for name_c, role_c, li_c, em_c in groups:
@@ -184,8 +202,9 @@ def _people(r: dict, groups: list) -> list:
             continue
         role = (r.get(role_c) or "").strip() if role_c in r else role_c
         li = (r.get(li_c) or "").strip()
+        s = re.search(r"linkedin\.com/in/([^/?#\s]+)", li, re.I)
         em = EMAIL_RE.search((r.get(em_c) or "").lower())
-        out.append({"name": name[:80], "role": (role or "")[:80], "linkedin": li if "linkedin.com/" in li else None,
+        out.append({"name": name[:80], "role": (role or "")[:80], "linkedin": f"https://www.linkedin.com/in/{s.group(1)}/" if s else None,
                     "email": em.group(0) if em else None})
     return out
 
@@ -247,8 +266,8 @@ async def t_enrich_people(ctx, a):
                 if not (c or {}).get("email"):
                     st["saved_without_email"] += 1
             if c:
-                if x["linkedin"] and not c.get("linkedin"):
-                    c["linkedin"] = x["linkedin"]
+                if x["linkedin"] and (not c.get("linkedin") or not c.get("uploaded")):
+                    c["linkedin"] = x["linkedin"]  # sheet profile beats an AI guess
                 if x["role"] and not c.get("role"):
                     c["role"] = x["role"]
                 if x["email"] and (status == "published" and c.get("email_status") != "published" or not c.get("email")):
@@ -264,6 +283,9 @@ async def t_enrich_people(ctx, a):
             top = _top_exec(cs)
             if top:
                 upd.update(ceo_name=top["name"], ceo_title=top.get("role"), ceo_linkedin=p.get("ceo_linkedin") or top.get("linkedin"))
+        ceo = next((c for c in cs if c.get("uploaded") and c.get("linkedin") and c["name"].lower() == (upd.get("ceo_name") or p.get("ceo_name") or "").lower()), None)
+        if ceo:
+            upd.update(ceo_linkedin=ceo["linkedin"], ceo_li_verified=True)
         if cs and p.get("contacts_status") != "done":
             upd.update(contacts_status="done", contacts_at=now_utc_str(), contacts_priority=0)
         upd["fit_score"] = ct.fit_score({**p, **upd})
@@ -275,7 +297,7 @@ async def t_enrich_people(ctx, a):
             lu = {"fit_score": upd["fit_score"]}
             if best and (not lead.get("email_from") or lead["email_from"].lower() in bounced):
                 lu.update(email_from=best["email"], email_lc=best["email"])
-            await db.leads.update_one({"id": lead_id}, {"$set": lu})
+            await db.leads.update_one({"id": lead_id}, {"$set": lu, "$unset": {"search_words": 1}})
             if logs:
                 await log_message(lead_id, "📥 Contacts added from uploaded sheet: " + "; ".join(logs), author=AI)
     st["skipped"] = st["skipped"][:30]

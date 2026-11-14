@@ -325,6 +325,8 @@ INDEX_SPECS = [
     ("leads", "name_lc", {}),
     ("leads", "contact_name_lc", {}),
     ("leads", "email_lc", {}),
+    ("leads", "search_words", {}),
+    ("leads", "country", {}),
     # Meta leadgen de-dup (sparse — only Facebook leads carry this field).
     ("leads", "facebook_leadgen_id", {"sparse": True}),
     # Reports / Dashboard / KPI / trends / export: create_date_ist range + group by lead_stage.
@@ -658,6 +660,32 @@ async def _status_reset_loop():
         await asyncio.sleep(300)
 
 
+async def _search_words_loop():
+    """Keep leads.search_words (word-level search) filled: new/renamed leads get it within ~2 min."""
+    from pymongo import UpdateOne
+    from core.utils import search_words
+    await asyncio.sleep(20)
+    try:
+        if not await db.catalogs.find_one({"type": "source_lead", "name": "AI Prospecting"}):
+            top = await db.catalogs.find_one({}, {"_id": 0, "id": 1}, sort=[("id", -1)])
+            await db.catalogs.insert_one({"id": (top or {}).get("id", 0) + 1, "type": "source_lead", "name": "AI Prospecting", "active": True})
+    except Exception as e:
+        logger.warning(f"source catalog seed skipped: {str(e)[:160]}")
+    while True:
+        try:
+            docs = await db.leads.find({"search_words": {"$exists": False}},
+                                       {"_id": 0, "id": 1, "name": 1, "contact_name": 1, "company_name": 1, "partner_name": 1, "email_from": 1}).limit(2000).to_list(2000)
+            if docs:
+                extra = {p["lead_id"]: [x for c in p.get("contacts") or [] for x in (c.get("name"), c.get("email"))]
+                         async for p in db.prospects.find({"lead_id": {"$in": [d["id"] for d in docs]}}, {"_id": 0, "lead_id": 1, "contacts.name": 1, "contacts.email": 1})}
+                await db.leads.bulk_write([UpdateOne({"id": d["id"]}, {"$set": {"search_words": search_words(d, extra.get(d["id"], []))}}) for d in docs], ordered=False)
+                await asyncio.sleep(2)
+                continue
+        except Exception as e:
+            logger.warning(f"search_words backfill: {str(e)[:160]}")
+        await asyncio.sleep(120)
+
+
 @app.on_event("startup")
 async def startup():
     # Enlarge the default thread pool. bcrypt (login / password verify) is CPU-bound (~250ms)
@@ -679,6 +707,7 @@ async def startup():
         logger.error(f"Storage init failed: {e}")
     # Build indexes in the background — never block startup / readiness on this.
     asyncio.create_task(_ensure_indexes())
+    asyncio.create_task(_search_words_loop())
     # Daily Offline reset (Case 2) — background loop.
     asyncio.create_task(_status_reset_loop())
     # Seed admin + catalog defaults in the BACKGROUND with retry so a transiently-unreachable

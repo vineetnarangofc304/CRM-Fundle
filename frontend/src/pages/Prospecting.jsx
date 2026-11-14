@@ -3,6 +3,7 @@ import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import { Binoculars, Play, Pause, Storefront, UserCircle, LinkedinLogo, MagnifyingGlass, ArrowsClockwise, DownloadSimple, UploadSimple } from "@phosphor-icons/react";
 import { API, apiErr } from "../lib/api";
+import { liLink } from "../lib/linkedin";
 import { SEGMENT_STYLE } from "../lib/prospecting";
 import { useAuth } from "../context/AuthContext";
 
@@ -191,7 +192,7 @@ function ProspectTable({ filters, setFilters, ov }) {
                 <td>{p.segment && <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${SEGMENT_STYLE[p.segment]}`}>{p.segment}</span>}</td>
                 <td className="text-right tabular-nums font-semibold">{p.store_count != null ? p.store_count.toLocaleString("en-IN") : "—"}</td>
                 <td className="text-right tabular-nums text-xs font-bold text-emerald-700">{p.fit_score ?? "—"}</td>
-                <td className="text-xs">{p.ceo_name ? <span className="flex items-center gap-1">{p.ceo_name}{p.ceo_linkedin && <a href={p.ceo_linkedin} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()} className="text-[#0A66C2]"><LinkedinLogo size={14} weight="fill" /></a>}</span> : <span className="text-slate-300">—</span>}</td>
+                <td className="text-xs">{p.ceo_name ? <span className="flex items-center gap-1">{p.ceo_name}<a href={liLink({ name: p.ceo_name, linkedin: p.ceo_linkedin, verified: p.ceo_li_verified }, p.brand_name).href} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()} className="text-[#0A66C2]"><LinkedinLogo size={14} weight="fill" /></a></span> : <span className="text-slate-300">—</span>}</td>
                 <td className="text-[10px] font-bold uppercase text-slate-400">{p.status === "enriched" ? <span className="text-emerald-600">Researched</span> : p.status}</td>
               </tr>
             ))}

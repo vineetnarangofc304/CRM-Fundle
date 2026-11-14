@@ -103,6 +103,19 @@ function LeadCell({ colKey, l, tagById, userById }) {
   return <span className="text-slate-500">{l[colKey] || "—"}</span>;
 }
 
+function SenderFilter({ value, onChange }) {
+  const [opts, setOpts] = useState([]);
+  useEffect(() => { API.get("/leads/senders").then(({ data }) => setOpts(data)).catch(() => {}); }, []);
+  if (!opts.length) return null;
+  return (
+    <select data-testid="filter-sender" className="crm-select max-w-48" value={value} onChange={(e) => onChange(e.target.value)}>
+      <option value="">Emailed from: Any</option>
+      {opts.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
+    </select>
+  );
+}
+
+
 export default function Leads() {
   const [params, setParams] = useSearchParams();
   const navigate = useNavigate();
@@ -136,7 +149,7 @@ export default function Leads() {
   const filterParams = useMemo(() => {
     const obj = {};
     ["search", "lead_stage", "tags", "user_id", "source_lead", "follow_up", "active", "date_from", "date_to",
-      "stage_id", "follow_up_tag", "campaign_name", "ads_platform", "utm_source", "utm_medium", "utm_campaign", "state_name", "city", "lost_reason_id", "duplicate", "scope", "min_followups", "min_deal_value", "prospect_category", "prospect_segment", "min_stores"].forEach((k) => {
+      "stage_id", "follow_up_tag", "campaign_name", "ads_platform", "utm_source", "utm_medium", "utm_campaign", "state_name", "city", "lost_reason_id", "duplicate", "scope", "min_followups", "min_deal_value", "prospect_category", "prospect_segment", "min_stores", "country", "sender"].forEach((k) => {
       const v = params.get(k);
       if (v) obj[k] = v;
     });
@@ -349,6 +362,11 @@ export default function Leads() {
             <option value="">Source: All</option>
             {(catalogs?.source_lead || []).map((s) => <option key={s.id} value={s.name}>{s.name}</option>)}
           </select>
+          <select data-testid="filter-country" className="crm-select max-w-40" value={params.get("country") || ""} onChange={(e) => setParam("country", e.target.value)}>
+            <option value="">Country: All</option>
+            {(catalogs?.country || []).map((c) => <option key={c.id} value={c.name}>{c.name}</option>)}
+          </select>
+          <SenderFilter value={params.get("sender") || ""} onChange={(v) => setParam("sender", v)} />
           <select data-testid="filter-utm-source" className="crm-select" value={params.get("utm_source") || ""} onChange={(e) => setParam("utm_source", e.target.value)}>
             <option value="">UTM Source: All</option>
             {(catalogs?.utm_source || []).map((s) => <option key={s.id} value={s.name}>{s.name}</option>)}

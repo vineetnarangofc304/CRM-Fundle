@@ -9,6 +9,7 @@ import {
 } from "@phosphor-icons/react";
 import { inr } from "../lib/money";
 import { API, apiErr, fmtDate, fmtDay, todayStr } from "../lib/api";
+import { liLink } from "../lib/linkedin";
 import { useAuth, useCatalogMaps, useCatalogs } from "../context/AuthContext";
 import { useNavGuard } from "../context/NavGuardContext";
 import { TagChip, Spinner, EmptyState } from "../components/Bits";
@@ -334,7 +335,7 @@ export default function LeadDetail() {
                 <div key={l} className="flex justify-between py-1 text-sm"><span className="text-slate-400">{l}</span><span className="font-semibold text-slate-800">{v || "—"}</span></div>
               ))}
               <div className="mt-1 flex gap-3 text-xs font-bold">
-                {lead.ceo_linkedin && <a href={lead.ceo_linkedin} target="_blank" rel="noreferrer" className="text-[#0A66C2]" data-testid="lead-ceo-linkedin">CEO LinkedIn</a>}
+                {lead.contact_name && lead.source_lead === "AI Prospecting" && <a href={liLink({ name: lead.contact_name }, lead.company_name || lead.name).href} target="_blank" rel="noreferrer" className="text-[#0A66C2]" data-testid="lead-ceo-linkedin">Find CEO on LinkedIn</a>}
                 {lead.company_website && <a href={lead.company_website} target="_blank" rel="noreferrer" className="text-[#1557B0]">Website</a>}
               </div>
               {["admin", "manager"].includes(user?.role) && <LeadContacts leadId={lead.id} />}
