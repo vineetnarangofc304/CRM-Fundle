@@ -66,6 +66,17 @@ async def _find(kind: str, st: dict):
     return None
 
 
+async def search_task(acc: dict):
+    """A CRM user's people search waiting for a browser (only taken if asked in the last 5 minutes)."""
+    cut = (datetime.now(timezone.utc) - timedelta(minutes=5)).strftime("%Y-%m-%d %H:%M:%S")
+    j = await db.li_search_jobs.find_one_and_update({"status": "pending", "created_at": {"$gte": cut}},
+                                                    {"$set": {"status": "running", "account_id": acc["id"], "account": acc["name"]}},
+                                                    sort=[("id", 1)], projection={"_id": 0})
+    if j:
+        return {"kind": "search", "job_id": j["id"], "keywords": j["keywords"], "filters": j["filters"], "start": j["start"], "name": "search", "brand": j["keywords"]}
+    return None
+
+
 async def next_task(acc: dict):
     st = await la.get_settings()
     for kind, on, lim in (("message", st["message_on"], st["daily_messages"]), ("invite", st["invite_on"], st["daily_invites"]),

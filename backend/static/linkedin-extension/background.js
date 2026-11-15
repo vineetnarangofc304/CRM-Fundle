@@ -6,7 +6,7 @@ const cfg = async () => ({ ...DEF, ...(await chrome.storage.local.get(Object.key
 async function crm(path, opts = {}) {
   const c = await cfg();
   if (!c.crmUrl || !c.token) throw new Error("Set the CRM address and extension key in Options");
-  const r = await fetch(c.crmUrl.replace(/\/+$/, "") + "/api" + path, { ...opts, headers: { "x-ext-token": c.token, "content-type": "application/json", ...(opts.headers || {}) } });
+  const r = await fetch(c.crmUrl.replace(/\/+$/, "") + "/api" + path, { ...opts, headers: { "x-ext-token": c.token, "x-ext-version": chrome.runtime.getManifest().version, "content-type": "application/json", ...(opts.headers || {}) } });
   const d = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(d.detail || `CRM error ${r.status}`);
   return d;
@@ -23,7 +23,19 @@ function inHours(c) {
   return c.days.includes(d.getDay()) && d.getHours() >= c.startHour && d.getHours() < c.endHour;
 }
 
+async function doSearch(t) {
+  const filters = Object.entries(t.filters || {}).map(([k, vals]) => `(key:${k},value:List(${vals.map((x) => encodeURIComponent(x)).join("|")}))`);
+  const res = { job_id: t.job_id, ok: true, results: [] };
+  try {
+    res.results = (await liSearch({ keywords: t.keywords, filters, start: t.start || 0 })).map((r) => ({ ...r, distance: r.distance || "" }));
+  } catch (e) { res.ok = false; res.error = String(e.message || e); }
+  await crm("/ext/search_result", { method: "POST", body: JSON.stringify(res) });
+  await log(`CRM search "${t.keywords || Object.values(t.filters || {}).flat().join(" ")}" — ${res.ok ? `${res.results.length} people` : res.error}`, res.ok);
+  return res;
+}
+
 async function doTask(t) {
+  if (t.kind === "search") return doSearch(t);
   const res = { kind: t.kind, prospect_id: t.prospect_id, name: t.name, ok: true, text: t.text };
   try {
     if (t.kind === "lookup") res.results = (await liSearch({ keywords: t.keywords })).slice(0, 5);
@@ -39,12 +51,13 @@ let busy = false;
 async function tick(force = false) {
   if (busy) return { skipped: "busy" };
   const c = await cfg();
-  if (!force && (!c.enabled || !inHours(c))) return { skipped: "paused or outside working hours" };
+  const paused = !force && (!c.enabled || !inHours(c));
+  if (!c.crmUrl || !c.token) return { skipped: "not set up" };
   busy = true;
   try {
-    const { task } = await crm("/ext/task");
-    if (!task) return { idle: true };
-    await new Promise((ok) => setTimeout(ok, 2000 + Math.random() * 6000));  // human-like pause
+    const { task } = await crm(paused ? "/ext/task?only=search" : "/ext/task");
+    if (!task) return paused ? { skipped: "paused or outside working hours" } : { idle: true };
+    if (task.kind !== "search") await new Promise((ok) => setTimeout(ok, 2000 + Math.random() * 6000));  // human-like pause
     return await doTask(task);
   } catch (e) {
     await log(String(e.message || e), false);
@@ -52,8 +65,8 @@ async function tick(force = false) {
   } finally { busy = false; }
 }
 
-chrome.runtime.onInstalled.addListener(() => chrome.alarms.create("tick", { periodInMinutes: 1 }));
-chrome.runtime.onStartup.addListener(() => chrome.alarms.create("tick", { periodInMinutes: 1 }));
+chrome.runtime.onInstalled.addListener(() => chrome.alarms.create("tick", { periodInMinutes: 0.5 }));
+chrome.runtime.onStartup.addListener(() => chrome.alarms.create("tick", { periodInMinutes: 0.5 }));
 chrome.alarms.onAlarm.addListener((a) => a.name === "tick" && tick());
 
 const SEARCH_KEYS = { geoUrn: "geoUrn", network: "network", currentCompany: "currentCompany", industry: "industry", titleFreeText: "title", company: "company" };

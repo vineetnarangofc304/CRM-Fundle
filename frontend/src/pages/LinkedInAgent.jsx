@@ -13,10 +13,25 @@ function SearchTab({ regions }) {
   const [rs, setRs] = useState(null);
   const [sel, setSel] = useState({});
   const [busy, setBusy] = useState(false);
+  const [wait, setWait] = useState("");
+  const poll = async (jid, account) => {
+    for (let i = 0; i < 60; i++) {
+      await new Promise((ok) => setTimeout(ok, 3000));
+      const { data } = await API.get(`/linkedin-agent/search/${jid}`);
+      if (data.status === "done") return data;
+      if (data.status === "failed") throw new Error(data.error);
+      setWait(data.status === "running" ? `${account}'s Chrome is searching LinkedIn…` : `Waiting for ${account}'s Chrome extension (Chrome must be open; picks it up within 30 s)…`);
+    }
+    throw new Error("The Chrome extension didn't pick up the search. Open Chrome with LinkedIn logged in, click the extension, then try again.");
+  };
   const run = async (page = 1) => {
     setBusy(true);
-    try { const { data } = await API.post("/linkedin-agent/search", { ...f, page }, { timeout: 120000 }); setRs(data); setF({ ...f, page }); setSel({}); } catch (e) { toast.error(apiErr(e)); }
-    setBusy(false);
+    try {
+      let { data } = await API.post("/linkedin-agent/search", { ...f, page }, { timeout: 120000 });
+      if (data.job_id) { setWait(`Sent to ${data.account}'s Chrome extension…`); data = await poll(data.job_id, data.account); }
+      setRs(data); setF({ ...f, page }); setSel({});
+    } catch (e) { toast.error(e.response ? apiErr(e) : e.message); }
+    setWait(""); setBusy(false);
   };
   const save = async () => {
     const people = rs.items.filter((r) => sel[r.urn_id]).map((r) => ({ ...r, company: f.company || undefined, country: f.regions.length === 1 ? f.regions[0] : undefined }));
@@ -32,6 +47,7 @@ function SearchTab({ regions }) {
         <div className="flex flex-wrap gap-1.5 md:col-span-2" data-testid="lis-regions">{regions.map((r) => <button key={r} onClick={() => setF({ ...f, regions: tog(f.regions, r) })} className={`rounded-full px-2.5 py-1 text-[11px] font-bold ${f.regions.includes(r) ? "bg-[#0A66C2] text-white" : "bg-slate-100 text-slate-600"}`}>{r}</button>)}</div>
         <div className="flex flex-wrap items-center gap-1.5">{[["F", "1st"], ["S", "2nd"], ["O", "3rd+"]].map(([k, l]) => <button key={k} data-testid={`lis-net-${k}`} onClick={() => setF({ ...f, network: tog(f.network, k) })} className={`rounded-full px-2.5 py-1 text-[11px] font-bold ${f.network.includes(k) ? "bg-emerald-600 text-white" : "bg-slate-100 text-slate-600"}`}>{l}</button>)}
           <button data-testid="lis-search-btn" disabled={busy} onClick={() => run(1)} className="crm-btn-primary ml-auto !py-1.5 text-xs"><MagnifyingGlass size={14} /> {busy ? "Searching LinkedIn…" : "Search"}</button></div>
+        {wait && <p data-testid="lis-wait" className="text-xs font-semibold text-[#0A66C2] md:col-span-3">{wait}</p>}
       </div>
       {rs && (
         <div className="crm-card p-4" data-testid="lis-results">

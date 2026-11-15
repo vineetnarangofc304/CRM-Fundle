@@ -8,7 +8,7 @@ from pydantic import BaseModel
 from core import li_agent as la
 from core.db import db
 from core.security import require_roles
-from core.utils import now_utc_str
+from core.utils import next_id, now_utc_str
 from routes.prospecting import _spawn
 
 router = APIRouter(tags=["linkedin-agent"])
@@ -140,11 +140,20 @@ class Search(BaseModel):
 
 @router.post("/linkedin-agent/search")
 async def search(b: Search, user: dict = Depends(STAFF)):
-    accs = await la.accounts()
-    if not accs:
-        raise HTTPException(status_code=400, detail="Connect a LinkedIn account first (LinkedIn Agent → Accounts)")
     if not (b.keywords or b.title or b.company):
         raise HTTPException(status_code=400, detail="Enter keywords, a title or a company")
+    accs = await la.accounts()
+    if not accs:
+        ext = await db.li_accounts.find_one({"type": "extension", "active": True, "is_deleted": {"$ne": True}}, {"_id": 0, "name": 1, "last_seen": 1},
+                                            sort=[("last_seen", -1)])
+        if not ext:
+            raise HTTPException(status_code=400, detail="Connect a LinkedIn account (Agent & accounts) or set up the Chrome extension first")
+        filters = {"geoUrn": [la.REGIONS[r] for r in b.regions if r in la.REGIONS], "network": [n for n in b.network if n in ("F", "S", "O")],
+                   "title": [b.title] if b.title else [], "company": [b.company] if b.company else []}
+        jid = await next_id("li_search_job")
+        await db.li_search_jobs.insert_one({"id": jid, "status": "pending", "keywords": b.keywords or "", "filters": {k: v for k, v in filters.items() if v},
+                                            "start": (max(b.page, 1) - 1) * 10, "page": b.page, "by": user["name"], "created_at": now_utc_str()})
+        return {"job_id": jid, "via": "extension", "page": b.page, "account": ext["name"], "last_seen": ext.get("last_seen")}
     try:
         rs = await la.search(accs[0], b.keywords, b.title, b.company, b.regions, [n for n in b.network if n in ("F", "S", "O")],
                              limit=25, offset=(max(b.page, 1) - 1) * 25)
@@ -154,6 +163,19 @@ async def search(b: Search, user: dict = Depends(STAFF)):
     known = {x["li_urn"] async for x in db.prospects.aggregate([{"$unwind": "$contacts"}, {"$match": {"contacts.li_urn": {"$in": [r["urn_id"] for r in rs]}}},
                                                                 {"$project": {"_id": 0, "li_urn": "$contacts.li_urn"}}])}
     return {"items": [{**r, "in_crm": r["urn_id"] in known} for r in rs], "page": b.page, "account": accs[0]["name"]}
+
+
+@router.get("/linkedin-agent/search/{jid}")
+async def search_job(jid: int, user: dict = Depends(STAFF)):
+    j = await db.li_search_jobs.find_one({"id": jid}, {"_id": 0})
+    if not j:
+        raise HTTPException(status_code=404, detail="Search not found")
+    if j["status"] != "done":
+        return {"status": j["status"], "error": j.get("error")}
+    rs = j.get("results") or []
+    known = {x["li_urn"] async for x in db.prospects.aggregate([{"$unwind": "$contacts"}, {"$match": {"contacts.li_urn": {"$in": [r["urn_id"] for r in rs]}}},
+                                                                {"$project": {"_id": 0, "li_urn": "$contacts.li_urn"}}])}
+    return {"status": "done", "items": [{**r, "in_crm": r["urn_id"] in known} for r in rs], "page": j["page"], "account": j.get("account")}
 
 
 class Person(BaseModel):
@@ -228,10 +250,28 @@ async def ext_ping(acc: dict = Depends(ext_acc)):
 
 
 @router.get("/ext/task")
-async def ext_task(acc: dict = Depends(ext_acc)):
+async def ext_task(request: Request, only: Optional[str] = None, acc: dict = Depends(ext_acc)):
     from core import li_ext
     await db.li_accounts.update_one({"id": acc["id"]}, {"$set": {"last_seen": now_utc_str()}})
-    return {"task": await li_ext.next_task(acc)}
+    ver = tuple(int(x) for x in (request.headers.get("x-ext-version") or "0").split(".") if x.isdigit())
+    t = await li_ext.search_task(acc) if ver >= (1, 3) else None
+    return {"task": t or (None if only == "search" else await li_ext.next_task(acc))}
+
+
+class ExtSearchResult(BaseModel):
+    job_id: int
+    ok: bool
+    error: Optional[str] = None
+    results: List[dict] = []
+
+
+@router.post("/ext/search_result")
+async def ext_search_result(b: ExtSearchResult, acc: dict = Depends(ext_acc)):
+    st = {"status": "done", "results": [la._norm(r) for r in b.results if r.get("name") and r.get("name") != "LinkedIn Member"]} if b.ok \
+        else {"status": "failed", "error": (b.error or "LinkedIn search failed")[:300]}
+    await db.li_search_jobs.update_one({"id": b.job_id, "account_id": acc["id"]}, {"$set": {**st, "finished_at": now_utc_str()}})
+    await la._act(acc, "search", b.ok, q=f"search job {b.job_id}")
+    return {"ok": True}
 
 
 class ExtResult(BaseModel):
