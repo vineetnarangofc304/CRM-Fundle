@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 MODEL = ("openai", "gpt-6-luna")
 DEV_EMAIL = "vineet.narang@fundle.ai"
 READ_COLS = {"prospects", "leads", "outreach", "email_templates", "mailboxes", "settings", "messages", "users",
-             "prospect_runs", "brain_audit", "linkedin_tasks", "stages", "sources"}
+             "prospect_runs", "brain_audit", "linkedin_tasks", "stages", "sources", "li_accounts", "li_actions"}
 WRITE_COLS = {"prospects", "leads", "outreach", "email_templates", "mailboxes", "settings"}
 SECRET = {"smtp_password", "password", "password_hash", "hashed_password", "access_token", "refresh_token", "token",
           "client_secret", "api_key", "tokens", "secret"}
@@ -526,8 +526,25 @@ TOOLS.update({
     "manage_contact_sources": (bd.t_sources, _fn("manage_contact_sources", "List, add or remove websites/LinkedIn pages the AI contact search must use when looking for decision makers (trade media, directories, association member lists...).",
                                                  {"action": {"type": "string", "enum": ["list", "add", "remove"]}, "name": STR, "url": STR, "notes": STR}, ["action"])),
 })
-READ_ONLY = {"get_system_overview", "find_records", "export_csv", "aggregate_records", "read_uploaded_file", "inbox_activity"}
-ACTION_TOOLS = {"send_single_email", "send_email_campaign", "send_queued_emails_now", "stop_emails", "run_job"}
+from core import brain_li as bl  # noqa: E402
+TOOLS.update({
+    "linkedin_status": (bl.t_li_status, _fn("linkedin_status", "LinkedIn knowledge: connected accounts (server login or Chrome extension), whether each is connected/signed out, usage today vs limits, connection-import progress, LinkedIn settings, totals (contacts checked/found/1st-degree/invited/accepted/messaged, contacts and brands per source li_server/li_ext/li_search) and last 7 days of actions.", {}, [], False)),
+    "find_linkedin_contacts": (bl.t_li_contacts, _fn("find_linkedin_contacts", "List or export (export_csv true → Download CSV button) LinkedIn contacts in the CRM. Filters: source li_server (server import) | li_ext (Chrome extension) | li_search (search in CRM), degree 1/2/3, brand, name, title (headline text), status invited|accepted|messaged|not_contacted, added_since 'YYYY-MM-DD'.",
+                                                          {"source": {"type": "string", "enum": ["li_server", "li_ext", "li_search"]}, "degree": INT, "brand": STR, "name": STR, "title": STR,
+                                                           "status": {"type": "string", "enum": ["invited", "accepted", "messaged", "not_contacted"]}, "added_since": STR,
+                                                           "limit": INT, "export_csv": BOOL, "file_name": STR}, [], False)),
+    "linkedin_sync_connections": (bl.t_li_sync, _fn("linkedin_sync_connections", "Start pulling 1st-degree connections into the CRM for a server-login LinkedIn account (account_id, or all). Chrome-extension accounts are synced from the extension's Import button.",
+                                                     {"account_id": INT}, [])),
+    "linkedin_preview_outreach": (bl.t_li_preview, _fn("linkedin_preview_outreach", "ALWAYS call before sending LinkedIn invites or messages: shows how many contacts are eligible, example texts filled per person, sending accounts and daily limits. kind invite (2nd/3rd degree) | message (1st degree). Optional text overrides the saved template ({first_name}, {name}, {brand}, {role}).",
+                                                        {"kind": {"type": "string", "enum": ["invite", "message"]}, "text": STR}, ["kind"], False)),
+    "linkedin_start_outreach": (bl.t_li_start, _fn("linkedin_start_outreach", "Only after the user said OK to the preview in their latest message: switches on LinkedIn invites or messages with the previewed text and starts the agent.",
+                                                    {"kind": {"type": "string", "enum": ["invite", "message"]}}, ["kind"])),
+    "linkedin_pause": (bl.t_li_pause, _fn("linkedin_pause", "Switch off LinkedIn invites/messages/lookups.", {"kinds": {"type": "array", "items": STR}}, [])),
+})
+READ_ONLY = {"get_system_overview", "find_records", "export_csv", "aggregate_records", "read_uploaded_file", "inbox_activity",
+             "linkedin_status", "find_linkedin_contacts", "linkedin_preview_outreach"}
+ACTION_TOOLS = {"send_single_email", "send_email_campaign", "send_queued_emails_now", "stop_emails", "run_job",
+                "linkedin_start_outreach", "linkedin_sync_connections"}
 
 SYSTEM = """You are Fundle Brain, the operator of the Fundle.ai CRM (B2B sales CRM selling AI loyalty/retail software to brands in India/GCC/UK). You act on the live system through tools — you do not just advise.
 
@@ -542,7 +559,12 @@ SYSTEM MAP
 - Inboxes: call get_system_overview first to see main_inbox and inboxes_extra; to send from the main inbox use from_inbox "main".
 - mailboxes: extra sending inboxes (id, smtp_user email, sender_name, signature, active, verified). Main inbox = id 0 (its signature = outreach setting `signature`). Each inbox sends max hourly_cap per hour (default 50), spread over runs every 15 min. Ask "from Hardik's email" -> find the mailbox whose smtp_user/sender_name matches.
 - settings: outreach / prospecting / linkedin sections (use save_settings).
-- Engines run every 15 minutes automatically (prospecting, outreach send + reply/bounce sync, email-format check).
+- Engines run every 15 minutes automatically (prospecting, outreach send + reply/bounce sync, email-format check, LinkedIn agent).
+- LINKEDIN: contacts live inside prospects.contacts with linkedin, li_urn, li_degree (1/2/3), li_headline, li_source (li_server = imported by server login, li_ext = Chrome extension, li_search = saved from CRM search), li_source_by, li_added_at, li_invited_at, li_accepted_at, li_msg_at. Accounts in li_accounts (type extension = Chrome), actions log in li_actions.
+  - Status/counts/report questions → linkedin_status. Lists/search → find_linkedin_contacts; LinkedIn CSV → find_linkedin_contacts with export_csv true.
+  - Connect a LinkedIn account: you can't take cookies or passwords in chat — tell the user to open LinkedIn Prospecting → Accounts (paste li_at cookie) or the Chrome extension tab, then check with linkedin_status.
+  - Pull connections → linkedin_sync_connections.
+  - Invites/messages: FIRST call linkedin_preview_outreach and show the count + 2–3 example texts, ask "Shall I start?"; only after the user's OK call linkedin_start_outreach. Stop → linkedin_pause.
 
 RULES
 1. Do what the user asks immediately in as FEW tool calls as possible — no confirmation step, no extra look-ups "to double-check", and NEVER ask the user why they want something. Their instruction is the reason; the system logs it automatically. Keep replies short (2–4 lines).
@@ -582,7 +604,9 @@ def _user_reason(said_msgs: list):
 GATES = {"send_queued_emails_now": r"\bsend\b|go ahead|\byes\b|approve|\bok(ay)?\b|\bnow\b",
          "send_email_campaign": r"\bsend\b|\bblast\b|\bshoot\b|go ahead|\byes\b|approve|\bok(ay)?\b|email (this|it|them) to",
          "send_single_email": r"\bsend\b|go ahead|\byes\b|approve|\bok(ay)?\b",
-         "run_job": r"\b(run|start|now|sync|check|trigger|kick|yes)\b|go ahead"}
+         "run_job": r"\b(run|start|now|sync|check|trigger|kick|yes)\b|go ahead",
+         "linkedin_start_outreach": r"\byes\b|go ahead|approve|\bok(ay)?\b|\bstart\b|\bsend\b|confirm|do it|proceed",
+         "linkedin_sync_connections": r"\b(sync|pull|import|fetch|refresh|start|yes|ok)\b|go ahead"}
 
 
 async def run_turn(ctx: dict, history: list, text: str):
