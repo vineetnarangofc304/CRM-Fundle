@@ -14,7 +14,7 @@ from routes.prospecting import _spawn
 router = APIRouter(tags=["linkedin-agent"])
 ADMIN = require_roles("admin")
 STAFF = require_roles("admin", "manager")
-SAFE = {"_id": 0, "li_at_enc": 0, "jsession_enc": 0, "password_enc": 0}
+SAFE = {"_id": 0, "li_at_enc": 0, "jsession_enc": 0, "password_enc": 0, "token_hash": 0}
 
 
 @router.post("/cron/linkedin")
@@ -160,3 +160,78 @@ async def save(b: Save, user: dict = Depends(STAFF)):
 async def run_now(user: dict = Depends(ADMIN)):
     _spawn(la.run("manual"))
     return {"ok": True, "queued": True}
+
+
+# ---------- Chrome extension ----------
+EXT_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "static", "linkedin-extension")
+
+
+class ExtKey(BaseModel):
+    name: Optional[str] = None
+
+
+@router.post("/linkedin-agent/ext/token")
+async def ext_token(b: ExtKey, user: dict = Depends(STAFF)):
+    from core import li_ext
+    return await li_ext.new_token(b.name or user["name"], user)
+
+
+@router.get("/linkedin-agent/extension.zip")
+async def ext_zip(user: dict = Depends(STAFF)):
+    import io
+    import zipfile
+    from fastapi.responses import Response
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        for root, _, files in os.walk(EXT_DIR):
+            for f in files:
+                full = os.path.join(root, f)
+                z.write(full, os.path.join("fundle-linkedin", os.path.relpath(full, EXT_DIR)))
+    return Response(buf.getvalue(), media_type="application/zip", headers={"Content-Disposition": 'attachment; filename="fundle-linkedin-extension.zip"'})
+
+
+async def ext_acc(request: Request):
+    from core import li_ext
+    acc = await li_ext.account_for(request.headers.get("x-ext-token", ""))
+    if not acc:
+        raise HTTPException(status_code=401, detail="Invalid or revoked extension key — create a new one in LinkedIn Prospecting → Chrome extension")
+    return acc
+
+
+@router.get("/ext/ping")
+async def ext_ping(acc: dict = Depends(ext_acc)):
+    st = await la.get_settings()
+    await db.li_accounts.update_one({"id": acc["id"]}, {"$set": {"last_seen": now_utc_str()}})
+    return {"name": acc["name"], "today": {k: await la.used_today(acc["id"], k) for k in ("lookup", "invite", "message")},
+            "limits": {"lookup": st["daily_lookups"] if st["lookup_on"] else 0, "invite": st["daily_invites"] if st["invite_on"] else 0,
+                       "message": st["daily_messages"] if st["message_on"] else 0}}
+
+
+@router.get("/ext/task")
+async def ext_task(acc: dict = Depends(ext_acc)):
+    from core import li_ext
+    await db.li_accounts.update_one({"id": acc["id"]}, {"$set": {"last_seen": now_utc_str()}})
+    return {"task": await li_ext.next_task(acc)}
+
+
+class ExtResult(BaseModel):
+    kind: str
+    prospect_id: int
+    name: str
+    ok: bool
+    error: Optional[str] = None
+    text: Optional[str] = None
+    results: List[dict] = []
+
+
+@router.post("/ext/result")
+async def ext_result(b: ExtResult, acc: dict = Depends(ext_acc)):
+    from core import li_ext
+    if b.kind not in ("lookup", "invite", "message"):
+        raise HTTPException(status_code=400, detail="Unknown task kind")
+    return await li_ext.result(acc, b.model_dump())
+
+
+@router.post("/ext/save")
+async def ext_save(b: Save, acc: dict = Depends(ext_acc)):
+    return await la.save_people([p.model_dump() for p in b.people], {"name": acc["name"]})

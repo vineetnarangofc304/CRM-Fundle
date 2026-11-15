@@ -92,7 +92,7 @@ async def test(acc: dict) -> dict:
 
 async def accounts(kind: str | None = None, limit: int = 0) -> list:
     out = []
-    async for a in db.li_accounts.find({"active": True, "verified": True, "is_deleted": {"$ne": True}}, {"_id": 0}):
+    async for a in db.li_accounts.find({"active": True, "verified": True, "is_deleted": {"$ne": True}, "type": {"$ne": "extension"}}, {"_id": 0}):
         if kind:
             a["room"] = limit - await used_today(a["id"], kind)
             if a["room"] <= 0:
@@ -129,6 +129,18 @@ def best_match(rs: list, c: dict, brand: str):
     return next((r for r in named if bw & _words(r.get("headline"))), None)  # brand must appear — never guess a namesake
 
 
+async def apply_lookup(p: dict, c: dict, rs: list):
+    """Save the matching search result (brand must be in the headline) on the contact."""
+    m = best_match(rs, c, p["brand_name"])
+    upd = {"li_checked_at": now_utc_str()}
+    if m:
+        upd.update(linkedin=m["linkedin"], li_urn=m["urn_id"], li_degree=m["degree"], li_headline=m["headline"], li_verified=True)
+        if m["degree"] == 1 and c.get("li_invited_at") and not c.get("li_accepted_at"):
+            upd["li_accepted_at"] = now_utc_str()
+    await _set_contact(p["id"], c["name"], upd)
+    return m
+
+
 async def _set_contact(pid: int, name: str, upd: dict):
     await db.prospects.update_one({"id": pid}, {"$set": {f"contacts.$[c].{k}": v for k, v in upd.items()}}, array_filters=[{"c.name": name}])
 
@@ -152,13 +164,7 @@ async def _lookups(st: dict, deadline: float) -> int:
             acc = accs[n % len(accs)]
             try:
                 rs = await search(acc, keywords=f"{c['name']} {p['brand_name']}", limit=5)
-                m = best_match(rs, c, p["brand_name"])
-                upd = {"li_checked_at": now_utc_str()}
-                if m:
-                    upd.update(linkedin=m["linkedin"], li_urn=m["urn_id"], li_degree=m["degree"], li_headline=m["headline"], li_verified=True)
-                    if m["degree"] == 1 and c.get("li_invited_at") and not c.get("li_accepted_at"):
-                        upd["li_accepted_at"] = now_utc_str()
-                await _set_contact(p["id"], c["name"], upd)
+                m = await apply_lookup(p, c, rs)
                 await _act(acc, "lookup", bool(m), prospect_id=p["id"], name=c["name"])
                 n += 1
             except Exception as e:

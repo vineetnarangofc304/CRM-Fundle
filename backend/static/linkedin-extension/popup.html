@@ -1,0 +1,12 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Fundle LinkedIn Agent</title>
+<style>body{width:340px;font:13px system-ui;margin:0;color:#0f172a}header{background:#0A66C2;color:#fff;padding:12px 14px;font-weight:700}main{padding:12px 14px}
+.row{display:flex;justify-content:space-between;margin:4px 0}.b{border:0;border-radius:999px;padding:7px 12px;font-weight:600;cursor:pointer}.p{background:#1A73E8;color:#fff}.s{background:#e2e8f0}
+#log div{font-size:11px;border-top:1px solid #f1f5f9;padding:4px 0}.bad{color:#be123c}.muted{color:#64748b;font-size:11px}</style></head>
+<body><header>Fundle CRM · LinkedIn Agent</header><main>
+<div id="status" class="muted">Checking…</div>
+<div id="counts"></div>
+<label class="row"><span>Agent running</span><input type="checkbox" id="enabled"></label>
+<div class="row"><button class="b p" id="run">Run one task now</button><button class="b s" id="opts">Settings</button></div>
+<p class="muted">Keep Chrome open and logged in to LinkedIn. Tasks run within your working hours and the Admin limits.</p>
+<div id="log"></div></main><script src="popup.js"></script></body></html>

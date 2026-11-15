@@ -1,0 +1,13 @@
+{
+  "manifest_version": 3,
+  "name": "Fundle CRM – LinkedIn Agent",
+  "version": "1.0.0",
+  "description": "Runs Fundle CRM LinkedIn tasks (find profiles, send invites, send messages) from your own logged-in LinkedIn, within your Admin limits.",
+  "permissions": ["storage", "alarms", "cookies"],
+  "host_permissions": ["https://www.linkedin.com/*", "https://*/*"],
+  "background": { "service_worker": "background.js" },
+  "action": { "default_popup": "popup.html", "default_title": "Fundle LinkedIn Agent" },
+  "options_page": "options.html",
+  "content_scripts": [{ "matches": ["https://www.linkedin.com/*"], "js": ["content.js"], "run_at": "document_idle" }],
+  "icons": { "128": "icon128.png" }
+}

@@ -95,11 +95,11 @@ function AgentTab({ d, load, admin }) {
           {admin && <button data-testid="lia-run" onClick={() => act(() => API.post("/linkedin-agent/run"))} className="crm-btn-secondary ml-auto !py-1 text-xs"><Play size={13} /> Run now</button>}</div>
         {d.accounts.map((a) => (
           <div key={a.id} className="flex flex-wrap items-center gap-2 border-t border-slate-100 py-2 text-xs" data-testid={`lia-account-${a.id}`}>
-            <LinkedinLogo size={16} weight="fill" className="text-[#0A66C2]" /><b>{a.name}</b>{a.me_name && <span className="text-slate-500">({a.me_name})</span>}
+            <LinkedinLogo size={16} weight="fill" className="text-[#0A66C2]" /><b>{a.name}</b>{a.type === "extension" && <span className="rounded-full bg-indigo-50 px-2 py-0.5 font-bold text-indigo-700">Chrome extension{a.last_seen ? ` · seen ${a.last_seen}` : " · not used yet"}</span>}{a.me_name && <span className="text-slate-500">({a.me_name})</span>}
             <span className={`rounded-full px-2 py-0.5 font-bold ${a.verified ? "bg-emerald-50 text-emerald-700" : "bg-rose-50 text-rose-700"}`}>{a.verified ? "Connected" : "Not connected"}</span>
             <span className="text-slate-500">Today: {a.today.lookup} lookups · {a.today.invite} invites · {a.today.message} messages</span>
             {a.last_error && <span className="w-full text-rose-600">{a.last_error}</span>}
-            {admin && <span className="ml-auto flex gap-2"><button data-testid={`lia-test-${a.id}`} onClick={() => act(async () => { const { data } = await API.post(`/linkedin-agent/accounts/${a.id}/test`, {}, { timeout: 60000 }); data.ok ? toast.success(`Connected as ${data.name}`) : toast.error(data.error); })} className="crm-btn-secondary !py-0.5 text-[11px]">Test</button>
+            {admin && <span className="ml-auto flex gap-2">{a.type !== "extension" && <button data-testid={`lia-test-${a.id}`} onClick={() => act(async () => { const { data } = await API.post(`/linkedin-agent/accounts/${a.id}/test`, {}, { timeout: 60000 }); data.ok ? toast.success(`Connected as ${data.name}`) : toast.error(data.error); })} className="crm-btn-secondary !py-0.5 text-[11px]">Test</button>}
               <button data-testid={`lia-toggle-${a.id}`} onClick={() => act(() => API.put(`/linkedin-agent/accounts/${a.id}`, { active: !a.active }))} className="crm-btn-secondary !py-0.5 text-[11px]">{a.active ? "Pause" : "Resume"}</button>
               <button data-testid={`lia-delete-${a.id}`} onClick={() => window.confirm("Remove this LinkedIn account?") && act(() => API.delete(`/linkedin-agent/accounts/${a.id}`))} className="text-rose-600"><Trash size={14} /></button></span>}
           </div>))}
@@ -107,6 +107,45 @@ function AgentTab({ d, load, admin }) {
       </div>
       {admin && <AddAccount done={load} />}
       {admin && <SettingsBox s={d.settings} done={load} />}
+    </div>
+  );
+}
+
+function ExtensionTab() {
+  const [name, setName] = useState("");
+  const [key, setKey] = useState(null);
+  const make = async () => { try { const { data } = await API.post("/linkedin-agent/ext/token", { name }); setKey(data); } catch (e) { toast.error(apiErr(e)); } };
+  const dl = async () => {
+    try {
+      const r = await API.get("/linkedin-agent/extension.zip", { responseType: "blob" });
+      const a = document.createElement("a"); a.href = URL.createObjectURL(r.data); a.download = "fundle-linkedin-extension.zip"; a.click();
+    } catch (e) { toast.error(apiErr(e)); }
+  };
+  const steps = [
+    <>Press <b>Download extension</b> below and unzip it. You'll get a folder called <b>fundle-linkedin</b>.</>,
+    <>In Chrome, open <b>chrome://extensions</b>, turn on <b>Developer mode</b> (top right) and click <b>Load unpacked</b>. Pick the <b>fundle-linkedin</b> folder.</>,
+    <>Pin it: click the puzzle icon in Chrome's toolbar, then the pin next to <b>Fundle CRM – LinkedIn Agent</b>.</>,
+    <>Type your name below and press <b>Create key</b>. Copy the key; it's shown only once.</>,
+    <>Click the extension → <b>Settings</b>. Paste the CRM address <b>{window.location.origin}</b> and the key, set working hours and days, then press <b>Save & test connection</b>.</>,
+    <>Make sure you're logged in to <b>linkedin.com</b> in the same Chrome. Open the extension and switch <b>Agent running</b> on.</>,
+    <>Keep Chrome open. Every minute it takes one task from the CRM (find a profile, send an invite or send a message), within the limits on the <b>Agent & accounts</b> tab.</>,
+    <>On LinkedIn, a blue <b>Save to Fundle</b> button appears on people-search pages and profiles. It saves those people straight into the CRM.</>,
+  ];
+  return (
+    <div className="space-y-4" data-testid="lia-ext">
+      <div className="crm-card p-4">
+        <b className="text-sm">Install the Fundle LinkedIn Chrome extension</b>
+        <ol className="mt-2 list-decimal space-y-1.5 pl-5 text-sm text-slate-700">{steps.map((s, i) => <li key={i}>{s}</li>)}</ol>
+        <button data-testid="lia-ext-download" onClick={dl} className="crm-btn-primary mt-3 !py-1.5 text-xs"><FloppyDisk size={14} /> Download extension</button>
+      </div>
+      <div className="crm-card space-y-2 p-4">
+        <b className="text-sm">Create an extension key</b>
+        <div className="flex gap-2"><input data-testid="lia-ext-name" className="crm-input text-sm" placeholder="Whose Chrome is this? e.g. Hardik" value={name} onChange={(e) => setName(e.target.value)} />
+          <button data-testid="lia-ext-create" onClick={make} className="crm-btn-primary !py-1.5 text-xs">Create key</button></div>
+        {key && <div className="rounded-lg bg-amber-50 p-3 text-xs" data-testid="lia-ext-key">Key for <b>{key.name}</b> (copy it now; it's shown only once):<div className="mt-1 flex gap-2"><code className="break-all rounded bg-white px-2 py-1">{key.token}</code>
+          <button onClick={() => navigator.clipboard.writeText(key.token).then(() => toast.success("Copied"))} className="crm-btn-secondary !py-0.5 text-[11px]">Copy</button></div></div>}
+        <p className="text-[11px] text-slate-500">Each key appears as an account on the Agent & accounts tab. Pause or delete it there to cut that browser off.</p>
+      </div>
     </div>
   );
 }
@@ -121,8 +160,8 @@ export default function LinkedInAgent() {
     <div className="space-y-4 p-6" data-testid="linkedin-agent-page">
       <div><h1 className="flex items-center gap-2 font-display text-2xl font-extrabold text-slate-900"><LinkedinLogo size={26} weight="fill" className="text-[#0A66C2]" /> LinkedIn Prospecting</h1>
         <p className="text-sm text-slate-500">Direct from our CRM through your connected LinkedIn accounts. The agent runs every 15 minutes within the daily limits below.</p></div>
-      <div className="flex gap-2">{[["search", "Search & save"], ["agent", "Agent & accounts"]].map(([k, l]) => <button key={k} data-testid={`lia-tab-${k}`} onClick={() => setTab(k)} className={`rounded-full px-3 py-1.5 text-xs font-bold ${tab === k ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-600"}`}>{l}</button>)}</div>
-      {!d ? <p className="text-sm text-slate-400">Loading…</p> : tab === "search" ? <SearchTab regions={d.regions} /> : <AgentTab d={d} load={load} admin={user?.role === "admin"} />}
+      <div className="flex gap-2">{[["search", "Search & save"], ["agent", "Agent & accounts"], ["ext", "Chrome extension"]].map(([k, l]) => <button key={k} data-testid={`lia-tab-${k}`} onClick={() => setTab(k)} className={`rounded-full px-3 py-1.5 text-xs font-bold ${tab === k ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-600"}`}>{l}</button>)}</div>
+      {!d ? <p className="text-sm text-slate-400">Loading…</p> : tab === "search" ? <SearchTab regions={d.regions} /> : tab === "ext" ? <ExtensionTab /> : <AgentTab d={d} load={load} admin={user?.role === "admin"} />}
     </div>
   );
 }
