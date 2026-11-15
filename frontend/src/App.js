@@ -27,6 +27,7 @@ import Prospecting from "./pages/Prospecting";
 import ProspectDetail from "./pages/ProspectDetail";
 import Outreach from "./pages/Outreach";
 import LinkedInContacts from "./pages/LinkedInContacts";
+import LinkedInAgent from "./pages/LinkedInAgent";
 
 // Code-split the Dashboard (it pulls in recharts). Callers now land on Leads, so this
 // heavy chunk is no longer parsed on the initial app load for everyone.
@@ -134,6 +135,7 @@ function App() {
           <Route path="/marketing" element={<Guard perm="marketing"><Marketing /></Guard>} />
           <Route path="/prospecting" element={<Guard perm="leads"><Prospecting /></Guard>} />
           <Route path="/prospecting/:id" element={<Guard perm="leads"><ProspectDetail /></Guard>} />
+          <Route path="/linkedin-agent" element={<Guard perm="leads"><LinkedInAgent /></Guard>} />
           <Route path="/linkedin-contacts" element={<Guard perm="leads"><LinkedInContacts /></Guard>} />
           <Route path="/outreach" element={<Guard perm="leads"><Outreach /></Guard>} />
           <Route path="/admin" element={<Guard perm="admin"><Admin /></Guard>} />

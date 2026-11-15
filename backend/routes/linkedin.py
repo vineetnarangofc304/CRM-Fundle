@@ -128,7 +128,7 @@ async def save_settings(b: Settings, user: dict = Depends(require_roles("admin")
 @router.get("/lead/{lead_id}/contacts")
 async def lead_contacts(lead_id: int, user: dict = Depends(STAFF)):
     p = await db.prospects.find_one({"lead_id": lead_id}, {"_id": 0, "contacts": 1, "li_lookup_at": 1, "brand_name": 1})
-    cs = [{k: c.get(k) for k in ("name", "role", "linkedin", "email", "uploaded")} for c in (p or {}).get("contacts") or []]
+    cs = [{k: c.get(k) for k in ("name", "role", "linkedin", "email", "uploaded", "li_verified", "li_degree")} for c in (p or {}).get("contacts") or []]
     return {"contacts": cs, "searched": bool((p or {}).get("li_lookup_at")), "brand": (p or {}).get("brand_name")}
 
 
@@ -161,7 +161,7 @@ async def report(q: Optional[str] = None, status: str = "all", source: str = "al
     r = (await db.prospects.aggregate(pipe, allowDiskUse=True).to_list(1))[0]
     items = [{"prospect_id": x["id"], "brand": x["brand_name"], "store_count": x.get("store_count"), "category": x.get("category"),
               "lead_id": x.get("lead_id"), "country": x.get("country"),
-              **{k: x["contacts"].get(k) for k in ("name", "role", "email", "linkedin", "uploaded", "li_sent_at", "li_sent_by")}}
+              **{k: x["contacts"].get(k) for k in ("name", "role", "email", "linkedin", "uploaded", "li_verified", "li_degree", "li_invited_at", "li_sent_at", "li_sent_by")}}
              for x in r["items"]]
     tpl = await db.settings.find_one({"key": "li_report_msg"}, {"_id": 0})
     return {"items": items, "total": (r["total"] or [{"n": 0}])[0]["n"], "page": page, "limit": limit,

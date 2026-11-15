@@ -6,6 +6,6 @@ export const liSearch = (name, brand) =>
 // Sheet-uploaded profiles open directly; AI-guessed ones (often wrong) open a LinkedIn people search instead.
 export const liLink = (c, brand) => {
   const s = slug(c?.linkedin);
-  if (s && (c.uploaded || c.verified)) return { href: `https://www.linkedin.com/in/${s}/`, direct: true };
+  if (s && (c.uploaded || c.verified || c.li_verified)) return { href: `https://www.linkedin.com/in/${s}/`, direct: true };
   return c?.name ? { href: liSearch(c.name, brand), direct: false } : null;
 };

@@ -20,3 +20,10 @@ crons:
     endpoint: "{{BASE_URL}}/api/cron/prospecting-watchdog"
     method: POST
     enabled: true
+  - name: linkedin-agent
+    description: "LinkedIn Agent every 15 min: finds contacts' LinkedIn profiles, sends invites and messages within Admin daily limits"
+    cron: "*/15 * * * *"
+    # Cron endpoints must ack 2xx immediately; enqueue/background the actual work.
+    endpoint: "{{BASE_URL}}/api/cron/linkedin"
+    method: POST
+    enabled: true

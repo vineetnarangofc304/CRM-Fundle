@@ -18,6 +18,7 @@ const NAV = [
   { to: "/dashboard", label: "Dashboard", icon: SquaresFour, testid: "nav-dashboard", perm: "dashboard" },
   { to: "/leads", label: "Leads", icon: UsersThree, testid: "nav-leads", perm: "leads" },
   { to: "/prospecting", label: "AI Prospecting", icon: Binoculars, testid: "nav-prospecting", perm: "leads", roles: ["admin", "manager"] },
+  { to: "/linkedin-agent", label: "LinkedIn Prospecting", icon: LinkedinLogo, testid: "nav-linkedin-agent", perm: "leads", roles: ["admin", "manager"] },
   { to: "/linkedin-contacts", label: "LinkedIn Contacts", icon: LinkedinLogo, testid: "nav-linkedin-contacts", perm: "leads", roles: ["admin", "manager"] },
   { to: "/outreach", label: "Outreach", icon: PaperPlaneTilt, testid: "nav-outreach", perm: "leads", roles: ["admin", "manager"] },
   { to: "/followups", label: "Follow-ups", icon: ClockCountdown, testid: "nav-followups", perm: "followups" },

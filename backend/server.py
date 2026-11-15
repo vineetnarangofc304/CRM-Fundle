@@ -21,6 +21,7 @@ from core.db import db, db_analytics, TRANSIENT_DB_ERRORS
 from core.security import hash_password, verify_password, get_jwt_secret
 from core.utils import now_utc_str, to_ist_str, ensure_catalog
 from routes import admin as admin_routes
+from routes import li_agent as li_agent_routes
 from routes import auth as auth_routes
 from routes import calls as call_routes
 from routes import facebook as facebook_routes
@@ -191,6 +192,7 @@ from fastapi import APIRouter
 
 api = APIRouter(prefix="/api")
 api.include_router(auth_routes.router)
+api.include_router(li_agent_routes.router)
 api.include_router(user_routes.router)
 api.include_router(lead_routes.router)
 api.include_router(chatter_routes.router)
