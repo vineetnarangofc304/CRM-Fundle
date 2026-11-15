@@ -52,6 +52,17 @@ async function liMessage(urn, text) {
   if (r.status !== 201 && !r.ok) throw new Error(`Message failed (${r.status})`);
 }
 
+async function liConnections(start) {
+  const r = await liFetch(`/relationships/dash/connections?decorationId=com.linkedin.voyager.dash.deco.web.mynetwork.ConnectionListWithProfile-16&count=40&q=search&sortType=RECENTLY_ADDED&start=${start}`);
+  if (!r.ok) throw new Error(`Connections list failed (${r.status})`);
+  const d = await r.json();
+  const profs = [...(d.included || []).filter((x) => x.firstName && (x.entityUrn || "").includes("fsd_profile")),
+    ...((d.elements || d.data?.elements || []).map((e) => e.connectedMemberResolutionResult).filter((x) => x && x.firstName))];
+  const seen = new Set();
+  return profs.filter((p) => { const u = p.entityUrn.split(":").pop(); if (seen.has(u)) return false; seen.add(u); return true; })
+    .map((p) => { const u = p.entityUrn.split(":").pop(); return { name: `${p.firstName} ${p.lastName || ""}`.trim(), urn_id: u, headline: p.headline || "", degree: 1, linkedin: `https://www.linkedin.com/in/${p.publicIdentifier || u}/` }; });
+}
+
 async function liProfile(slug) {
   const r = await liFetch(`/identity/profiles/${encodeURIComponent(slug)}/profileView`);
   if (!r.ok) throw new Error(`Profile read failed (${r.status})`);

@@ -82,6 +82,21 @@ chrome.runtime.onMessage.addListener((m, _s, reply) => {
         await log(`Saved search page: ${d.saved} new, ${d.updated} updated, ${d.skipped} skipped`);
         return reply({ ok: true, ...d, found: people.length });
       }
+      if (m.type === "importConnections") {
+        let tot = { pulled: 0, saved: 0, updated: 0, skipped: 0 };
+        for (let start = 0; start < 3000; start += 40) {
+          const people = await liConnections(start);
+          if (!people.length) break;
+          const d = await crm("/ext/save", { method: "POST", body: JSON.stringify({ people }) });
+          tot = { pulled: tot.pulled + people.length, saved: tot.saved + d.saved, updated: tot.updated + d.updated, skipped: tot.skipped + d.skipped };
+          await chrome.storage.local.set({ importStatus: `Importing… ${tot.pulled} pulled, ${tot.saved} new` });
+          await new Promise((ok) => setTimeout(ok, 4000 + Math.random() * 5000));
+        }
+        const line = `Imported connections: ${tot.pulled} pulled · ${tot.saved} new · ${tot.updated} updated · ${tot.skipped} skipped (no company in headline)`;
+        await chrome.storage.local.set({ importStatus: line });
+        await log(line);
+        return reply({ ok: true, ...tot });
+      }
       if (m.type === "saveProfile") {
         const p = await liProfile(m.slug);
         const d = await crm("/ext/save", { method: "POST", body: JSON.stringify({ people: [{ ...p, linkedin: `https://www.linkedin.com/in/${m.slug}/` }] }) });

@@ -40,6 +40,7 @@ async def overview(user: dict = Depends(STAFF)):
     accs = await db.li_accounts.find({"is_deleted": {"$ne": True}}, SAFE).sort("id", 1).to_list(50)
     for a in accs:
         a["today"] = {k: await la.used_today(a["id"], k) for k in ("lookup", "invite", "message", "search")}
+        a["import"] = await db.settings.find_one({"key": f"li_import_{a['id']}"}, {"_id": 0, "key": 0})
     cnt = lambda m: db.prospects.aggregate([{"$unwind": "$contacts"}, {"$match": m}, {"$count": "n"}]).to_list(1)  # noqa: E731
     totals = {}
     for k, m in {"contacts": {"contacts.name": {"$nin": [None, ""]}}, "checked": {"contacts.li_checked_at": {"$exists": True}},
@@ -59,6 +60,15 @@ async def add_account(b: Account, user: dict = Depends(ADMIN)):
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     return {**{k: v for k, v in doc.items() if k not in SAFE}, "test": await la.test(doc)}
+
+
+@router.post("/linkedin-agent/accounts/{aid}/import-connections")
+async def import_conns(aid: int, user: dict = Depends(STAFF)):
+    a = await db.li_accounts.find_one({"id": aid, "is_deleted": {"$ne": True}, "type": {"$ne": "extension"}}, {"_id": 0})
+    if not a or not a.get("verified"):
+        raise HTTPException(status_code=400, detail="This account isn't connected — reconnect it (or use the Chrome extension's Import button)")
+    _spawn(la.import_connections(a))
+    return {"ok": True, "queued": True}
 
 
 @router.post("/linkedin-agent/accounts/{aid}/test")

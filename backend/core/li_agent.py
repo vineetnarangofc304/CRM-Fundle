@@ -253,6 +253,55 @@ async def run(trigger="cron") -> dict:
     return stats
 
 
+def parse_connections(d: dict) -> list:
+    """Profiles from LinkedIn's connections list (normalized 'included' or nested elements)."""
+    profs = [x for x in d.get("included") or [] if x.get("firstName") and "fsd_profile" in (x.get("entityUrn") or "")]
+    for el in d.get("elements") or []:
+        p = el.get("connectedMemberResolutionResult") or {}
+        if p.get("firstName"):
+            profs.append(p)
+    out, seen = [], set()
+    for p in profs:
+        urn = (p.get("entityUrn") or "").split(":")[-1]
+        if urn and urn not in seen:
+            seen.add(urn)
+            slug = p.get("publicIdentifier")
+            out.append({"name": f"{p.get('firstName', '')} {p.get('lastName', '')}".strip(), "urn_id": urn, "headline": p.get("headline") or "",
+                        "degree": 1, "linkedin": f"https://www.linkedin.com/in/{slug or urn}/"})
+    return out
+
+
+CONN_PATH = ("/relationships/dash/connections?decorationId=com.linkedin.voyager.dash.deco.web.mynetwork.ConnectionListWithProfile-16"
+             "&count=40&q=search&sortType=RECENTLY_ADDED&start={start}")
+
+
+async def import_connections(acc: dict, max_n: int = 3000) -> dict:
+    """Pull this account's 1st-degree connections into the CRM (brand from their headline)."""
+    st = {"pulled": 0, "saved": 0, "updated": 0, "brands_added": 0, "skipped": 0, "status": "running", "at": now_utc_str()}
+    key = {"key": f"li_import_{acc['id']}"}
+    try:
+        cl = await client(acc)
+        for start in range(0, max_n, 40):
+            r = await asyncio.to_thread(cl._fetch, CONN_PATH.format(start=start), headers={"accept": "application/vnd.linkedin.normalized+json+2.1"})
+            if r.status_code != 200:
+                raise ValueError(f"LinkedIn returned {r.status_code} for the connections list")
+            people = parse_connections(r.json())
+            if not people:
+                break
+            s = await save_people(people, {"name": acc["name"]})
+            st["pulled"] += len(people)
+            for k in ("saved", "updated", "brands_added", "skipped"):
+                st[k] += s[k]
+            await db.settings.update_one(key, {"$set": st}, upsert=True)
+            await asyncio.sleep(random.uniform(4, 9))
+        st["status"] = "done"
+    except Exception as e:
+        st.update(status="failed", error=str(e)[:200])
+        await _fail(acc, e)
+    await db.settings.update_one(key, {"$set": {**st, "finished_at": now_utc_str()}}, upsert=True)
+    return st
+
+
 async def save_people(people: list, user: dict) -> dict:
     """Search results → brands + contacts in the CRM (brand from 'Title at Company' or the given company)."""
     from core import brain_data as bd
@@ -288,6 +337,10 @@ async def add_account(data: dict, user: dict) -> dict:
     from core.outlook_send import enc
     li_at = (data.get("li_at") or "").strip().strip('"')
     js = (data.get("jsessionid") or "").strip()
+    em = (data.get("email") or "").strip()
+    if not li_at and em and "@" not in em and len(em) > 80:  # cookie pasted into the email box
+        li_at, em, data["password"] = em, "", None
+    data["email"] = em
     if js and not js.startswith('"'):
         js = f'"{js}"'
     if not li_at and not (data.get("email") and data.get("password")):
