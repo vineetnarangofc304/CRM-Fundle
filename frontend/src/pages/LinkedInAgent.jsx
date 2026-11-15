@@ -3,6 +3,8 @@ import { toast } from "sonner";
 import { LinkedinLogo, MagnifyingGlass, FloppyDisk, Plugs, Trash, Play } from "@phosphor-icons/react";
 import { API, apiErr } from "../lib/api";
 import { useAuth } from "../context/AuthContext";
+import { Link } from "react-router-dom";
+import { ContactsReport } from "./LinkedInContacts";
 
 const DEG = { 1: "1st", 2: "2nd", 3: "3rd" };
 
@@ -18,7 +20,7 @@ function SearchTab({ regions }) {
   };
   const save = async () => {
     const people = rs.items.filter((r) => sel[r.urn_id]).map((r) => ({ ...r, company: f.company || undefined, country: f.regions.length === 1 ? f.regions[0] : undefined }));
-    try { const { data } = await API.post("/linkedin-agent/save", { people }); toast.success(`Saved ${data.saved} new · updated ${data.updated} · ${data.brands_added} new brands${data.skipped ? ` · ${data.skipped} skipped (no company)` : ""}`); run(f.page); } catch (e) { toast.error(apiErr(e)); }
+    try { const { data } = await API.post("/linkedin-agent/save", { people }); toast.success(`Saved ${data.saved} new · updated ${data.updated} · ${data.brands_enriched} existing brands enriched · ${data.brands_added} new brands${data.skipped ? ` · ${data.skipped} skipped (no company)` : ""}`); run(f.page); } catch (e) { toast.error(apiErr(e)); }
   };
   const tog = (arr, v) => (arr.includes(v) ? arr.filter((x) => x !== v) : [...arr, v]);
   return (
@@ -89,7 +91,10 @@ function AgentTab({ d, load, admin }) {
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-2 gap-3 md:grid-cols-7" data-testid="lia-stats">{[["contacts", "Contacts"], ["checked", "Checked"], ["found", "Profiles found"], ["first_degree", "1st-degree"], ["invited", "Invited"], ["accepted", "Accepted"], ["messaged", "Messaged"]].map(([k, l]) =>
-        <div key={k} className="crm-card p-3"><div className="text-[11px] text-slate-500">{l}</div><div className="font-display text-xl font-extrabold" data-testid={`lia-stat-${k}`}>{(t[k] || 0).toLocaleString("en-IN")}</div></div>)}</div>
+        <Link key={k} to={`/linkedin-contacts?status=all${k === "contacts" ? "" : `&filter=${k}`}`} className="crm-card p-3 transition-colors hover:bg-blue-50" data-testid={`lia-stat-link-${k}`}><div className="text-[11px] text-slate-500">{l}</div><div className="font-display text-xl font-extrabold text-[#1557B0]" data-testid={`lia-stat-${k}`}>{(t[k] || 0).toLocaleString("en-IN")}</div></Link>)}</div>
+      <div className="grid gap-3 md:grid-cols-3" data-testid="lia-sources">{[["li_server", "Imported from LinkedIn (server)"], ["li_ext", "Added by Chrome extension"], ["li_search", "Saved from CRM search"]].map(([k, l]) =>
+        <Link key={k} to={`/linkedin-contacts?status=all&source=${k}`} className="crm-card p-3 transition-colors hover:bg-indigo-50" data-testid={`lia-src-link-${k}`}><div className="text-[11px] text-slate-500">{l}</div>
+          <div className="font-display text-xl font-extrabold text-indigo-700">{(t[k] || 0).toLocaleString("en-IN")} <span className="text-xs font-semibold text-slate-500">contacts · {(t[`${k}_brands`] || 0).toLocaleString("en-IN")} brands enriched/added</span></div></Link>)}</div>
       <div className="crm-card p-4" data-testid="lia-accounts">
         <div className="mb-2 flex items-center"><b className="text-sm">LinkedIn accounts</b><span className="ml-2 text-[11px] text-slate-400">Last run {d.last?.at || "—"} {d.last?.stats ? JSON.stringify(d.last.stats).replace(/[{}"]/g, " ") : ""}</span>
           {admin && <button data-testid="lia-run" onClick={() => act(() => API.post("/linkedin-agent/run"))} className="crm-btn-secondary ml-auto !py-1 text-xs"><Play size={13} /> Run now</button>}</div>
@@ -98,7 +103,7 @@ function AgentTab({ d, load, admin }) {
             <LinkedinLogo size={16} weight="fill" className="text-[#0A66C2]" /><b>{a.name}</b>{a.type === "extension" && <span className="rounded-full bg-indigo-50 px-2 py-0.5 font-bold text-indigo-700">Chrome extension{a.last_seen ? ` · seen ${a.last_seen}` : " · not used yet"}</span>}{a.me_name && <span className="text-slate-500">({a.me_name})</span>}
             <span className={`rounded-full px-2 py-0.5 font-bold ${a.verified ? "bg-emerald-50 text-emerald-700" : "bg-rose-50 text-rose-700"}`}>{a.verified ? "Connected" : "Not connected"}</span>
             <span className="text-slate-500">Today: {a.today.lookup} lookups · {a.today.invite} invites · {a.today.message} messages</span>
-            {a.import && <span className="w-full text-slate-600" data-testid={`lia-import-status-${a.id}`}>Connections import: {a.import.status} · {a.import.pulled} pulled · {a.import.saved} new · {a.import.updated} updated · {a.import.brands_added} new brands · {a.import.skipped} skipped (no company in headline){a.import.error ? ` · ${a.import.error}` : ""}</span>}
+            {a.import && <span className="w-full text-slate-600" data-testid={`lia-import-status-${a.id}`}>Connections import: {a.import.status} · {a.import.pulled} pulled · {a.import.saved} new · {a.import.updated} updated · {a.import.brands_enriched || 0} existing brands enriched · {a.import.brands_added} new brands · {a.import.skipped} skipped (no company in headline){a.import.error ? ` · ${a.import.error}` : ""}</span>}
             {a.last_error && <span className="w-full text-rose-600">{a.last_error === "CHALLENGE" ? "LinkedIn asked this server login for a security check (CHALLENGE). Delete it and reconnect with the li_at cookie, or use the Chrome extension (most reliable)." : a.last_error}</span>}
             {admin && <span className="ml-auto flex gap-2">{a.type !== "extension" && a.verified && <button data-testid={`lia-import-${a.id}`} onClick={() => act(async () => { await API.post(`/linkedin-agent/accounts/${a.id}/import-connections`); toast.success("Importing your 1st-degree connections — refresh in a minute"); })} className="crm-btn-primary !py-0.5 text-[11px]">Import my connections</button>}{a.type !== "extension" && <button data-testid={`lia-test-${a.id}`} onClick={() => act(async () => { const { data } = await API.post(`/linkedin-agent/accounts/${a.id}/test`, {}, { timeout: 60000 }); data.ok ? toast.success(`Connected as ${data.name}`) : toast.error(data.error); })} className="crm-btn-secondary !py-0.5 text-[11px]">Test</button>}
               <button data-testid={`lia-toggle-${a.id}`} onClick={() => act(() => API.put(`/linkedin-agent/accounts/${a.id}`, { active: !a.active }))} className="crm-btn-secondary !py-0.5 text-[11px]">{a.active ? "Pause" : "Resume"}</button>
@@ -161,8 +166,8 @@ export default function LinkedInAgent() {
     <div className="space-y-4 p-6" data-testid="linkedin-agent-page">
       <div><h1 className="flex items-center gap-2 font-display text-2xl font-extrabold text-slate-900"><LinkedinLogo size={26} weight="fill" className="text-[#0A66C2]" /> LinkedIn Prospecting</h1>
         <p className="text-sm text-slate-500">Direct from our CRM through your connected LinkedIn accounts. The agent runs every 15 minutes within the daily limits below.</p></div>
-      <div className="flex gap-2">{[["search", "Search & save"], ["agent", "Agent & accounts"], ["ext", "Chrome extension"]].map(([k, l]) => <button key={k} data-testid={`lia-tab-${k}`} onClick={() => setTab(k)} className={`rounded-full px-3 py-1.5 text-xs font-bold ${tab === k ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-600"}`}>{l}</button>)}</div>
-      {!d ? <p className="text-sm text-slate-400">Loading…</p> : tab === "search" ? <SearchTab regions={d.regions} /> : tab === "ext" ? <ExtensionTab /> : <AgentTab d={d} load={load} admin={user?.role === "admin"} />}
+      <div className="flex gap-2">{[["search", "Search & save"], ["report", "LinkedIn contacts report"], ["agent", "Agent & accounts"], ["ext", "Chrome extension"]].map(([k, l]) => <button key={k} data-testid={`lia-tab-${k}`} onClick={() => setTab(k)} className={`rounded-full px-3 py-1.5 text-xs font-bold ${tab === k ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-600"}`}>{l}</button>)}</div>
+      {!d ? <p className="text-sm text-slate-400">Loading…</p> : tab === "search" ? <SearchTab regions={d.regions} /> : tab === "report" ? <ContactsReport embedded initial={{ source: "any_li", status: "all" }} /> : tab === "ext" ? <ExtensionTab /> : <AgentTab d={d} load={load} admin={user?.role === "admin"} />}
     </div>
   );
 }

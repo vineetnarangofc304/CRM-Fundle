@@ -288,10 +288,10 @@ async def import_connections(acc: dict, max_n: int = 3000) -> dict:
             people = parse_connections(r.json())
             if not people:
                 break
-            s = await save_people(people, {"name": acc["name"]})
+            s = await save_people(people, {"name": acc["name"]}, "li_server")
             st["pulled"] += len(people)
-            for k in ("saved", "updated", "brands_added", "skipped"):
-                st[k] += s[k]
+            for k in ("saved", "updated", "brands_added", "brands_enriched", "skipped"):
+                st[k] = st.get(k, 0) + s[k]
             await db.settings.update_one(key, {"$set": st}, upsert=True)
             await asyncio.sleep(random.uniform(4, 9))
         st["status"] = "done"
@@ -302,11 +302,15 @@ async def import_connections(acc: dict, max_n: int = 3000) -> dict:
     return st
 
 
-async def save_people(people: list, user: dict) -> dict:
-    """Search results → brands + contacts in the CRM (brand from 'Title at Company' or the given company)."""
+SOURCES = {"li_server": "LinkedIn import (server)", "li_ext": "Chrome extension", "li_search": "LinkedIn search (CRM)"}
+
+
+async def save_people(people: list, user: dict, source: str = "li_search") -> dict:
+    """Search results / connections → brands + contacts in the CRM (brand from 'Title at Company' or the given company).
+    Existing brands are enriched in place: same person → LinkedIn data added; new person → added as a contact."""
     from core import brain_data as bd
     from core import prospector as pe
-    st = {"saved": 0, "brands_added": 0, "updated": 0, "skipped": 0}
+    st = {"saved": 0, "brands_added": 0, "brands_enriched": 0, "updated": 0, "skipped": 0}
     for x in people:
         brand = (x.get("company") or "").strip() or (re.split(r"\s+(?:at|@)\s+", x.get("headline") or "", maxsplit=1)[1:] or [""])[0].split("|")[0].strip()
         if not brand or not x.get("name"):
@@ -314,18 +318,22 @@ async def save_people(people: list, user: dict) -> dict:
             continue
         p = await db.prospects.find_one({"brand_key": pe.brand_key(brand)}, {"_id": 0})
         if not p:
-            p, _ = await bd._new_prospect(brand, x.get("country") or "India", "LinkedIn search", None, None, priority=0)
+            p, _ = await bd._new_prospect(brand, x.get("country") or "India", "LinkedIn", None, None, priority=0)
             st["brands_added"] += 1
+        else:
+            st["brands_enriched"] += 1
         cs = p.get("contacts") or []
         c = next((c for c in cs if c.get("name", "").lower() == x["name"].lower()), None)
         li = {"linkedin": x.get("linkedin"), "li_urn": x.get("urn_id"), "li_degree": x.get("degree"), "li_headline": x.get("headline"),
               "li_verified": True, "li_checked_at": now_utc_str()}
         if c:
             c.update({k: v for k, v in li.items() if v is not None})
+            c.setdefault("li_source", source)
+            c.setdefault("li_source_by", user.get("name"))
             st["updated"] += 1
         else:
             cs.append({"name": x["name"], "role": (re.split(r"\s+(?:at|@)\s+", x.get("headline") or "")[0])[:80], "email": None, **li,
-                       "evidence_url": "LinkedIn search"})
+                       "li_source": source, "li_source_by": user.get("name"), "li_added_at": now_utc_str(), "evidence_url": SOURCES.get(source)})
             st["saved"] += 1
         await db.prospects.update_one({"id": p["id"]}, {"$set": {"contacts": cs, "contacts_status": "done"}})
         if p.get("lead_id"):

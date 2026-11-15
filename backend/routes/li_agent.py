@@ -37,6 +37,11 @@ class Account(BaseModel):
 
 @router.get("/linkedin-agent/overview")
 async def overview(user: dict = Depends(STAFF)):
+    if not await db.settings.find_one({"key": "li_source_v1"}):  # contacts saved before sources were tracked
+        for deg, src in ((1, "li_ext"), (None, "li_search")):
+            m = {"c.evidence_url": "LinkedIn search", "c.li_source": {"$exists": False}, **({"c.li_degree": 1} if deg else {})}
+            await db.prospects.update_many({"contacts.evidence_url": "LinkedIn search"}, {"$set": {"contacts.$[c].li_source": src}}, array_filters=[m])
+        await db.settings.insert_one({"key": "li_source_v1", "at": now_utc_str()})
     accs = await db.li_accounts.find({"is_deleted": {"$ne": True}}, SAFE).sort("id", 1).to_list(50)
     for a in accs:
         a["today"] = {k: await la.used_today(a["id"], k) for k in ("lookup", "invite", "message", "search")}
@@ -49,6 +54,11 @@ async def overview(user: dict = Depends(STAFF)):
                  "messaged": {"contacts.li_msg_at": {"$exists": True}}}.items():
         r = await cnt(m)
         totals[k] = r[0]["n"] if r else 0
+    for k in la.SOURCES:
+        r = await cnt({"contacts.li_source": k})
+        totals[k] = r[0]["n"] if r else 0
+        r = await db.prospects.count_documents({"contacts.li_source": k})
+        totals[f"{k}_brands"] = r
     return {"accounts": accs, "settings": await la.get_settings(), "totals": totals, "regions": list(la.REGIONS),
             "last": (await db.settings.find_one({"key": "li_agent_last"}, {"_id": 0})) or {}}
 
@@ -244,4 +254,4 @@ async def ext_result(b: ExtResult, acc: dict = Depends(ext_acc)):
 
 @router.post("/ext/save")
 async def ext_save(b: Save, acc: dict = Depends(ext_acc)):
-    return await la.save_people([p.model_dump() for p in b.people], {"name": acc["name"]})
+    return await la.save_people([p.model_dump() for p in b.people], {"name": acc["name"]}, "li_ext")

@@ -92,7 +92,7 @@ chrome.runtime.onMessage.addListener((m, _s, reply) => {
           await chrome.storage.local.set({ importStatus: `Importing… ${tot.pulled} pulled, ${tot.saved} new` });
           await new Promise((ok) => setTimeout(ok, 4000 + Math.random() * 5000));
         }
-        const line = `Imported connections: ${tot.pulled} pulled · ${tot.saved} new · ${tot.updated} updated · ${tot.skipped} skipped (no company in headline)`;
+        const line = `Imported connections: ${tot.pulled} pulled · ${tot.saved} new · ${tot.updated} updated · ${tot.skipped} skipped (no company in headline). See CRM → LinkedIn Prospecting → LinkedIn contacts report`;
         await chrome.storage.local.set({ importStatus: line });
         await log(line);
         return reply({ ok: true, ...tot });
