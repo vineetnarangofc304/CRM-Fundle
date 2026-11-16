@@ -47,8 +47,41 @@ async function doTask(t) {
   return res;
 }
 
+let importing = false;
+// Pulls all 1st-degree connections, 40 per page; progress is saved so it resumes by itself if Chrome stops the worker.
+async function importLoop() {
+  if (importing) return { skipped: "already importing" };
+  importing = true;
+  let { importNext: start = 0, importTot: tot = { pulled: 0, saved: 0, updated: 0, skipped: 0 } } = await chrome.storage.local.get(["importNext", "importTot"]);
+  const report = (status, error) => crm("/ext/import_status", { method: "POST", body: JSON.stringify({ ...tot, status, error }) }).catch(() => {});
+  try {
+    for (; start < 40000; start += 40) {
+      const people = await liConnections(start);
+      if (!people.length) break;
+      const d = await crm("/ext/save", { method: "POST", body: JSON.stringify({ people }) });
+      tot = { pulled: tot.pulled + people.length, saved: tot.saved + d.saved, updated: tot.updated + d.updated, skipped: tot.skipped + d.skipped };
+      await chrome.storage.local.set({ importNext: start + 40, importTot: tot, importStatus: `Importing… ${tot.pulled} pulled, ${tot.saved} new (continues by itself)` });
+      if ((start / 40) % 5 === 0) await report("running");
+      await new Promise((ok) => setTimeout(ok, 4000 + Math.random() * 5000));
+    }
+    const line = `Imported connections: ${tot.pulled} pulled · ${tot.saved} new · ${tot.updated} updated · ${tot.skipped} without a company in their headline (kept in the CRM's connection list)`;
+    await chrome.storage.local.set({ importOn: false, importStatus: line });
+    await report("done");
+    await log(line);
+    return { ok: true, ...tot };
+  } catch (e) {
+    const msg = String(e.message || e);
+    await chrome.storage.local.set({ importStatus: `Paused at ${tot.pulled}: ${msg} — retrying automatically` });
+    await report("paused", msg);
+    await log(`Import paused: ${msg}`, false);
+    return { error: msg };
+  } finally { importing = false; }
+}
+
 let busy = false;
 async function tick(force = false) {
+  const { importOn } = await chrome.storage.local.get("importOn");
+  if (importOn && !importing) importLoop();
   if (busy) return { skipped: "busy" };
   const c = await cfg();
   const paused = !force && (!c.enabled || !inHours(c));
@@ -96,19 +129,8 @@ chrome.runtime.onMessage.addListener((m, _s, reply) => {
         return reply({ ok: true, ...d, found: people.length });
       }
       if (m.type === "importConnections") {
-        let tot = { pulled: 0, saved: 0, updated: 0, skipped: 0 };
-        for (let start = 0; start < 3000; start += 40) {
-          const people = await liConnections(start);
-          if (!people.length) break;
-          const d = await crm("/ext/save", { method: "POST", body: JSON.stringify({ people }) });
-          tot = { pulled: tot.pulled + people.length, saved: tot.saved + d.saved, updated: tot.updated + d.updated, skipped: tot.skipped + d.skipped };
-          await chrome.storage.local.set({ importStatus: `Importing… ${tot.pulled} pulled, ${tot.saved} new` });
-          await new Promise((ok) => setTimeout(ok, 4000 + Math.random() * 5000));
-        }
-        const line = `Imported connections: ${tot.pulled} pulled · ${tot.saved} new · ${tot.updated} updated · ${tot.skipped} skipped (no company in headline). See CRM → LinkedIn Prospecting → LinkedIn contacts report`;
-        await chrome.storage.local.set({ importStatus: line });
-        await log(line);
-        return reply({ ok: true, ...tot });
+        await chrome.storage.local.set({ importOn: true, importNext: 0, importTot: { pulled: 0, saved: 0, updated: 0, skipped: 0 } });
+        return reply(await importLoop());
       }
       if (m.type === "saveProfile") {
         const p = await liProfile(m.slug);

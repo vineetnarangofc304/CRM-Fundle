@@ -46,6 +46,8 @@ async def overview(user: dict = Depends(STAFF)):
     for a in accs:
         a["today"] = {k: await la.used_today(a["id"], k) for k in ("lookup", "invite", "message", "search")}
         a["import"] = await db.settings.find_one({"key": f"li_import_{a['id']}"}, {"_id": 0, "key": 0})
+        a["connections"] = await db.li_people.count_documents({"account_ids": a["id"]})
+        a["connections_with_brand"] = await db.li_people.count_documents({"account_ids": a["id"], "brand": {"$nin": [None, ""]}})
     cnt = lambda m: db.prospects.aggregate([{"$unwind": "$contacts"}, {"$match": m}, {"$count": "n"}]).to_list(1)  # noqa: E731
     totals = {}
     for k, m in {"contacts": {"contacts.name": {"$nin": [None, ""]}}, "checked": {"contacts.li_checked_at": {"$exists": True}},
@@ -294,4 +296,20 @@ async def ext_result(b: ExtResult, acc: dict = Depends(ext_acc)):
 
 @router.post("/ext/save")
 async def ext_save(b: Save, acc: dict = Depends(ext_acc)):
-    return await la.save_people([p.model_dump() for p in b.people], {"name": acc["name"]}, "li_ext")
+    return await la.save_people([p.model_dump() for p in b.people], {"name": acc["name"]}, "li_ext", acc)
+
+
+class ImportStatus(BaseModel):
+    pulled: int = 0
+    saved: int = 0
+    updated: int = 0
+    skipped: int = 0
+    status: str = "running"
+    error: Optional[str] = None
+
+
+@router.post("/ext/import_status")
+async def ext_import_status(b: ImportStatus, acc: dict = Depends(ext_acc)):
+    d = {**b.model_dump(), "at": now_utc_str(), **({"finished_at": now_utc_str()} if b.status != "running" else {})}
+    await db.settings.update_one({"key": f"li_import_{acc['id']}"}, {"$set": d}, upsert=True)
+    return {"ok": True}

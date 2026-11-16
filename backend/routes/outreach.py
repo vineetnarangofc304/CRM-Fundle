@@ -88,6 +88,33 @@ async def stats(user: dict = Depends(STAFF)):
     return out
 
 
+@router.get("/outreach/verifier")
+async def verifier(user: dict = Depends(STAFF)):
+    """Bounce check report: which inboxes are being read, test-email results and the latest events."""
+    from core import brain
+    from core import mailboxes as mb
+    names = {mb.PRIMARY: (await brain.ol_main()) or "Main inbox"}
+    names.update({b["id"]: b["smtp_user"] async for b in db.mailboxes.find({}, {"_id": 0, "id": 1, "smtp_user": 1})})
+    readers = [{"inbox": r.get("email") or names.get(r.get("mailbox_id"), "inbox"), "how": "Microsoft sign-in",
+                "last_read": r.get("last_sync"), "error": r.get("error")} async for r in db.inbox_readers.find({}, {"_id": 0, "refresh_token_enc": 0})]
+    readers += [{"inbox": b["smtp_user"], "how": "App password", "last_read": b.get("imap_at"), "error": b.get("imap_error")}
+                async for b in db.mailboxes.find({"active": True, "is_deleted": {"$ne": True}, "smtp_password_enc": {"$exists": True}}, {"_id": 0})]
+    agg = lambda k: db.outreach.aggregate([{"$match": {"probe": True}}, {"$group": {"_id": f"${k}", "n": {"$sum": 1}}}]).to_list(20)  # noqa: E731
+    by_status = {str(r["_id"]): r["n"] for r in await agg("status")}
+    by_result = {str(r["_id"]): r["n"] for r in await agg("probe_result")}
+    cs = await db.prospects.aggregate([{"$unwind": "$contacts"}, {"$match": {"contacts.email_status": {"$in": ["testing", "delivered"]}}},
+                                       {"$group": {"_id": "$contacts.email_status", "n": {"$sum": 1}}}]).to_list(5)
+    recent = await db.outreach.find({"probe": True, "status": {"$in": ["sent", "bounced"]}},
+                                    {"_id": 0, "id": 1, "brand": 1, "contact_name": 1, "to": 1, "status": 1, "probe_result": 1, "sent_at": 1, "bounced_at": 1,
+                                     "sent_via": 1}).sort("sent_at", -1).limit(40).to_list(40)
+    for m in recent:
+        m["from"] = names.get(m.pop("sent_via", None), "")
+    last = await db.settings.find_one({"key": "outreach_last"}, {"_id": 0})
+    return {"readers": readers, "probe_by_status": by_status, "probe_by_result": by_result, "contacts": {r["_id"]: r["n"] for r in cs},
+            "recent": recent, "last_check": (last or {}).get("at"),
+            "last_stats": {k: (last or {}).get("stats", {}).get(k) for k in ("inbox", "imap", "verifier")}}
+
+
 @router.get("/outreach/messages")
 async def messages(status: Optional[str] = None, channel: Optional[str] = None, page: int = 1, limit: int = 50,
                    user: dict = Depends(STAFF)):

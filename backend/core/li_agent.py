@@ -200,9 +200,10 @@ async def _outreach(st: dict, kind: str, deadline: float) -> int:
             ok_c = c.get("li_urn") and not c.get("li_sent_at") and (
                 (kind == "invite" and c.get("li_degree") in (2, 3) and not c.get("li_invited_at")) or
                 (kind == "message" and c.get("li_degree") == 1 and not c.get("li_msg_at")))
-            if not ok_c:
+            mine = [a for a in accs if kind == "invite" or not c.get("li_conn_ids") or a["id"] in c["li_conn_ids"]]
+            if not ok_c or not mine:
                 continue
-            acc = accs[n % len(accs)]
+            acc = mine[n % len(mine)]
             try:
                 cl = await client(acc)
                 if kind == "invite":
@@ -288,7 +289,7 @@ async def import_connections(acc: dict, max_n: int = 3000) -> dict:
             people = parse_connections(r.json())
             if not people:
                 break
-            s = await save_people(people, {"name": acc["name"]}, "li_server")
+            s = await save_people(people, {"name": acc["name"]}, "li_server", acc)
             st["pulled"] += len(people)
             for k in ("saved", "updated", "brands_added", "brands_enriched", "skipped"):
                 st[k] = st.get(k, 0) + s[k]
@@ -305,14 +306,32 @@ async def import_connections(acc: dict, max_n: int = 3000) -> dict:
 SOURCES = {"li_server": "LinkedIn import (server)", "li_ext": "Chrome extension", "li_search": "LinkedIn search (CRM)"}
 
 
-async def save_people(people: list, user: dict, source: str = "li_search") -> dict:
+async def _remember(x: dict, acc: dict, brand: str):
+    """Every connection (even without a company) kept per LinkedIn account in li_people."""
+    if not _lock.get("idx"):
+        await db.li_people.create_index("urn_id", unique=True)
+        await db.li_people.create_index("account_ids")
+        _lock["idx"] = True
+    s = {"name": x.get("name"), "headline": x.get("headline"), "linkedin": x.get("linkedin"), "updated_at": now_utc_str()}
+    if brand:
+        s["brand"] = brand
+    add = {"accounts": acc["name"]}
+    if x.get("degree") == 1:
+        add["account_ids"] = acc["id"]
+    await db.li_people.update_one({"urn_id": x["urn_id"]}, {"$set": s, "$addToSet": add, "$setOnInsert": {"first_seen": now_utc_str()}}, upsert=True)
+
+
+async def save_people(people: list, user: dict, source: str = "li_search", acc: dict | None = None) -> dict:
     """Search results / connections → brands + contacts in the CRM (brand from 'Title at Company' or the given company).
-    Existing brands are enriched in place: same person → LinkedIn data added; new person → added as a contact."""
+    Existing brands are enriched in place: same person → LinkedIn data added; new person → added as a contact.
+    acc = the LinkedIn account they came through (tracked on the contact; 1st-degree → only that account messages them)."""
     from core import brain_data as bd
     from core import prospector as pe
     st = {"saved": 0, "brands_added": 0, "brands_enriched": 0, "updated": 0, "skipped": 0}
     for x in people:
         brand = (x.get("company") or "").strip() or (re.split(r"\s+(?:at|@)\s+", x.get("headline") or "", maxsplit=1)[1:] or [""])[0].split("|")[0].strip()
+        if acc and x.get("urn_id"):
+            await _remember(x, acc, brand)
         if not brand or not x.get("name"):
             st["skipped"] += 1
             continue
@@ -334,7 +353,12 @@ async def save_people(people: list, user: dict, source: str = "li_search") -> di
         else:
             cs.append({"name": x["name"], "role": (re.split(r"\s+(?:at|@)\s+", x.get("headline") or "")[0])[:80], "email": None, **li,
                        "li_source": source, "li_source_by": user.get("name"), "li_added_at": now_utc_str(), "evidence_url": SOURCES.get(source)})
+            c = cs[-1]
             st["saved"] += 1
+        if acc:
+            c["li_accounts"] = sorted(set(c.get("li_accounts") or []) | {acc["name"]})
+            if x.get("degree") == 1:
+                c["li_conn_ids"] = sorted(set(c.get("li_conn_ids") or []) | {acc["id"]})
         await db.prospects.update_one({"id": p["id"]}, {"$set": {"contacts": cs, "contacts_status": "done"}})
         if p.get("lead_id"):
             await db.leads.update_one({"id": p["lead_id"]}, {"$unset": {"search_words": 1}})

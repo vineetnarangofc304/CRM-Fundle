@@ -447,8 +447,9 @@ async def t_inbox(ctx, a):
                                                                      "reply_snippet": 1, "sent_via": 1}).sort("replied_at", -1).limit(30).to_list(30)
     fails = await db.outreach.find({"error": {"$exists": True}, "status": {"$in": ["approved", "failed"]}},
                                    {"_id": 0, "id": 1, "brand": 1, "to": 1, "error": 1, "sent_via_pref": 1, "force_sender": 1}).sort("id", -1).limit(15).to_list(15)
-    readers = await db.mailbox_readers.find({}, {"_id": 0, "mailbox_id": 1, "email": 1, "last_sync": 1, "last_error": 1}).to_list(50) \
-        if "mailbox_readers" in await db.list_collection_names() else []
+    readers = await db.inbox_readers.find({}, {"_id": 0, "mailbox_id": 1, "email": 1, "last_sync": 1, "error": 1}).to_list(50)
+    readers += await db.mailboxes.find({"active": True, "is_deleted": {"$ne": True}, "smtp_password_enc": {"$exists": True}},
+                                       {"_id": 0, "smtp_user": 1, "imap_at": 1, "imap_error": 1}).to_list(50)
     return {"days": days, "per_inbox_status_counts": per, "recent_replies": replies, "recent_send_errors": fails,
             "reply_tracking": _scrub(readers)}
 

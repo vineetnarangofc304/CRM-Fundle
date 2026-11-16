@@ -139,7 +139,7 @@ REPORT_PROJ = {"_id": 0, "id": 1, "brand_name": 1, "store_count": 1, "category":
 
 @router.get("/report")
 async def report(q: Optional[str] = None, status: str = "all", source: str = "all", filter: Optional[str] = None, page: int = 1, limit: int = 50,
-                 user: dict = Depends(STAFF)):
+                 account: Optional[str] = None, user: dict = Depends(STAFF)):
     import re
     m = {"contacts.name": {"$nin": [None, ""]}}
     if q:
@@ -163,6 +163,8 @@ async def report(q: Optional[str] = None, status: str = "all", source: str = "al
             "accepted": {"contacts.li_accepted_at": {"$exists": True}}, "messaged": {"contacts.li_msg_at": {"$exists": True}}}.get(filter or "")
     if stat:
         cm.update(stat)
+    if account:
+        cm["$and"] = [{"$or": [{"contacts.li_accounts": account}, {"contacts.li_source_by": account}]}]
     limit = max(1, min(limit, 200))
     pipe = [{"$match": m}, {"$project": REPORT_PROJ}, {"$unwind": "$contacts"}, {"$match": cm},
             {"$sort": {"contacts.uploaded": -1, "store_count": -1, "id": 1}},
@@ -170,10 +172,11 @@ async def report(q: Optional[str] = None, status: str = "all", source: str = "al
     r = (await db.prospects.aggregate(pipe, allowDiskUse=True).to_list(1))[0]
     items = [{"prospect_id": x["id"], "brand": x["brand_name"], "store_count": x.get("store_count"), "category": x.get("category"),
               "lead_id": x.get("lead_id"), "country": x.get("country"),
-              **{k: x["contacts"].get(k) for k in ("name", "role", "email", "linkedin", "uploaded", "li_verified", "li_degree", "li_invited_at", "li_sent_at", "li_sent_by", "li_source", "li_source_by", "li_msg_at")}}
+              **{k: x["contacts"].get(k) for k in ("name", "role", "email", "linkedin", "uploaded", "li_verified", "li_degree", "li_invited_at", "li_sent_at", "li_sent_by", "li_source", "li_source_by", "li_msg_at", "li_accounts")}}
              for x in r["items"]]
     tpl = await db.settings.find_one({"key": "li_report_msg"}, {"_id": 0})
-    return {"items": items, "total": (r["total"] or [{"n": 0}])[0]["n"], "page": page, "limit": limit,
+    accs = [a["name"] async for a in db.li_accounts.find({"is_deleted": {"$ne": True}}, {"_id": 0, "name": 1})]
+    return {"items": items, "total": (r["total"] or [{"n": 0}])[0]["n"], "page": page, "limit": limit, "accounts": sorted(set(accs)),
             "template": (tpl or {}).get("text") or DEFAULT_LI_MSG}
 
 

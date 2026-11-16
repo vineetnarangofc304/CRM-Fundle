@@ -39,7 +39,7 @@ def _free(c: dict, cut: str) -> bool:
     return not c.get("li_task_at") or c["li_task_at"] < cut
 
 
-async def _find(kind: str, st: dict):
+async def _find(kind: str, st: dict, acc: dict):
     cut = (datetime.now(timezone.utc) - timedelta(minutes=15)).strftime("%Y-%m-%d %H:%M:%S")
     if kind == "lookup":
         em = {"name": {"$nin": [None, ""]}, "li_checked_at": {"$exists": False}}
@@ -48,8 +48,10 @@ async def _find(kind: str, st: dict):
         em = {"li_urn": {"$nin": [None, ""]}, "li_degree": {"$in": [2, 3]}, "li_invited_at": {"$exists": False}, "li_sent_at": {"$in": [None, ""]}}
         ok = lambda c: c.get("li_urn") and c.get("li_degree") in (2, 3) and not c.get("li_invited_at") and not c.get("li_sent_at")  # noqa: E731
     else:
-        em = {"li_urn": {"$nin": [None, ""]}, "li_degree": 1, "li_msg_at": {"$exists": False}, "li_sent_at": {"$in": [None, ""]}}
-        ok = lambda c: c.get("li_urn") and c.get("li_degree") == 1 and not c.get("li_msg_at") and not c.get("li_sent_at")  # noqa: E731
+        em = {"li_urn": {"$nin": [None, ""]}, "li_degree": 1, "li_msg_at": {"$exists": False}, "li_sent_at": {"$in": [None, ""]},
+              "$or": [{"li_conn_ids": {"$exists": False}}, {"li_conn_ids": acc["id"]}]}
+        ok = lambda c: c.get("li_urn") and c.get("li_degree") == 1 and not c.get("li_msg_at") and not c.get("li_sent_at") and (  # noqa: E731
+            not c.get("li_conn_ids") or acc["id"] in c["li_conn_ids"])
     async for p in db.prospects.find({"contacts": {"$elemMatch": em}, "replied": {"$ne": True}},
                                      {"_id": 0, "id": 1, "brand_name": 1, "contacts": 1}).sort("fit_score", -1).limit(20):
         for c in p["contacts"]:
@@ -83,7 +85,7 @@ async def next_task(acc: dict):
                           ("lookup", st["lookup_on"], st["daily_lookups"])):
         if not on or await la.used_today(acc["id"], kind) >= lim or await _recent(acc["id"], kind):
             continue
-        t = await _find(kind, st)
+        t = await _find(kind, st, acc)
         if t:
             return t
     return None

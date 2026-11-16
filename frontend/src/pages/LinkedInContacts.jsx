@@ -37,7 +37,8 @@ function Row({ r, tpl, reload }) {
     <tr className="border-t border-slate-100" data-testid={`li-row-${id}`}>
       <td className="py-2 pr-3"><div className="font-bold text-slate-800">{r.name}</div><div className="text-[11px] text-slate-500">{r.role}</div></td>
       <td className="pr-3"><Link to={`/prospecting/${r.prospect_id}`} className="font-semibold text-[#1557B0] hover:underline">{r.brand}</Link><div className="text-[11px] text-slate-500">{r.store_count ?? "—"} stores · {r.category}</div></td>
-      <td className="pr-3 text-xs">{r.email || <span className="text-slate-300">—</span>}{r.li_source && <div className="mt-0.5"><span className="rounded-full bg-indigo-50 px-1.5 py-0.5 text-[10px] font-bold text-indigo-700" data-testid={`li-src-${id}`}>{SRC[r.li_source]}{r.li_source_by ? ` · ${r.li_source_by}` : ""}</span></div>}</td>
+      <td className="pr-3 text-xs">{r.email || <span className="text-slate-300">—</span>}{r.li_source && <div className="mt-0.5"><span className="rounded-full bg-indigo-50 px-1.5 py-0.5 text-[10px] font-bold text-indigo-700" data-testid={`li-src-${id}`}>{SRC[r.li_source]}{r.li_source_by ? ` · ${r.li_source_by}` : ""}</span></div>}
+        {r.li_accounts?.length > 0 && <div className="mt-0.5 text-[10px] font-semibold text-slate-500" data-testid={`li-via-${id}`}>Connected via {r.li_accounts.join(", ")}</div>}</td>
       <td className="pr-3">{l && <a href={l.href} target="_blank" rel="noreferrer" data-testid={`li-link-${id}`} className="inline-flex items-center gap-1 whitespace-nowrap text-xs font-bold text-[#0A66C2]"><LinkedinLogo size={14} weight="fill" />{l.direct ? "Profile" : "Search"}</a>}</td>
       <td className="whitespace-nowrap text-right">
         <button data-testid={`li-copy-open-${id}`} onClick={go} className="crm-btn-primary !py-1 text-xs"><CopySimple size={13} /> Copy & open</button>
@@ -71,6 +72,8 @@ export function ContactsReport({ initial = {}, embedded = false }) {
         <select data-testid="li-source" className="crm-select" value={f.source} onChange={(e) => setF({ ...f, source: e.target.value, page: 1 })}>
           <option value="all">All contacts</option><option value="any_li">All from LinkedIn</option><option value="li_server">LinkedIn import (server)</option>
           <option value="li_ext">Chrome extension</option><option value="li_search">LinkedIn search (CRM)</option><option value="sheet">From uploaded sheets</option></select>
+        <select data-testid="li-account" className="crm-select" value={f.account || ""} onChange={(e) => setF({ ...f, account: e.target.value, page: 1 })}>
+          <option value="">Any LinkedIn account</option>{(d?.accounts || []).map((a) => <option key={a} value={a}>Via {a}</option>)}</select>
         <select data-testid="li-filter" className="crm-select" value={f.filter} onChange={(e) => setF({ ...f, filter: e.target.value, page: 1 })}>
           <option value="">Any LinkedIn status</option>{Object.entries(STAT).map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select>
         <span className="text-xs text-slate-500" data-testid="li-total">{d ? `${d.total.toLocaleString("en-IN")} contact${d.total === 1 ? "" : "s"}` : "…"}</span>
@@ -92,6 +95,6 @@ export function ContactsReport({ initial = {}, embedded = false }) {
 
 export default function LinkedInContacts() {
   const q = new URLSearchParams(useLocation().search);
-  const initial = Object.fromEntries(["source", "filter", "status"].filter((k) => q.get(k)).map((k) => [k, q.get(k)]));
+  const initial = Object.fromEntries(["source", "filter", "status", "account"].filter((k) => q.get(k)).map((k) => [k, q.get(k)]));
   return <ContactsReport key={JSON.stringify(initial)} initial={initial} />;
 }

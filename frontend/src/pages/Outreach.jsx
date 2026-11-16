@@ -6,6 +6,7 @@ import { API, apiErr } from "../lib/api";
 import { useAuth } from "../context/AuthContext";
 import { EmailTemplates } from "../components/EmailTemplates";
 import { LinkedInQueue } from "../components/LinkedInQueue";
+import { EmailVerifier } from "../components/EmailVerifier";
 
 const TABS = [["pending_approval", "Needs review"], ["approved", "Approved / scheduled"], ["sent", "Sent"], ["bounced", "Bounced"], ["failed", "Failed"], ["stopped", "Stopped"], ["rejected", "Rejected"]];
 
@@ -183,11 +184,11 @@ export default function Outreach() {
       {s.last_run?.at && <p className="text-[11px] text-slate-400">Last run {s.last_run.at} UTC · drafted {s.last_run.stats?.drafted ?? 0} · sent {s.last_run.stats?.sent ?? 0} · via {s.mail_provider}</p>}
       <SettingsPanel s={s} isAdmin={user.role === "admin"} reload={load} />
       <div className="flex gap-1 border-b border-slate-200" data-testid="outreach-view-tabs">
-        {[["messages", "Emails & review"], ["sent", "Sent emails"], ["templates", "Email templates & auto emailer"]].map(([k, l]) => (
+        {[["messages", "Emails & review"], ["sent", "Sent emails"], ["verifier", "Bounce check"], ["templates", "Email templates & auto emailer"]].map(([k, l]) => (
           <button key={k} data-testid={`outreach-view-${k}`} onClick={() => { if (k === "sent") { setTab("sent"); setView("messages"); } else { setView(k); if (k === "messages" && tab === "sent") setTab("pending_approval"); } }} className={`-mb-px border-b-2 px-4 py-2 text-sm font-bold transition-colors ${(k === "sent" ? view === "messages" && tab === "sent" : k === "messages" ? view === "messages" && tab !== "sent" : view === k) ? "border-[#1A73E8] text-[#1557B0]" : "border-transparent text-slate-500 hover:text-slate-700"}`}>{l}{k === "sent" && stats.email?.sent ? ` (${stats.email.sent})` : ""}</button>
         ))}
       </div>
-      {view === "linkedin" ? <LinkedInQueue isAdmin={user.role === "admin"} /> : view === "templates" ? <EmailTemplates /> : <>
+      {view === "linkedin" ? <LinkedInQueue isAdmin={user.role === "admin"} /> : view === "verifier" ? <EmailVerifier /> : view === "templates" ? <EmailTemplates /> : <>
       <div className="flex flex-wrap items-center gap-2"><BouncePanel reload={load} /><FormatStatus /></div>
       <div className="flex flex-wrap items-center gap-2">
         {TABS.map(([k, l]) => (

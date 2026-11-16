@@ -13,5 +13,5 @@ $("enabled").onchange = (e) => chrome.storage.local.set({ enabled: e.target.chec
 $("opts").onclick = () => chrome.runtime.openOptionsPage();
 $("run").onclick = () => { $("run").textContent = "Working…"; chrome.runtime.sendMessage({ type: "runOnce" }, () => { $("run").textContent = "Run one task now"; render(); }); };
 render();
-$("imp").onclick = () => { $("imp").textContent = "Importing… (keep this open or check back)"; chrome.runtime.sendMessage({ type: "importConnections" }, (r) => { $("imp").textContent = "Import my 1st-degree connections"; $("impStatus").textContent = r?.error || ""; render(); }); };
+$("imp").onclick = () => { if (!confirm("Start importing all your 1st-degree connections from the beginning? It runs in the background and resumes by itself.")) return; $("imp").textContent = "Importing… (you can close this)"; chrome.runtime.sendMessage({ type: "importConnections" }, (r) => { $("imp").textContent = "Import my 1st-degree connections"; $("impStatus").textContent = r?.error || ""; render(); }); };
 chrome.storage.local.get("importStatus", (s) => { $("impStatus").textContent = s.importStatus || ""; });
