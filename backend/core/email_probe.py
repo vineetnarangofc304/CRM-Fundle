@@ -72,11 +72,13 @@ async def queue_probe(t: dict, p: dict, c: dict) -> int:
 async def finalize() -> dict:
     """Decide each tested contact: delivered (no bounce after 6 h) → keep one; all bounced → try next 3."""
     cutoff = (datetime.now(timezone.utc) - timedelta(hours=WAIT_HOURS)).strftime("%Y-%m-%d %H:%M:%S")
-    st = {"verified": 0, "retry": 0, "exhausted": 0}
+    read = {r.get("mailbox_id") async for r in db.inbox_readers.find({"refresh_token_enc": {"$exists": True}, "error": {"$exists": False}}, {"mailbox_id": 1})}
+    read |= {b["id"] async for b in db.mailboxes.find({"active": True, "smtp_password_enc": {"$exists": True}, "imap_error": {"$exists": False}}, {"id": 1})}
+    st = {"verified": 0, "retry": 0, "exhausted": 0, "waiting_for_inbox_reading": 0}
     groups = await db.outreach.aggregate([
         {"$match": {"probe": True, "probe_result": {"$exists": False}}},
         {"$group": {"_id": {"p": "$prospect_id", "c": "$contact_name"}, "msgs": {"$push": {
-            "id": "$id", "to": "$to", "status": "$status", "sent_at": "$sent_at", "template_id": "$template_id"}}}}]).to_list(5000)
+            "id": "$id", "to": "$to", "status": "$status", "sent_at": "$sent_at", "template_id": "$template_id", "via": "$sent_via"}}}}]).to_list(5000)
     for g in groups:
         ms = g["msgs"]
         if any(m["status"] not in ("sent", "bounced") for m in ms):
@@ -86,6 +88,9 @@ async def finalize() -> dict:
         live = [m for m in ms if m["status"] == "sent"]
         if live and any((m.get("sent_at") or "") > cutoff for m in live):
             continue  # still inside the 6 h bounce window
+        if any(m.get("via") not in read for m in live):
+            st["waiting_for_inbox_reading"] += 1  # no bounce can be seen if the sending inbox isn't read — never assume delivered
+            continue
         pid, name = g["_id"]["p"], g["_id"]["c"]
         p = await db.prospects.find_one({"id": pid}, {"_id": 0})
         if not p:
